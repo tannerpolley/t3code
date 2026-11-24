@@ -1,3 +1,5 @@
+import { msg, useGT } from "gt-react";
+import { m } from "~/i18n/messages";
 import {
   isAtomCommandInterrupted,
   mapAtomCommandResult,
@@ -20,6 +22,7 @@ import { useOrchestrationCommand } from "../state/use-orchestration-command";
 
 /** Confirms, then removes every checkout of a grouped project and their threads. */
 export function useRemoveSidebarProject(): (group: SidebarProjectSnapshot) => Promise<void> {
+  const gt = useGT();
   const navigate = useNavigate();
   const deleteProject = useOrchestrationCommand(projectEnvironment.delete, {
     reportFailure: false,
@@ -42,23 +45,32 @@ export function useRemoveSidebarProject(): (group: SidebarProjectSnapshot) => Pr
       api.dialogs.confirm(
         [
           projectThreads.length > 0
-            ? `Remove project "${targetLabel}" and delete its ${projectThreads.length} thread${projectThreads.length === 1 ? "" : "s"}?`
-            : `Remove project "${targetLabel}"?`,
+            ? gt(
+                '{count, plural, one {Remove project "{name}" and delete its {count} thread?} other {Remove project "{name}" and delete its {count} threads?}}',
+                { name: targetLabel, count: projectThreads.length },
+              )
+            : gt('Remove project "{name}"?', { name: targetLabel }),
           ...(singleMember
             ? [
-                `Path: ${singleMember.workspaceRoot}`,
+                gt("Path: {path}", { path: singleMember.workspaceRoot }),
                 ...(singleMember.environmentLabel
-                  ? [`Environment: ${singleMember.environmentLabel}`]
+                  ? [
+                      gt("Environment: {environment}", {
+                        environment: singleMember.environmentLabel,
+                      }),
+                    ]
                   : []),
               ]
-            : [`This removes ${members.length} grouped project entries.`]),
+            : [gt("This removes {count} grouped project entries.", { count: members.length })]),
           ...(projectThreads.length > 0
             ? [
-                "This permanently clears conversation history for those threads and any archived threads.",
+                gt(
+                  "This permanently clears conversation history for those threads and any archived threads.",
+                ),
               ]
-            : ["This permanently clears any archived conversation history."]),
-          "This removes only the project entries, not the files on disk.",
-          "This action cannot be undone.",
+            : [gt("This permanently clears any archived conversation history.")]),
+          gt("This removes only the project entries, not the files on disk."),
+          gt("This action cannot be undone."),
         ].join("\n"),
         { variant: "destructive" },
       ),
@@ -85,8 +97,8 @@ export function useRemoveSidebarProject(): (group: SidebarProjectSnapshot) => Pr
           toastManager.add(
             stackedThreadToast({
               type: "error",
-              title: `Failed to remove "${member.title}"`,
-              description: error instanceof Error ? error.message : "An error occurred.",
+              title: gt('Failed to remove "{title}"', { title: member.title }),
+              description: error instanceof Error ? error.message : gt("An error occurred."),
             }),
           );
         }
@@ -118,8 +130,14 @@ function deniedProjectAccess(members: ReadonlyArray<SidebarProjectGroupMember>):
   toastManager.add(
     stackedThreadToast({
       type: "error",
-      title: "Failed to remove project",
-      description: `This connection cannot change projects in ${denied.environmentLabel ?? "this environment"}.`,
+      title: m(msg("Failed to remove project")),
+      description: denied.environmentLabel
+        ? m(
+            msg("This connection cannot change projects in {environment}.", {
+              environment: denied.environmentLabel,
+            }),
+          )
+        : m(msg("This connection cannot change projects in this environment.")),
     }),
   );
   return true;

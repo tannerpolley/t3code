@@ -1,3 +1,4 @@
+import type { MessageResolver } from "~/i18n/messages";
 import { OwnerDecisionsToggle, OwnerDecisionsView } from "./OwnerDecisionCards";
 import { useOwnerDecisions } from "~/state/ownerDecisions";
 import { IssueRepositoryStatusLine } from "./IssueRepositoryControls";
@@ -31,7 +32,7 @@ import {
   useIssueRepositories,
   type RepositoryIssueListTarget,
 } from "~/state/repositoryIssues";
-import { T } from "gt-react";
+import { T, msg, useGT, useMessages } from "gt-react";
 import { Button } from "../ui/button";
 import { Empty, EmptyDescription, EmptyHeader, EmptyTitle } from "../ui/empty";
 import { InputGroup, InputGroupAddon, InputGroupInput } from "../ui/input-group";
@@ -69,47 +70,66 @@ const isIssueReadError = Schema.is(IssueReadErrorClass);
 const isEnvironmentAuthorizationError = Schema.is(EnvironmentAuthorizationErrorClass);
 const isEnvironmentRpcUnavailableError = Schema.is(EnvironmentRpcUnavailableError);
 
-function issueError(cause: Cause.Cause<unknown>, fallback: string | null): IssueError {
+function issueError(
+  cause: Cause.Cause<unknown>,
+  fallback: string | null,
+  resolve: MessageResolver,
+): IssueError {
   const error = Cause.squash(cause);
   if (isIssueReadError(error)) {
     switch (error.code) {
       case "unauthenticated":
-        return { title: "GitHub authentication required", description: error.message };
+        return {
+          title: resolve(msg("GitHub authentication required")),
+          description: error.message,
+        };
       case "verification-unavailable":
-        return { title: "GitHub sign-in could not be verified", description: error.message };
+        return {
+          title: resolve(msg("GitHub sign-in could not be verified")),
+          description: error.message,
+        };
       case "rate-limited":
         return {
-          title: "GitHub rate limit reached",
+          title: resolve(msg("GitHub rate limit reached")),
           description: error.message,
           ...(error.retryAt === undefined ? {} : { retryAt: error.retryAt }),
         };
       case "scope-unavailable":
         return {
-          title: "Repository unavailable",
+          title: resolve(msg("Repository unavailable")),
           description: error.message,
           scopeUnavailable: true,
         };
       case "unsupported":
       case "missing-tool":
-        return { title: "GitHub issues unavailable", description: error.message };
+        return { title: resolve(msg("GitHub issues unavailable")), description: error.message };
       case "inaccessible":
-        return { title: "Issue list unavailable", description: error.message };
+        return { title: resolve(msg("Issue list unavailable")), description: error.message };
       case "invalid-cursor":
       case "invalid-response":
-        return { title: "GitHub returned an invalid issue response", description: error.message };
+        return {
+          title: resolve(msg("GitHub returned an invalid issue response")),
+          description: error.message,
+        };
       case "upstream":
-        return { title: "GitHub could not load issues", description: error.message };
+        return { title: resolve(msg("GitHub could not load issues")), description: error.message };
     }
   }
   if (isEnvironmentAuthorizationError(error)) {
-    return { title: "Environment authorization required", description: error.message };
+    return {
+      title: resolve(msg("Environment authorization required")),
+      description: error.message,
+    };
   }
   if (isEnvironmentRpcUnavailableError(error)) {
-    return { title: "Environment offline", description: "Reconnect this environment and retry." };
+    return {
+      title: resolve(msg("Environment offline")),
+      description: resolve(msg("Reconnect this environment and retry.")),
+    };
   }
   return {
-    title: "Could not load issues",
-    description: fallback ?? "The issue request failed. Retry to try again.",
+    title: resolve(msg("Could not load issues")),
+    description: fallback ?? resolve(msg("The issue request failed. Retry to try again.")),
   };
 }
 
@@ -144,6 +164,7 @@ type IssuePagingState = {
 
 /** The repositories every issue-capable environment can read, merged across environments. */
 export function useIssueRepositoryTargets(preferredEnvironmentId?: EnvironmentId) {
+  const resolve = useMessages();
   const { environments } = useEnvironments();
   const environmentsBootstrapped = useAllEnvironmentShellsBootstrapped();
   const environmentLabels = (() =>
@@ -178,7 +199,7 @@ export function useIssueRepositoryTargets(preferredEnvironmentId?: EnvironmentId
       }),
     ))();
   const repositoryErrors = (() =>
-    issueRepositories.failures.map((failure) => issueError(failure.cause, null)))();
+    issueRepositories.failures.map((failure) => issueError(failure.cause, null, resolve)))();
   const capabilitiesKnown =
     environments.some((environment) => environment.serverConfig !== null) ||
     environmentsBootstrapped;
@@ -223,6 +244,8 @@ export function IssueBrowser({
   readonly onRefresh?: () => void;
   readonly className?: string | undefined;
 }) {
+  const gt = useGT();
+  const resolve = useMessages();
   const {
     environmentLabels,
     capableEnvironmentIds,
@@ -293,7 +316,7 @@ export function IssueBrowser({
   const issueErrors = (() => {
     const errors = new Map<string, IssueError>();
     for (const failure of issueLists.failures) {
-      errors.set(issueListScopeKey(failure.target), issueError(failure.cause, null));
+      errors.set(issueListScopeKey(failure.target), issueError(failure.cause, null, resolve));
     }
     return errors;
   })();
@@ -428,8 +451,19 @@ export function IssueBrowser({
     const narrowed = query.trim() !== "" || entryFilters.assignee !== "all";
     return { filters: entryFilters, narrowed };
   };
-  const stateNoun = (count: number, state: "all" | "open" | "closed") =>
-    state === "all" ? (count === 1 ? "issue" : "issues") : state;
+  const countLabelFor = (count: number, state: "all" | "open" | "closed", suffix = "") => {
+    switch (state) {
+      case "open":
+        return gt("{count}{suffix} open", { count, suffix });
+      case "closed":
+        return gt("{count}{suffix} closed", { count, suffix });
+      case "all":
+        return gt("{count, plural, one {{count}{suffix} issue} other {{count}{suffix} issues}}", {
+          count,
+          suffix,
+        });
+    }
+  };
   const viewerLogins = [
     ...new Set(issueRepositories.answers.map((answer) => answer.result.viewer.login)),
   ];
@@ -470,13 +504,13 @@ export function IssueBrowser({
     const entryState = filters.state;
     const countLabel: ReactNode =
       scopeKey === null ? (
-        `0 ${stateNoun(0, entryState)}`
+        countLabelFor(0, entryState)
       ) : snapshot === null && error === null ? (
         <Spinner className="size-3" />
       ) : snapshot === null ? (
-        <span className="text-warning-foreground">unavailable</span>
+        <span className="text-warning-foreground">{gt("unavailable")}</span>
       ) : (
-        `${count}${snapshot.issuesComplete ? "" : "+"} ${stateNoun(count, entryState)}`
+        countLabelFor(count, entryState, snapshot.issuesComplete ? "" : "+")
       );
     return [
       {
@@ -514,12 +548,19 @@ export function IssueBrowser({
     const message = (text: string) => (
       <p className="py-1.5 ps-6 pe-4 text-xs text-muted-foreground">{text}</p>
     );
-    if (scopeKey === null) return message(`No ${filters.state} issues`);
+    if (scopeKey === null)
+      return message(
+        filters.state === "open"
+          ? gt("No open issues")
+          : filters.state === "closed"
+            ? gt("No closed issues")
+            : gt("No issues"),
+      );
     if (snapshot === null && error === null) {
       return (
         <div className="flex items-center gap-2 py-1.5 ps-6 text-xs text-muted-foreground">
           <Spinner className="size-3.5" />
-          Loading issues
+          <T>Loading issues</T>
         </div>
       );
     }
@@ -531,12 +572,12 @@ export function IssueBrowser({
             <p className="mt-1 text-xs text-muted-foreground">{error.description}</p>
             {error.retryAt !== undefined ? (
               <p className="mt-1 text-xs text-muted-foreground">
-                Retry after {retryDeadline(error.retryAt)}.
+                {gt("Retry after {time}.", { time: retryDeadline(error.retryAt) })}
               </p>
             ) : null}
           </div>
           <Button onClick={refreshIssues} size="xs" variant="outline">
-            Retry
+            <T>Retry</T>
           </Button>
         </div>
       );
@@ -567,9 +608,12 @@ export function IssueBrowser({
         />
         {error !== null ? (
           <div className="my-1 ms-10 me-3 flex items-center justify-between gap-3 rounded-lg border border-warning/30 bg-warning/5 px-3 py-2 text-xs">
-            <span>{error.title}. Showing the last issues loaded.</span>
+            <span>
+              {error.title}
+              <T>. Showing the last issues loaded.</T>
+            </span>
             <Button onClick={refreshIssues} size="xs" variant="outline">
-              Retry
+              <T>Retry</T>
             </Button>
           </div>
         ) : null}
@@ -582,7 +626,7 @@ export function IssueBrowser({
               variant="outline"
             >
               {pending ? <Spinner className="size-3" /> : null}
-              Load more issues
+              <T>Load more issues</T>
             </Button>
           </div>
         ) : null}
@@ -628,13 +672,25 @@ export function IssueBrowser({
                 ) : null}
                 {entry.isPrivate ? (
                   <LockIcon
-                    aria-label="Private"
+                    aria-label={gt("Private")}
                     className="size-3 shrink-0 text-muted-foreground"
                   />
                 ) : null}
-                {entry.isArchived ? <IssueTreeTag>Archived</IssueTreeTag> : null}
-                {entry.isFork ? <IssueTreeTag>Fork</IssueTreeTag> : null}
-                {entry.pinned ? <IssueTreeTag>Pinned</IssueTreeTag> : null}
+                {entry.isArchived ? (
+                  <IssueTreeTag>
+                    <T>Archived</T>
+                  </IssueTreeTag>
+                ) : null}
+                {entry.isFork ? (
+                  <IssueTreeTag>
+                    <T>Fork</T>
+                  </IssueTreeTag>
+                ) : null}
+                {entry.pinned ? (
+                  <IssueTreeTag>
+                    <T>Pinned</T>
+                  </IssueTreeTag>
+                ) : null}
                 {capableEnvironmentList.length > 1 ? (
                   <span className="truncate text-2xs text-muted-foreground">
                     {environmentLabels.get(entry.environmentId) ?? entry.environmentId}
@@ -651,9 +707,11 @@ export function IssueBrowser({
               >
                 <Button
                   aria-label={
-                    entry.pinned ? `Unpin ${entry.repository}` : `Always show ${entry.repository}`
+                    entry.pinned
+                      ? gt("Unpin {repository}", { repository: entry.repository })
+                      : gt("Always show {repository}", { repository: entry.repository })
                   }
-                  title={entry.pinned ? "Unpin" : "Always show, whatever the filters say"}
+                  title={entry.pinned ? gt("Unpin") : gt("Always show, whatever the filters say")}
                   aria-pressed={entry.pinned}
                   onClick={() => togglePinned(entry.key, entry.pinned)}
                   size="icon-xs"
@@ -685,14 +743,18 @@ export function IssueBrowser({
   ) : capableEnvironmentIds.size === 0 ? (
     <Empty className="min-h-56 flex-none">
       <EmptyHeader>
-        <EmptyTitle>Issues unavailable</EmptyTitle>
-        <EmptyDescription>Update a T3 Code server with GitHub Issues support.</EmptyDescription>
+        <EmptyTitle>
+          <T>Issues unavailable</T>
+        </EmptyTitle>
+        <EmptyDescription>
+          <T>Update a T3 Code server with GitHub Issues support.</T>
+        </EmptyDescription>
       </EmptyHeader>
     </Empty>
   ) : repositoryTargets.length === 0 && issueRepositories.isPending ? (
     <div className="flex min-h-56 items-center justify-center gap-2 text-xs text-muted-foreground">
       <Spinner className="size-4" />
-      Loading repositories and issues
+      <T>Loading repositories and issues</T>
     </div>
   ) : repositoryTargets.length === 0 && repositoryErrors.length > 0 ? (
     <Empty className="min-h-56 flex-none">
@@ -701,32 +763,40 @@ export function IssueBrowser({
         <EmptyDescription>{repositoryErrors[0]!.description}</EmptyDescription>
       </EmptyHeader>
       <Button onClick={refreshIssues} size="xs" variant="outline">
-        Retry
+        <T>Retry</T>
       </Button>
     </Empty>
   ) : explicitScopeMissing ? (
     <Empty className="min-h-56 flex-none">
       <EmptyHeader>
-        <EmptyTitle>Repository unavailable</EmptyTitle>
+        <EmptyTitle>
+          <T>Repository unavailable</T>
+        </EmptyTitle>
         <EmptyDescription>
-          This repository is not one you own or administer on GitHub.
+          <T>This repository is not one you own or administer on GitHub.</T>
         </EmptyDescription>
       </EmptyHeader>
     </Empty>
   ) : repositoryTargets.length === 0 ? (
     <Empty className="min-h-56 flex-none">
       <EmptyHeader>
-        <EmptyTitle>No GitHub repositories</EmptyTitle>
+        <EmptyTitle>
+          <T>No GitHub repositories</T>
+        </EmptyTitle>
         <EmptyDescription>
-          No repositories you own or administer have issues enabled.
+          <T>No repositories you own or administer have issues enabled.</T>
         </EmptyDescription>
       </EmptyHeader>
     </Empty>
   ) : stateFilter === null ? (
     <Empty className="min-h-56 flex-none">
       <EmptyHeader>
-        <EmptyTitle>No issue states shown</EmptyTitle>
-        <EmptyDescription>Select Open or Closed in Filter to show issues.</EmptyDescription>
+        <EmptyTitle>
+          <T>No issue states shown</T>
+        </EmptyTitle>
+        <EmptyDescription>
+          <T>Select Open or Closed in Filter to show issues.</T>
+        </EmptyDescription>
       </EmptyHeader>
     </Empty>
   ) : (
@@ -734,9 +804,14 @@ export function IssueBrowser({
       {/* A repository scope already names its one repository in the header. */}
       {explicitScope && urlRepository !== null ? null : (
         <div className="flex items-baseline justify-between px-4 pb-1.5 text-2xs text-muted-foreground">
-          <span className="font-semibold uppercase tracking-wide">Repositories</span>
+          <span className="font-semibold uppercase tracking-wide">
+            <T>Repositories</T>
+          </span>
           <span className="tabular-nums">
-            {repositoryEntries.length} of {repositoryTargets.length} shown
+            {gt("{shown} of {total} shown", {
+              shown: repositoryEntries.length,
+              total: repositoryTargets.length,
+            })}
           </span>
         </div>
       )}
@@ -745,14 +820,18 @@ export function IssueBrowser({
       ) : (
         <Empty size="compact" className="min-h-40 flex-none">
           <EmptyHeader>
-            <EmptyTitle>No repositories match these filters</EmptyTitle>
-            <EmptyDescription>Change the filters or search to show repositories.</EmptyDescription>
+            <EmptyTitle>
+              <T>No repositories match these filters</T>
+            </EmptyTitle>
+            <EmptyDescription>
+              <T>Change the filters or search to show repositories.</T>
+            </EmptyDescription>
           </EmptyHeader>
         </Empty>
       )}
       {fetchedAt !== null ? (
         <p className="px-4 pb-4 text-right text-2xs text-muted-foreground">
-          Updated{" "}
+          <T>Updated</T>{" "}
           {new Date(fetchedAt).toLocaleTimeString([], { hour: "numeric", minute: "2-digit" })}
         </p>
       ) : null}
@@ -789,7 +868,7 @@ export function IssueBrowser({
             variant="outline"
           >
             <RefreshCwIcon aria-hidden className={cn(refreshing && "animate-spin")} />
-            Refresh
+            <T>Refresh</T>
           </Button>
           <div className="min-w-16 w-44 shrink">
             <InputGroup>
@@ -797,11 +876,11 @@ export function IssueBrowser({
                 <SearchIcon aria-hidden />
               </InputGroupAddon>
               <InputGroupInput
-                aria-label="Find an issue"
+                aria-label={gt("Find an issue")}
                 onChange={(event) =>
                   onSearchChange({ issueQuery: event.target.value || undefined })
                 }
-                placeholder="Find an issue"
+                placeholder={gt("Find an issue")}
                 size="sm"
                 type="search"
                 value={query}
@@ -827,8 +906,7 @@ export function IssueBrowser({
           />
           {stateFilter !== null && repositoryEntries.length > 0 ? (
             <span className="hidden shrink-0 text-xs tabular-nums text-muted-foreground @lg/issues-header:inline">
-              {totalCount}
-              {totalIncomplete ? "+" : ""} {stateNoun(totalCount, filters.state)}
+              {countLabelFor(totalCount, filters.state, totalIncomplete ? "+" : "")}
             </span>
           ) : null}
         </div>

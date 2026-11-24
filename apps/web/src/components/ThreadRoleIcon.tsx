@@ -1,8 +1,9 @@
+import { useMessages } from "gt-react";
 import { threadRoleDisplay, type RoleDisplayThread } from "./threadRoleDisplay";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "./ui/tooltip";
 
 export function ThreadRoleIcon({ thread }: { readonly thread: RoleDisplayThread }) {
-  const { label, description, icon: RoleIcon } = threadRoleDisplay(thread);
+  const { label, description, icon: RoleIcon } = threadRoleDisplay(thread, useMessages());
   const tooltip = `${label} · ${description}`;
   return (
     <Tooltip>

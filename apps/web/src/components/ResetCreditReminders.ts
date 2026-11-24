@@ -1,3 +1,6 @@
+import { msg } from "gt-react";
+import { m } from "~/i18n/messages";
+
 export const RESET_CREDIT_REMINDER_MINUTES = [1440, 720, 360, 180, 60, 30, 10, 5, 1] as const;
 
 export function resetCreditReminderKey(expiresAt: string, offsetMinutes: number): string {
@@ -34,11 +37,14 @@ export function resetCreditReminderBody(
   const minutes = Math.max(1, Math.ceil((Date.parse(expiresAt) - now) / 60_000));
   const duration =
     minutes >= 60 && minutes % 60 === 0
-      ? `${minutes / 60} ${minutes === 60 ? "hour" : "hours"}`
-      : `${minutes} ${minutes === 1 ? "minute" : "minutes"}`;
+      ? m(msg("{count, plural, one {{count} hour} other {{count} hours}}", { count: minutes / 60 }))
+      : m(msg("{count, plural, one {{count} minute} other {{count} minutes}}", { count: minutes }));
   const time = new Date(expiresAt).toLocaleTimeString(undefined, {
     hour: "numeric",
     minute: "2-digit",
   });
-  return `${provider} banked reset expires in ${duration} (at ${time}).${autoUse ? " T3 will use it 10 minutes before it expires." : ""}`;
+  const expiry = m(
+    msg("{provider} banked reset expires in {duration} (at {time}).", { provider, duration, time }),
+  );
+  return autoUse ? `${expiry} ${m(msg("T3 will use it 10 minutes before it expires."))}` : expiry;
 }

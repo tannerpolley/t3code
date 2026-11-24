@@ -1,3 +1,5 @@
+import { msg } from "gt-react";
+import { m, type MessageResolver } from "~/i18n/messages";
 import type { LocalServerHideRule } from "@t3tools/contracts";
 
 // The server's port scanner owns matching; these helpers only edit the environment's rule list.
@@ -14,7 +16,13 @@ export function parseLocalServerHideRule(input: string): LocalServerHideRule | n
   return { kind: "ports", from: Math.min(from, to), to: Math.max(from, to) };
 }
 
-export function describeLocalServerHideRule(rule: LocalServerHideRule): string {
-  if (rule.kind === "process") return `Process ${rule.processName}`;
-  return rule.from === rule.to ? `Port ${rule.from}` : `Ports ${rule.from}–${rule.to}`;
+export function describeLocalServerHideRule(
+  rule: LocalServerHideRule,
+  resolve: MessageResolver = m,
+): string {
+  if (rule.kind === "process")
+    return resolve(msg("Process {processName}", { processName: rule.processName }));
+  return rule.from === rule.to
+    ? resolve(msg("Port {from}", { from: rule.from }))
+    : resolve(msg("Ports {from}–{to}", { from: rule.from, to: rule.to }));
 }

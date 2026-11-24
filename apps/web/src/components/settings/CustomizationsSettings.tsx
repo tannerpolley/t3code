@@ -1,3 +1,4 @@
+import { T } from "gt-react";
 import { ForkSettingsSlot } from "./ForkSettings";
 import { FORK_SETTINGS_PAGES } from "./ForkSettingsPages";
 import { ForkSettingsMirror } from "./ForkSettingsRow";
@@ -8,7 +9,7 @@ export function CustomizationsSettings() {
   return (
     <SettingsPageContainer>
       <p className="px-3 text-sm text-muted-foreground sm:px-4">
-        Every fork setting, grouped by its normal Settings tab. Changes apply in both places.
+        <T>Every fork setting, grouped by its normal Settings tab. Changes apply in both places.</T>
       </p>
       <ForkSettingsMirror>
         {FORK_SETTINGS_PAGES.map((page) => (

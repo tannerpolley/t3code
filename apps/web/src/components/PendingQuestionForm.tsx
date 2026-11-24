@@ -1,3 +1,4 @@
+import { T, useGT } from "gt-react";
 import { useAtomValue } from "@effect/atom-react";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
 import {
@@ -35,6 +36,7 @@ export function PendingQuestionForm({
   requestId: RuntimeRequestId;
   children?: ReactNode;
 }) {
+  const gt = useGT();
   const threadRef = scopeThreadRef(environmentId, threadId);
   const thread = useThreadShell(threadRef);
   const project = useProject(thread ? scopeProjectRef(environmentId, thread.projectId) : null);
@@ -116,8 +118,8 @@ export function PendingQuestionForm({
         <Textarea
           className="mt-2"
           rows={2}
-          placeholder="Or type your own answer"
-          aria-label="Your own answer"
+          placeholder={gt("Or type your own answer")}
+          aria-label={gt("Your own answer")}
           value={progress.customAnswer}
           disabled={responding || !canRespond}
           onChange={(event) => {
@@ -147,7 +149,7 @@ export function PendingQuestionForm({
             disabled={responding}
             onClick={() => setQuestionIndex(progress.questionIndex - 1)}
           >
-            Back
+            <T>Back</T>
           </Button>
         ) : null}
         <Button
@@ -155,7 +157,7 @@ export function PendingQuestionForm({
           disabled={responding || !canRespond || !progress?.canAdvance}
           onClick={onAdvance}
         >
-          {progress?.isLastQuestion === false ? "Next" : "Submit"}
+          {progress?.isLastQuestion === false ? gt("Next") : gt("Submit")}
         </Button>
       </div>
     </>

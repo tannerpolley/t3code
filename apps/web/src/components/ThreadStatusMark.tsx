@@ -53,17 +53,21 @@ export function ThreadStatusMark({ status }: { readonly status: ThreadStatusMark
   const iconClass = "size-3.5 shrink-0";
   switch (status) {
     case "working":
-      return <Spinner aria-label="Working" size="sm" tone="working" />;
+      return <Spinner aria-label={gt("Working")} size="sm" tone="working" />;
     case "waiting":
       return (
         <CircleDotDashedIcon
-          aria-label="Waiting on background work"
+          aria-label={gt("Waiting on background work")}
           className={cn(iconClass, "text-muted-foreground")}
         />
       );
     case "done":
       return (
-        <span aria-label="Done" role="img" className={cn(iconClass, "grid place-items-center")}>
+        <span
+          aria-label={gt("Done")}
+          role="img"
+          className={cn(iconClass, "grid place-items-center")}
+        >
           <span className="size-2 rounded-full bg-success" />
         </span>
       );
@@ -86,7 +90,11 @@ export function ThreadStatusMark({ status }: { readonly status: ThreadStatusMark
     case "ready":
       // A settled thread still fills the slot, so the time beside it never shifts.
       return (
-        <span aria-label="Idle" role="img" className={cn(iconClass, "grid place-items-center")}>
+        <span
+          aria-label={gt("Idle")}
+          role="img"
+          className={cn(iconClass, "grid place-items-center")}
+        >
           <span className="size-2 rounded-full bg-sidebar-muted-foreground/35" />
         </span>
       );

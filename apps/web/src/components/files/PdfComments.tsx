@@ -1,3 +1,5 @@
+import { T, msg, useGT } from "gt-react";
+import { m } from "~/i18n/messages";
 import {
   createContext,
   useContext,
@@ -30,6 +32,7 @@ export function buildPdfReviewComment(input: {
   return {
     id: input.id,
     sectionId: `pdf:${input.filePath}`,
+    // oxlint-disable-next-line t3code/no-untranslated-copy -- Agents receive this prompt in English.
     sectionTitle: "PDF comment",
     filePath: input.filePath,
     startIndex: mark.page - 1,
@@ -120,7 +123,7 @@ export function PdfCommentsToolbar() {
     <>
       <Button variant="ghost" size="xs" aria-pressed={context.area} onClick={context.toggle}>
         <CrosshairIcon />
-        Mark area
+        <T>Mark area</T>
       </Button>
       <span>
         {count} {count === 1 ? "comment" : "comments"}
@@ -185,8 +188,8 @@ async function attachCrop(
     toastManager.add(
       stackedThreadToast({
         type: "error",
-        title: "Could not capture the picked element",
-        description: "Try saving the comment again once the page has finished drawing.",
+        title: m(msg("Could not capture the picked element")),
+        description: m(msg("Try saving the comment again once the page has finished drawing.")),
       }),
     );
     return false;
@@ -194,6 +197,7 @@ async function attachCrop(
 }
 
 export function PdfCommentsPage(props: { page: number; children: ReactNode }) {
+  const gt = useGT();
   const context = useContext(CommentsContext);
   const node = useRef<HTMLDivElement>(null);
   const start = useRef<{ x: number; y: number } | null>(null);
@@ -276,7 +280,7 @@ export function PdfCommentsPage(props: { page: number; children: ReactNode }) {
       {props.children}
       {context?.area && (
         <div
-          aria-label={`Mark area on page ${props.page}`}
+          aria-label={gt("Mark area on page {page}", { page: props.page })}
           className="absolute inset-0 cursor-crosshair touch-none"
           onPointerDown={(event) => {
             event.preventDefault();
@@ -321,7 +325,10 @@ export function PdfCommentsPage(props: { page: number; children: ReactNode }) {
             <button
               key={comment.id}
               type="button"
-              aria-label={`PDF comment ${index + 1}: ${comment.text}`}
+              aria-label={gt("PDF comment {number}: {text}", {
+                number: index + 1,
+                text: comment.text,
+              })}
               className="absolute border border-primary/55 bg-primary/10 text-start text-xs text-primary"
               style={position(comment.pdfMark!)}
               onClick={() =>

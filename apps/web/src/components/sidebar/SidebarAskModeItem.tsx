@@ -1,3 +1,4 @@
+import { useGT } from "gt-react";
 import { MessageCircleQuestionIcon } from "lucide-react";
 import type { CSSProperties } from "react";
 
@@ -11,13 +12,14 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 
 /** Ask mode reflects the inverse of the primary server's automatic-answer setting. */
 export function SidebarAskModeItem() {
+  const gt = useGT();
   const available = usePrimarySettingsAvailable();
   const on = usePrimarySettings((settings) => !settings.dontAskMode);
   const updateSettings = useUpdatePrimarySettings();
   if (!available) return null;
   const label = on
-    ? "Ask mode: on (agents can ask you questions)"
-    : "Ask mode: off (agents decide without asking)";
+    ? gt("Ask mode: on (agents can ask you questions)")
+    : gt("Ask mode: off (agents decide without asking)");
   return (
     <SidebarMenuItem className="shrink-0">
       <Tooltip>
@@ -47,8 +49,12 @@ export function SidebarAskModeItem() {
             <span className="font-medium text-foreground">{label}</span>
             <span className="text-muted-foreground">
               {on
-                ? "Turn off when you step away: questions get their recommended option and approvals are granted."
-                : "Questions get their recommended option and approvals are granted. Turn on to answer them yourself."}
+                ? gt(
+                    "Turn off when you step away: questions get their recommended option and approvals are granted.",
+                  )
+                : gt(
+                    "Questions get their recommended option and approvals are granted. Turn on to answer them yourself.",
+                  )}
             </span>
           </div>
         </TooltipPopup>

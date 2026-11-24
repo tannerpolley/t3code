@@ -1,3 +1,4 @@
+import { T, useGT } from "gt-react";
 import { useAtomValue } from "@effect/atom-react";
 import type {
   EnvironmentId,
@@ -81,6 +82,7 @@ function IssueRows({
   repository: string;
   capabilities: IssueHostCapabilities;
 }) {
+  const gt = useGT();
   const [savedPreferences, setPreferences] = useIssueFilterPreferences();
   const preferences = supportedIssueFilters(savedPreferences, capabilities);
   const [collapsed, toggleCollapsed] = useIssueSectionCollapsed(
@@ -121,12 +123,14 @@ function IssueRows({
     useRightPanelStore
       .getState()
       .openIssueList(scopeThreadRef(environmentId, threadId), { host, repository });
-  const showAllLabel = showAll ? "Show fewer issues" : `Show all issues (${hidden}${more} more)`;
+  const showAllLabel = showAll
+    ? gt("Show fewer issues")
+    : gt("Show all issues ({remaining} more)", { remaining: `${hidden}${more}` });
 
   return (
     <ThreadDetailsSection
       headingId="thread-details-issues-heading"
-      title="Issues"
+      title={gt("Issues")}
       showHeading={false}
     >
       {/* The heading is the section's own collapse toggle, so no row inside repeats it. */}
@@ -138,7 +142,9 @@ function IssueRows({
             className="flex min-w-0 cursor-pointer items-center gap-1.5 rounded-sm text-2xs font-medium text-muted-foreground select-none hover:text-foreground focus-visible:outline-none focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring/70"
             onClick={toggleCollapsed}
           >
-            <span className="truncate">Issues</span>
+            <span className="truncate">
+              <T>Issues</T>
+            </span>
             {total === null ? null : (
               <span className="tabular-nums text-muted-foreground/70">
                 {total}
@@ -152,7 +158,7 @@ function IssueRows({
           </button>
         </h3>
         <div className="flex shrink-0 items-center gap-1">
-          <IssueHeaderButton label="Browse all issues" onClick={browseAll}>
+          <IssueHeaderButton label={gt("Browse all issues")} onClick={browseAll}>
             <ListIcon aria-hidden className="size-3.5" />
           </IssueHeaderButton>
           {open && total !== null && total > VISIBLE_ISSUE_COUNT ? (
@@ -180,13 +186,21 @@ function IssueRows({
         </div>
       </div>
       {open ? (
-        <div className="flex flex-col" aria-label={`Issues in ${repository}`} role="group">
+        <div
+          className="flex flex-col"
+          aria-label={gt("Issues in {repository}", { repository })}
+          role="group"
+        >
           {list === null ? (
             result._tag === "Failure" ? (
-              <p className="px-2.5 py-1.5 text-xs text-muted-foreground/70">Issues unavailable</p>
+              <p className="px-2.5 py-1.5 text-xs text-muted-foreground/70">
+                <T>Issues unavailable</T>
+              </p>
             ) : null
           ) : total === 0 ? (
-            <p className="px-2.5 py-1.5 text-xs text-muted-foreground/70">No matching issues</p>
+            <p className="px-2.5 py-1.5 text-xs text-muted-foreground/70">
+              <T>No matching issues</T>
+            </p>
           ) : (
             <IssueRoadmap
               scope={{ host, repository }}

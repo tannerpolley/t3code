@@ -1,3 +1,4 @@
+import { T, useGT } from "gt-react";
 import { IssueWorkers } from "./IssueWorkers";
 import type {
   EnvironmentId,
@@ -58,6 +59,7 @@ function StartInWorktree({
   readonly issue: { readonly number: number; readonly title: string; readonly url: string };
   readonly threadRef: ScopedThreadRef | null;
 }) {
+  const gt = useGT();
   const projects = useProjects();
   const threadShell = useThreadShell(threadRef);
   const handleNewThread = useNewThreadHandler();
@@ -77,7 +79,7 @@ function StartInWorktree({
         variant="outline"
       >
         <GitBranchPlusIcon aria-hidden />
-        Prepare draft
+        <T>Prepare draft</T>
       </Button>
     );
   }
@@ -92,7 +94,7 @@ function StartInWorktree({
     }).catch(() => null);
     setStarting(false);
     if (opened === null) {
-      toastManager.add({ type: "error", title: "Could not open a thread" });
+      toastManager.add({ type: "error", title: gt("Could not open a thread") });
       return;
     }
     const title = issue.title || "Untitled issue";
@@ -110,7 +112,7 @@ function StartInWorktree({
       }}
     >
       <Input
-        aria-label="New branch name"
+        aria-label={gt("New branch name")}
         autoFocus
         className="flex-1"
         onChange={(event) => setBranch(event.target.value)}
@@ -118,10 +120,10 @@ function StartInWorktree({
         value={branch}
       />
       <Button disabled={refName.length === 0 || starting} size="xs" type="submit">
-        Create
+        <T>Create</T>
       </Button>
       <Button onClick={() => setBranch(null)} size="xs" type="button" variant="ghost">
-        Cancel
+        <T>Cancel</T>
       </Button>
     </form>
   );
@@ -139,6 +141,7 @@ function IssueComposerMenu({
   readonly issue: RepositoryIssueSummary;
   readonly threadRef: ScopedThreadRef | null;
 }) {
+  const gt = useGT();
   const { paste, pending, implementation, hasComposer } = useIssueComposerHandoff({
     environmentId,
     reference,
@@ -147,18 +150,20 @@ function IssueComposerMenu({
   });
   return (
     <Menu>
-      <MenuTrigger render={<Button aria-label="Send to composer" size="xs" variant="outline" />}>
+      <MenuTrigger
+        render={<Button aria-label={gt("Send to composer")} size="xs" variant="outline" />}
+      >
         <MessageCircleQuestionIcon aria-hidden />
-        Ask agent
+        <T>Ask agent</T>
       </MenuTrigger>
       <MenuPopup align="end" side="bottom">
         <MenuItem disabled={pending || !hasComposer} onClick={() => void paste("ask")}>
           <MessageCircleQuestionIcon />
-          Ask a question
+          <T>Ask a question</T>
         </MenuItem>
         <MenuItem disabled={pending || !hasComposer} onClick={() => void paste("explain")}>
           <BookOpenIcon />
-          Explain this issue
+          <T>Explain this issue</T>
         </MenuItem>
         <MenuItem
           disabled={pending || implementation.threadRef === null}
@@ -166,7 +171,9 @@ function IssueComposerMenu({
         >
           <HammerIcon />
           <span className="flex flex-col">
-            <span>Implement this issue</span>
+            <span>
+              <T>Implement this issue</T>
+            </span>
             {implementation.disabledReason ? (
               <span className="text-xs text-muted-foreground">{implementation.disabledReason}</span>
             ) : null}
@@ -254,13 +261,14 @@ function IssueWorkFacts({
   readonly issue: RepositoryIssueSummary;
   readonly threadRef: ScopedThreadRef | null;
 }) {
+  const gt = useGT();
   const openIssue = useOpenIssueLink(threadRef ?? undefined);
   return (
     <div className="space-y-1.5 px-4 pb-3 text-xs">
       <LiveIssueStateBadge issue={issue} reference={reference} environmentId={environmentId} />
       <IssueWorkers issue={issue} environmentId={environmentId} />
       {issue.projects?.length ? (
-        <PullRequestMetaRow icon={<FolderKanbanIcon className="size-3.5" />} label="Projects">
+        <PullRequestMetaRow icon={<FolderKanbanIcon className="size-3.5" />} label={gt("Projects")}>
           <span className="flex flex-wrap gap-x-3 gap-y-1">
             {issue.projects.map((project) => (
               <span key={project.id}>
@@ -273,12 +281,15 @@ function IssueWorkFacts({
         </PullRequestMetaRow>
       ) : null}
       {issue.subIssues && issue.subIssues.total > 0 ? (
-        <PullRequestMetaRow icon={<ListTreeIcon className="size-3.5" />} label="Sub-issues">
+        <PullRequestMetaRow icon={<ListTreeIcon className="size-3.5" />} label={gt("Sub-issues")}>
           {issue.subIssues.completed} / {issue.subIssues.total} completed
         </PullRequestMetaRow>
       ) : null}
       {issue.blockedBy?.length ? (
-        <PullRequestMetaRow icon={<CircleAlertIcon className="size-3.5" />} label="Blocked by">
+        <PullRequestMetaRow
+          icon={<CircleAlertIcon className="size-3.5" />}
+          label={gt("Blocked by")}
+        >
           <span className="flex flex-wrap gap-2">
             {issue.blockedBy.map((blocker) => {
               const url = `https://${blocker.host}/${blocker.repository}/issues/${blocker.number}`;
@@ -292,7 +303,7 @@ function IssueWorkFacts({
                   className="hover:underline"
                 >
                   {blocker.repository} #{blocker.number}
-                  {blocker.state === "closed" ? " (closed)" : ""}
+                  {blocker.state === "closed" ? gt(" (closed)") : ""}
                 </a>
               );
             })}

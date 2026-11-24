@@ -1,3 +1,4 @@
+import type { MessageResolver } from "~/i18n/messages";
 import { resolveForkSubagentMetadata } from "../chat/ForkModelNames";
 import { getDescriptorStringValue } from "@t3tools/client-runtime/model-traits";
 import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
@@ -172,8 +173,8 @@ export function sidebarEffortGlyph(
 }
 
 /** The role name a row shows beside its title, matching its role icon. */
-export function sidebarRoleLabel(thread: RoleDisplayThread): string {
-  return threadRoleDisplay(thread).label;
+export function sidebarRoleLabel(thread: RoleDisplayThread, resolve?: MessageResolver): string {
+  return threadRoleDisplay(thread, resolve).label;
 }
 
 /**

@@ -370,13 +370,10 @@ function ProviderPluginsSection() {
   );
 }
 
-const PROJECT_ICON_FALLBACK_LABELS = { folder: "Folder", initials: "Initials" } as const;
-const SIDEBAR_TOGGLE_POSITION_LABELS = { left: "Left", right: "Right" } as const;
 const LINEAGE_AUTO_CLEAR_MINUTES = [0, 30, 60] as const;
-const lineageAutoClearLabel = (minutes: number) =>
-  minutes === 0 ? "Off" : minutes === 60 ? "1 hour" : `${minutes} minutes`;
 
 function LocalServerHideRulesRow() {
+  const resolve = useMessages();
   const gt = useGT();
   const searchableSetting = useSearchableSetting();
   const rules = useScopedSettings((settings) => settings.localServerHideRules);
@@ -399,7 +396,7 @@ function LocalServerHideRulesRow() {
     >
       <div className="flex max-w-2xl flex-col gap-2 pb-3.5">
         {rules.map((rule) => {
-          const label = describeLocalServerHideRule(rule);
+          const label = describeLocalServerHideRule(rule, resolve);
           return (
             <div key={label} className="flex items-center justify-between gap-2 text-sm">
               <span>{label}</span>
@@ -443,13 +440,15 @@ function LocalServerHideRulesRow() {
 }
 
 const isSidebarThreadSortOrder = Schema.is(SidebarThreadSortOrder);
-const SIDEBAR_THREAD_SORT_ORDER_LABELS = {
-  updated_at: "Last user message",
-  created_at: "Created at",
-};
-
 function ForkGeneralSettings() {
   const gt = useGT();
+  const threadOrderLabels = { updated_at: gt("Last user message"), created_at: gt("Created at") };
+  const lineageAutoClearLabel = (minutes: number) =>
+    minutes === 0
+      ? gt("Off")
+      : minutes === 60
+        ? gt("1 hour")
+        : gt("{minutes} minutes", { minutes });
   const searchableSetting = useSearchableSetting();
   const settings = useClientSettings();
   return (
@@ -482,14 +481,12 @@ function ForkGeneralSettings() {
               }}
             >
               <SelectTrigger size="sm" className="w-full sm:w-44" aria-label={gt("Thread order")}>
-                <SelectValue>
-                  {SIDEBAR_THREAD_SORT_ORDER_LABELS[settings.sidebarThreadSortOrder]}
-                </SelectValue>
+                <SelectValue>{threadOrderLabels[settings.sidebarThreadSortOrder]}</SelectValue>
               </SelectTrigger>
               <SelectPopup align="end" alignItemWithTrigger={false}>
                 {SidebarThreadSortOrder.literals.map((sortOrder) => (
                   <SelectItem hideIndicator key={sortOrder} value={sortOrder}>
-                    {SIDEBAR_THREAD_SORT_ORDER_LABELS[sortOrder]}
+                    {threadOrderLabels[sortOrder]}
                   </SelectItem>
                 ))}
               </SelectPopup>
@@ -695,13 +692,13 @@ function ForkGeneralBehaviorRows() {
                   ? gt("Mixed")
                   : settings.idleAgentSessionMinutes === 0
                     ? gt("Off")
-                    : `${settings.idleAgentSessionMinutes} minutes`}
+                    : gt("{minutes} minutes", { minutes: settings.idleAgentSessionMinutes })}
               </SelectValue>
             </SelectTrigger>
             <SelectPopup align="end" alignItemWithTrigger={false}>
               {[0, 15, 30, 45, 60, 90, 120].map((minutes) => (
                 <SelectItem key={minutes} hideIndicator value={String(minutes)}>
-                  {minutes === 0 ? gt("Off") : `${minutes} minutes`}
+                  {minutes === 0 ? gt("Off") : gt("{minutes} minutes", { minutes })}
                 </SelectItem>
               ))}
             </SelectPopup>
@@ -714,6 +711,11 @@ function ForkGeneralBehaviorRows() {
 
 function ForkAppearanceSettings() {
   const gt = useGT();
+  const projectIconLabels = { folder: gt("Folder"), initials: gt("Initials") };
+  const sidebarToggleLabels = {
+    left: gt("Left", { $context: "position" }),
+    right: gt("Right", { $context: "position" }),
+  };
   const searchableSetting = useSearchableSetting();
   const settings = useClientSettings();
   return (
@@ -739,16 +741,14 @@ function ForkAppearanceSettings() {
                 className="w-full sm:w-40"
                 aria-label={gt("Toggle button position")}
               >
-                <SelectValue>
-                  {SIDEBAR_TOGGLE_POSITION_LABELS[settings.sidebarTogglePosition]}
-                </SelectValue>
+                <SelectValue>{sidebarToggleLabels[settings.sidebarTogglePosition]}</SelectValue>
               </SelectTrigger>
               <SelectPopup align="end" alignItemWithTrigger={false}>
                 <SelectItem hideIndicator value="left">
-                  {SIDEBAR_TOGGLE_POSITION_LABELS.left}
+                  {sidebarToggleLabels.left}
                 </SelectItem>
                 <SelectItem hideIndicator value="right">
-                  {SIDEBAR_TOGGLE_POSITION_LABELS.right}
+                  {sidebarToggleLabels.right}
                 </SelectItem>
               </SelectPopup>
             </Select>
@@ -773,16 +773,14 @@ function ForkAppearanceSettings() {
                 className="w-full sm:w-40"
                 aria-label={gt("Default project icon")}
               >
-                <SelectValue>
-                  {PROJECT_ICON_FALLBACK_LABELS[settings.projectIconFallback]}
-                </SelectValue>
+                <SelectValue>{projectIconLabels[settings.projectIconFallback]}</SelectValue>
               </SelectTrigger>
               <SelectPopup align="end" alignItemWithTrigger={false}>
                 <SelectItem hideIndicator value="folder">
-                  {PROJECT_ICON_FALLBACK_LABELS.folder}
+                  {projectIconLabels.folder}
                 </SelectItem>
                 <SelectItem hideIndicator value="initials">
-                  {PROJECT_ICON_FALLBACK_LABELS.initials}
+                  {projectIconLabels.initials}
                 </SelectItem>
               </SelectPopup>
             </Select>

@@ -1,3 +1,5 @@
+import { msg, useMessages } from "gt-react";
+import { m, type MessageResolver } from "~/i18n/messages";
 import { shellProgramName } from "@t3tools/shared/shellCommand";
 import { ProcessProgramIcon } from "../ProcessProgramIcon";
 import { ClockIcon, ServerIcon, TerminalIcon } from "lucide-react";
@@ -8,7 +10,7 @@ import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { PierreEntryIcon } from "./PierreEntryIcon";
 
 const COMMAND_KIND_LABELS: Record<string, string> = {
-  server: "Running server",
+  server: msg("Running server"),
   bash: "Bash",
   python: "Python",
   pytest: "pytest",
@@ -24,11 +26,11 @@ const COMMAND_KIND_LABELS: Record<string, string> = {
   ruby: "Ruby",
   c: "C",
   cpp: "C++",
-  make: "Build",
+  make: msg("Build", { $context: "noun, background build process" }),
   docker: "Docker",
   latex: "LaTeX",
   git: "Git",
-  watcher: "Watcher",
+  watcher: msg("Watcher"),
 };
 
 const COMMAND_KIND_FILE: Record<string, string> = {
@@ -56,11 +58,15 @@ const COMMAND_KIND_LANGUAGE: Record<string, string> = {
   latex: "latex",
 };
 
-export function backgroundProcessKindLabel(kind?: string, commandKind?: string): string {
-  return kind === "monitor" || commandKind === "watcher"
-    ? "Watcher"
-    : (COMMAND_KIND_LABELS[commandKind ?? ""] ??
-        (kind === "background_task" ? "Background task" : "Shell"));
+export function backgroundProcessKindLabel(
+  kind?: string,
+  commandKind?: string,
+  resolve: MessageResolver = m,
+): string {
+  const commandLabel = COMMAND_KIND_LABELS[kind === "monitor" ? "watcher" : (commandKind ?? "")];
+  return resolve(
+    commandLabel ?? (kind === "background_task" ? msg("Background task") : msg("Shell")),
+  );
 }
 
 export function BackgroundProcessKindIcon(props: {
@@ -72,7 +78,7 @@ export function BackgroundProcessKindIcon(props: {
   const { resolvedTheme } = useTheme();
   const program =
     (props.command ? shellProgramName(props.command) : null) ?? props.commandKind ?? "";
-  const label = backgroundProcessKindLabel(props.kind, props.commandKind);
+  const label = backgroundProcessKindLabel(props.kind, props.commandKind, useMessages());
   const iconClassName = cn("size-4", props.className);
   const fileName = props.commandKind
     ? (COMMAND_KIND_FILE[props.commandKind] ??

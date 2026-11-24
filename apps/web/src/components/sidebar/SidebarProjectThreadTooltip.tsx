@@ -1,3 +1,4 @@
+import { T, useGT, useMessages } from "gt-react";
 import { useIssueStateLabel } from "../issues/IssueStateIcon";
 import { useClientSettings } from "../../hooks/useSettings";
 import { useAtomValue } from "@effect/atom-react";
@@ -44,10 +45,11 @@ const remoteMachineAtom = Atom.family((environmentId: EnvironmentId) =>
 const SidebarProjectThreadMachine = memo(function SidebarProjectThreadMachine(props: {
   readonly environmentId: EnvironmentId;
 }) {
+  const gt = useGT();
   const machine = useAtomValue(remoteMachineAtom(props.environmentId));
   return machine === null ? null : (
     <EnvironmentMachineIcon
-      aria-label="Remote environment"
+      aria-label={gt("Remote environment")}
       kind={machine}
       className="size-3 shrink-0 text-muted-foreground"
     />
@@ -58,13 +60,22 @@ export function ThreadIssueBadge(props: {
   readonly issue: ThreadLinkedIssue | undefined;
   readonly environmentId: EnvironmentId;
 }) {
+  const gt = useGT();
   const presentation = useSidebarIssuePresentation(props.environmentId, props.issue);
   const label = useIssueStateLabel(presentation?.label ?? "");
   if (props.issue === undefined) return null;
   return (
     <span
       role="img"
-      aria-label={`Issue #${props.issue.number}: ${props.issue.title}${presentation ? `, ${label}` : ""}`}
+      aria-label={
+        presentation
+          ? gt("Issue #{number}: {title}, {state}", {
+              number: props.issue.number,
+              title: props.issue.title,
+              state: label,
+            })
+          : gt("Issue #{number}: {title}", { number: props.issue.number, title: props.issue.title })
+      }
       className={cn(
         "inline-flex shrink-0 items-center gap-0.5",
         presentation?.toneClassName ?? "text-muted-foreground",
@@ -78,7 +89,7 @@ export function ThreadIssueBadge(props: {
 
 /** The pull request badge: workers keep the request glyph, orchestrators the state's own. */
 export function ThreadPullRequestBadge(props: { readonly thread: SidebarThreadSummary }) {
-  const pr = sidebarProjectThreadPullRequests(props.thread.pullRequests);
+  const pr = sidebarProjectThreadPullRequests(props.thread.pullRequests, useMessages());
   // Workers opened their pull requests, so they keep the request glyph in its state's color;
   // orchestrators show the state's own glyph, such as the merge they made.
   const PrIcon =
@@ -137,14 +148,18 @@ type ThreadTooltipProps = {
 
 /** The portal mounts these local-state reads only while its row is hovered; no Git/PR queries. */
 function SidebarProjectThreadTooltipPopup({ thread, provider }: ThreadTooltipProps) {
+  const gt = useGT();
   const project = useProject(scopeProjectRef(thread.environmentId, thread.projectId));
   const identities = useEnvironmentIdentities();
   const machine = useAtomValue(remoteMachineAtom(thread.environmentId));
-  const checkout = sidebarProjectThreadCheckout({
-    worktreePath: thread.worktreePath,
-    projectPath: project?.workspaceRoot,
-    preparingWorktree: isThreadPreparingWorktree(thread.source),
-  });
+  const checkout = sidebarProjectThreadCheckout(
+    {
+      worktreePath: thread.worktreePath,
+      projectPath: project?.workspaceRoot,
+      preparingWorktree: isThreadPreparingWorktree(thread.source),
+    },
+    useMessages(),
+  );
   return (
     <ThreadHoverCard
       title={thread.title}
@@ -165,7 +180,9 @@ function SidebarProjectThreadTooltipPopup({ thread, provider }: ThreadTooltipPro
       {thread.branch ? (
         <div className="flex min-w-0 items-start gap-2">
           <GitBranchIcon aria-hidden className="size-3 shrink-0" />
-          <span className="wrap-anywhere">Branch: {thread.branch}</span>
+          <span className="wrap-anywhere">
+            <T>Branch:</T> {thread.branch}
+          </span>
         </div>
       ) : null}
       {machine ? (
@@ -173,16 +190,20 @@ function SidebarProjectThreadTooltipPopup({ thread, provider }: ThreadTooltipPro
           <EnvironmentMachineIcon aria-hidden kind={machine} className="size-3 shrink-0" />
           <span className="wrap-anywhere">
             {identities.find((entry) => entry.environmentId === thread.environmentId)?.label ??
-              "Remote environment"}
+              gt("Remote environment")}
           </span>
         </div>
       ) : null}
       <div className="wrap-anywhere">
-        Provider: {provider?.displayName ?? thread.providerInstanceId}
+        <T>Provider:</T> {provider?.displayName ?? thread.providerInstanceId}
       </div>
-      <div className="wrap-anywhere">Model: {resolveSidebarThreadModelLabel(thread, provider)}</div>
+      <div className="wrap-anywhere">
+        <T>Model:</T> {resolveSidebarThreadModelLabel(thread, provider)}
+      </div>
       {isProviderNativeSubagentThread(thread.source) ? (
-        <div>Native subagent · Runs on its own · Open parent to direct it</div>
+        <div>
+          <T>Native subagent · Runs on its own · Open parent to direct it</T>
+        </div>
       ) : null}
     </ThreadHoverCard>
   );

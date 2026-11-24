@@ -6,7 +6,7 @@ import ja from "../../i18n/translations/ja.json";
 import { searchSettings } from "./settingsSearch";
 
 describe("searchSettings", () => {
-  it("finds the worktree location by its Japanese and fork-specific keywords", async () => {
+  it("finds fork settings by localized labels and English aliases", async () => {
     initializeGT({
       defaultLocale: "en",
       locales: ["en", "ja"],
@@ -17,6 +17,9 @@ describe("searchSettings", () => {
     using _locale = { [Symbol.dispose]: () => setActiveLocale(previous) };
     setActiveLocale("ja");
 
+    expect(searchSettings("スレッドの無活動", undefined, m).map((item) => item.id)).toContain(
+      "quiet-thread-minutes",
+    );
     for (const query of ["外付け", "inside project local .worktrees"]) {
       expect(searchSettings(query, undefined, m).map((item) => item.id)).toContain(
         "storage-worktrees-location",

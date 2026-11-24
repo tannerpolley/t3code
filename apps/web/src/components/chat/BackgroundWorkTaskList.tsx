@@ -1,5 +1,5 @@
 import type { EnvironmentId, ThreadId } from "@t3tools/contracts";
-import { useGT } from "gt-react";
+import { T, useGT, useMessages } from "gt-react";
 import { useState, type ComponentProps, type ReactNode } from "react";
 
 import { useClientSettings } from "../../hooks/useSettings";
@@ -36,6 +36,7 @@ export function BackgroundWorkTaskList(props: {
   >;
 }) {
   const gt = useGT();
+  const resolve = useMessages();
   const { agents, backgroundTasks } = groupBackgroundWorkTaskRows(props.rows);
   const processOutput = useClientSettings((settings) => settings.backgroundProcessOutput);
   const { listRef, isVisible } = useBackgroundTaskListVisibility(backgroundTasks.length > 0);
@@ -89,7 +90,8 @@ export function BackgroundWorkTaskList(props: {
               </div>
               <div className="flex flex-wrap items-center gap-2 text-muted-foreground">
                 <span>
-                  {pullRequestLabel ?? backgroundProcessKindLabel(row.kind, row.commandKind)}
+                  {pullRequestLabel ??
+                    backgroundProcessKindLabel(row.kind, row.commandKind, resolve)}
                 </span>
                 {row.startedAt ? (
                   <BackgroundShellElapsed startedAt={row.startedAt} commandKind={row.commandKind} />
@@ -97,7 +99,9 @@ export function BackgroundWorkTaskList(props: {
                 {/* No sample yet (off screen or loading) says nothing; only a sampled miss is "unavailable". */}
                 {usage === undefined ? null : usage.cpuPercent == null ||
                   usage.residentBytes == null ? (
-                  <span>Usage unavailable</span>
+                  <span>
+                    <T>Usage unavailable</T>
+                  </span>
                 ) : (
                   <BackgroundTaskResourceUsageLabel usage={usage} />
                 )}
@@ -120,17 +124,22 @@ function BackgroundTaskOutputDetails(props: {
   readonly label: string;
   readonly output?: ReactNode;
 }) {
+  const gt = useGT();
   const [open, setOpen] = useState(false);
   return (
     <div>
       <Button
         variant="ghost"
         size="xs"
-        aria-label={`${open ? "Hide" : "Show"} output for ${props.label}`}
+        aria-label={
+          open
+            ? gt("Hide output for {label}", { label: props.label })
+            : gt("Show output for {label}", { label: props.label })
+        }
         aria-expanded={open}
         onClick={() => setOpen((value) => !value)}
       >
-        {open ? "Hide output" : "Show output"}
+        {open ? gt("Hide output") : gt("Show output")}
       </Button>
       {open ? (props.output ?? <BackgroundProcessOutputView {...props} />) : null}
     </div>

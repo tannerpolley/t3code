@@ -1,3 +1,4 @@
+import { T, msg, useGT, useMessages } from "gt-react";
 import type { IssueHostCapabilities } from "@t3tools/contracts";
 import { ListFilterIcon } from "lucide-react";
 
@@ -35,17 +36,17 @@ type ShowKey = {
 }[keyof IssueFilterPreferences];
 
 const ISSUE_OPTIONS: ReadonlyArray<readonly [ShowKey, string]> = [
-  ["open", "Open"],
-  ["closed", "Closed"],
+  ["open", msg("Open", { $context: "issue state" })],
+  ["closed", msg("Closed")],
 ];
 const REPOSITORY_OPTIONS: ReadonlyArray<readonly [ShowKey, string]> = [
-  ["archived", "Archived"],
-  ["forks", "Forks"],
-  ["empty", "Empty"],
-  ["public", "Public"],
-  ["private", "Private"],
-  ["personal", "Personal"],
-  ["organizations", "Organizations"],
+  ["archived", msg("Archived")],
+  ["forks", msg("Forks")],
+  ["empty", msg("Empty")],
+  ["public", msg("Public")],
+  ["private", msg("Private")],
+  ["personal", msg("Personal")],
+  ["organizations", msg("Organizations")],
 ];
 
 function RadioSection<Value extends string>({
@@ -97,6 +98,8 @@ export function IssueFilterMenu({
   /** A single repository's host; filters it cannot answer are hidden. */
   capabilities?: Pick<IssueHostCapabilities, "assignees"> | undefined;
 }) {
+  const gt = useGT();
+  const resolve = useMessages();
   const assignees = capabilities?.assignees !== false;
   const changed = singleRepository
     ? (["open", "closed", "assignee"] as const).filter(
@@ -111,14 +114,14 @@ export function IssueFilterMenu({
       checked={preferences[key]}
       onCheckedChange={(checked) => onChange({ ...preferences, [key]: checked })}
     >
-      {label}
+      {resolve(label)}
     </MenuCheckboxItem>
   );
   return (
     <Menu>
       {singleRepository ? (
         <MenuTrigger
-          aria-label="Filter issues"
+          aria-label={gt("Filter issues")}
           render={<Button size="icon-xs" variant={changed > 0 ? "ghost" : "ghost-muted"} />}
         >
           <ListFilterIcon aria-hidden className="size-3.5" />
@@ -126,7 +129,9 @@ export function IssueFilterMenu({
       ) : (
         <MenuTrigger render={<Button size="sm" variant="outline" />}>
           <ListFilterIcon aria-hidden className="size-3.5" />
-          <span>Filter</span>
+          <span>
+            <T>Filter</T>
+          </span>
           {changed > 0 ? (
             <span className="rounded-full bg-muted px-1.5 text-xs tabular-nums text-muted-foreground">
               {changed}
@@ -136,14 +141,18 @@ export function IssueFilterMenu({
       )}
       <MenuPopup align="end" side="bottom" className="max-h-[70vh] w-52 overflow-y-auto">
         <MenuGroup>
-          <MenuGroupLabel>Show issues</MenuGroupLabel>
+          <MenuGroupLabel>
+            <T>Show issues</T>
+          </MenuGroupLabel>
           {ISSUE_OPTIONS.map(checkbox)}
         </MenuGroup>
         {singleRepository ? null : (
           <>
             <MenuSeparator />
             <MenuGroup>
-              <MenuGroupLabel>Show repositories</MenuGroupLabel>
+              <MenuGroupLabel>
+                <T>Show repositories</T>
+              </MenuGroupLabel>
               {REPOSITORY_OPTIONS.map(checkbox)}
             </MenuGroup>
           </>
@@ -152,12 +161,12 @@ export function IssueFilterMenu({
           <>
             <MenuSeparator />
             <RadioSection
-              label="Assignment"
+              label={gt("Assignment")}
               value={preferences.assignee}
               options={[
-                ["all", "Everyone"],
-                ["assigned", "Assigned"],
-                ["unassigned", "Unassigned"],
+                ["all", gt("Everyone")],
+                ["assigned", gt("Assigned")],
+                ["unassigned", gt("Unassigned")],
               ]}
               onChange={(assignee) => onChange({ ...preferences, assignee })}
             />
@@ -167,22 +176,22 @@ export function IssueFilterMenu({
           <>
             <MenuSeparator />
             <RadioSection
-              label="Host"
+              label={gt("Host")}
               value={host}
-              options={[["", "All hosts"], ...hosts.map((entry) => [entry, entry] as const)]}
+              options={[["", gt("All hosts")], ...hosts.map((entry) => [entry, entry] as const)]}
               onChange={onHostChange}
             />
           </>
         ) : null}
         <MenuSeparator />
         <RadioSection
-          label="Sort issues"
+          label={gt("Sort issues")}
           value={preferences.sort}
           options={[
-            ["updated", "Recently updated"],
-            ["oldest", "Oldest updated"],
-            ["number", "Issue number"],
-            ["title", "Title"],
+            ["updated", gt("Recently updated")],
+            ["oldest", gt("Oldest updated")],
+            ["number", gt("Issue number")],
+            ["title", gt("Title")],
           ]}
           onChange={(sort) => onChange({ ...preferences, sort })}
         />

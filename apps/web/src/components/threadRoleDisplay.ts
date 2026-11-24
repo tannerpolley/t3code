@@ -1,7 +1,9 @@
+import { msg } from "gt-react";
+import { m, type MessageResolver } from "~/i18n/messages";
 import {
   effectiveThreadRole,
   isProviderNativeSubagentThread,
-  THREAD_ROLE_LABELS,
+  type ThreadRole,
   type OrchestrationV2AppThread,
 } from "@t3tools/contracts";
 import {
@@ -28,15 +30,27 @@ const ROLE_ICONS = {
   implementor: WrenchIcon,
   reviewer: ShieldCheckIcon,
 };
+const ROLE_LABELS = {
+  orchestrator: msg("Orchestrator"),
+  designer: msg("Designer", { $context: "agent role" }),
+  writer: msg("Writer", { $context: "agent role" }),
+  implementor: msg("Implementor"),
+  reviewer: msg("Reviewer"),
+} satisfies Record<ThreadRole, string>;
+
+export function threadRoleLabel(role: ThreadRole, resolve: MessageResolver = m) {
+  return resolve(ROLE_LABELS[role]);
+}
+
 const ROLE_DESCRIPTIONS = {
-  designer: "Gathers evidence and plans issues",
-  writer: "Writes deliverables with your direct guidance",
-  orchestrator: "Coordinates the repository's work and starts workers",
-  implementor: "Makes the changes in its own worktree",
-  reviewer: "Reviews work read-only",
+  designer: msg("Gathers evidence and plans issues"),
+  writer: msg("Writes deliverables with your direct guidance"),
+  orchestrator: msg("Coordinates the repository's work and starts workers"),
+  implementor: msg("Makes the changes in its own worktree"),
+  reviewer: msg("Reviews work read-only"),
 };
 
-export function threadRoleDisplay(thread: RoleDisplayThread) {
+export function threadRoleDisplay(thread: RoleDisplayThread, resolve: MessageResolver = m) {
   const native = isProviderNativeSubagentThread(thread);
   const role = effectiveThreadRole(thread);
   const worker = native && role === "implementor";
@@ -44,17 +58,21 @@ export function threadRoleDisplay(thread: RoleDisplayThread) {
   const manager =
     !native && role === "orchestrator" && thread.lineage.relationshipToParent === "subagent";
   const description = worker
-    ? "Carries out work assigned by its parent"
+    ? resolve(msg("Carries out work assigned by its parent"))
     : manager
-      ? "Coordinates a family of work for its parent orchestrator"
-      : ROLE_DESCRIPTIONS[role];
+      ? resolve(msg("Coordinates a family of work for its parent orchestrator"))
+      : resolve(ROLE_DESCRIPTIONS[role]);
   const relationship = native
-    ? " · Provider's own subagent · Runs on its own · Open parent to direct it"
+    ? resolve(msg(" · Provider's own subagent · Runs on its own · Open parent to direct it"))
     : thread.lineage.relationshipToParent === "subagent"
-      ? " · Child thread · You can send messages here"
+      ? resolve(msg(" · Child thread · You can send messages here"))
       : "";
   return {
-    label: worker ? "Worker" : manager ? "Manager" : THREAD_ROLE_LABELS[role],
+    label: worker
+      ? resolve(msg("Worker"))
+      : manager
+        ? resolve(msg("Manager"))
+        : threadRoleLabel(role, resolve),
     description: `${description}${relationship}`,
     icon: worker ? HardHatIcon : manager ? BriefcaseIcon : ROLE_ICONS[role],
   };

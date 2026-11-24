@@ -1,3 +1,4 @@
+import { T, useGT } from "gt-react";
 import { useAtomValue } from "@effect/atom-react";
 import {
   repositoryPhase,
@@ -34,12 +35,14 @@ export function IssueWorkerLimitControl({
   pool?: "worker" | "readOnly";
   onSettled: () => void;
 }) {
+  const gt = useGT();
   const currentLimit = pool === "worker" ? config.workerLimit : config.readOnlyLimit;
   const command =
     pool === "worker"
       ? repositoryIssueEnvironment.setWorkerLimit
       : repositoryIssueEnvironment.setReadOnlyLimit;
-  const label = pool === "worker" ? "worker" : "read-only";
+  const worker = pool === "worker";
+  const changeLabel = worker ? gt("Change worker limit") : gt("Change read-only limit");
   const [draft, setDraft] = useState(String(currentLimit));
   const [busy, setBusy] = useState(false);
   const canSetLimit = useAtomValue(command.permissionAtom(environmentId));
@@ -55,7 +58,7 @@ export function IssueWorkerLimitControl({
   return (
     <span className="flex min-w-0 items-center gap-1">
       <span className="truncate" role="status">
-        {slotsInUse} of {currentLimit} in use
+        {gt("{used} of {limit} in use", { used: slotsInUse, limit: currentLimit })}
       </span>
       {canSetLimit ? (
         <Popover>
@@ -67,7 +70,7 @@ export function IssueWorkerLimitControl({
                     <Button
                       variant="ghost"
                       size="icon-xs"
-                      aria-label={`Change ${label} limit`}
+                      aria-label={changeLabel}
                       disabled={disabled}
                     />
                   }
@@ -76,7 +79,7 @@ export function IssueWorkerLimitControl({
             >
               <PencilIcon />
             </TooltipTrigger>
-            <TooltipPopup side="bottom">{`Change ${label} limit`}</TooltipPopup>
+            <TooltipPopup side="bottom">{changeLabel}</TooltipPopup>
           </Tooltip>
           <PopoverPopup align="start" padding="compact">
             <form
@@ -97,18 +100,24 @@ export function IssueWorkerLimitControl({
                 if (result._tag === "Failure")
                   toastManager.add({
                     type: "error",
-                    title: `Could not update the repository ${label} limit`,
+                    title: worker
+                      ? gt("Could not update the repository worker limit")
+                      : gt("Could not update the repository read-only limit"),
                     description: formatEnvironmentQueryError(result.cause),
                   });
                 onSettled();
               }}
             >
-              <span className="text-xs text-muted-foreground">Up to</span>
+              <span className="text-xs text-muted-foreground">
+                <T>Up to</T>
+              </span>
               <div className="w-16">
                 <Input
                   type="number"
                   size="compact"
-                  aria-label={`Repository ${label} limit`}
+                  aria-label={
+                    worker ? gt("Repository worker limit") : gt("Repository read-only limit")
+                  }
                   min={1}
                   max={32}
                   step={1}
@@ -119,14 +128,14 @@ export function IssueWorkerLimitControl({
                 />
               </div>
               <span className="text-xs text-muted-foreground">
-                {pool === "worker" ? "workers" : "read-only children"}
+                {worker ? gt("workers") : gt("read-only children")}
               </span>
               <Button
                 size="xs"
                 type="submit"
                 disabled={disabled || !valid || limit === currentLimit}
               >
-                Save
+                <T>Save</T>
               </Button>
             </form>
           </PopoverPopup>

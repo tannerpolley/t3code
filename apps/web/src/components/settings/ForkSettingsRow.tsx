@@ -1,3 +1,4 @@
+import { T } from "gt-react";
 import { createContext, useContext, type ComponentProps, type ReactNode } from "react";
 import { Badge } from "../ui/badge";
 import { SettingsRow } from "./settingsLayout";
@@ -12,7 +13,7 @@ export function ForkSettingsMirror({ children }: { readonly children: ReactNode 
 export function ForkSettingsTag() {
   return (
     <Badge variant="outline" size="sm">
-      Fork
+      <T>Fork</T>
     </Badge>
   );
 }
