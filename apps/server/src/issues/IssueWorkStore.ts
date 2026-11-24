@@ -126,6 +126,10 @@ export class IssueWorkStore extends Context.Service<
     readonly workerThreads: (
       rootThreadId: ThreadId,
     ) => Effect.Effect<ReadonlyArray<ThreadId>, IssueWorkError>;
+    readonly retainedWorkerThread: (
+      rootThreadId: ThreadId,
+      issueId: string,
+    ) => Effect.Effect<ThreadId | null, IssueWorkError>;
     readonly pendingRequests: (
       rootThreadId: ThreadId,
     ) => Effect.Effect<
@@ -703,6 +707,20 @@ export const layer = Layer.effect(
           Effect.map((rows) => rows.map((row) => ThreadId.make(row.thread_id))),
           Effect.mapError(mapError),
         ),
+      ),
+      retainedWorkerThread: Effect.fn("IssueWorkStore.retainedWorkerThread")(
+        (rootThreadId, issueId) =>
+          sql<{ thread_id: string }>`
+        SELECT thread.thread_id FROM orchestration_v2_projection_repository_orchestration repository
+        JOIN orchestration_v2_projection_issue_work work
+          ON work.host = repository.host AND work.repository_id = repository.repository_id
+        JOIN orchestration_v2_projection_threads thread ON thread.thread_id = work.owner_thread_id
+        WHERE repository.root_thread_id = ${rootThreadId} AND work.issue_id = ${issueId}
+          AND thread.deleted_at IS NULL
+      `.pipe(
+            Effect.map((rows) => (rows[0] === undefined ? null : ThreadId.make(rows[0].thread_id))),
+            Effect.mapError(mapError),
+          ),
       ),
       canAdmit: Effect.fn("IssueWorkStore.canAdmit")(function* (issue, threadId) {
         return (yield* store.admissionWait(issue, threadId)) === null;

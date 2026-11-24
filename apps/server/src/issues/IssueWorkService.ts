@@ -1654,11 +1654,12 @@ export const layer = Layer.effect(
           code: "invalid-request",
           message: "Only the registered repository orchestrator can close out an issue attempt.",
         });
-      const workers = yield* Effect.forEach(yield* store.workerThreads(owner.rootThreadId), (id) =>
-        threads.getThreadShell(id).pipe(Effect.mapError(mapError)),
-      );
-      const worker = workers.find((worker) => worker?.linkedIssue?.id === input.issueId);
-      if (worker?.linkedIssue === undefined)
+      const workerId = yield* store.retainedWorkerThread(owner.rootThreadId, input.issueId);
+      const worker =
+        workerId === null
+          ? null
+          : yield* threads.getThreadShell(workerId).pipe(Effect.mapError(mapError));
+      if (worker?.linkedIssue?.id !== input.issueId)
         return yield* new IssueWorkError({
           code: "invalid-request",
           message: "The issue has no current attempt under this repository orchestrator.",

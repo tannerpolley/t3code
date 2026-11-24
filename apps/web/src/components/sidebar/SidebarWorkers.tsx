@@ -32,6 +32,7 @@ import type { SidebarProviderEntry } from "./SidebarThreadRow";
 import {
   idleWorkerHolding,
   indexSidebarWorkers,
+  remainingSidebarWorkers,
   sidebarWorkerPage,
   sidebarWorkerRecedes,
 } from "./SidebarWorkers.logic";
@@ -94,7 +95,7 @@ export function SidebarWorkerRows(props: WorkerRowsProps) {
   const pageKey = JSON.stringify([environmentId, id]);
   const { count: pageCount, state, rows } = threadFamilies.workerPages(pageKey);
   const [count, setCount] = useAtom(pageCount);
-  const { pages, failedQuery } = useAtomValue(paging ? state : unpagedWorkers);
+  const { pages, waiting, failedQuery } = useAtomValue(paging ? state : unpagedWorkers);
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- merges the mounted pages with authoritative shell deltas
   useEffect(() => {
     if (paging) return threadFamilies.mountRows(appAtomRegistry, environmentId, pageKey, rows);
@@ -117,7 +118,14 @@ export function SidebarWorkerRows(props: WorkerRowsProps) {
     ...(props.includeRunning ? running : EMPTY),
     ...sidebarWorkerPage(idle, limit, selectedOutsidePage),
   ];
-  const remaining = Math.max(idle.length - limit, pages.at(-1)?.remainingWorkers ?? 0);
+  const lastPage = pages.at(-1);
+  const remaining = remainingSidebarWorkers(idle, running, limit, lastPage);
+  const nextPage = lastPage?.nextWorkerPage === undefined ? 0 : pages.length + 1;
+  const nextNestedPage = remaining === 0 && !waiting && failedQuery === null ? nextPage : 0;
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- remaining pages can carry nested workers for rows already shown
+  useEffect(() => {
+    if (nextNestedPage > 0) setCount({ through: nextNestedPage, showMore: false });
+  }, [nextNestedPage, setCount]);
   if (workers.length === 0 && !canPage && failedQuery === null) return null;
   return (
     <ul
@@ -147,14 +155,14 @@ export function SidebarWorkerRows(props: WorkerRowsProps) {
           <SidebarWorkerRows {...props} thread={worker} />
         </li>
       ))}
-      {failedQuery !== null || remaining > 0 ? (
+      {failedQuery !== null || (!waiting && remaining > 0) ? (
         <li className="list-none">
           <button
             type="button"
             className="w-full cursor-pointer rounded-md px-2 py-0.5 text-start text-xs text-muted-foreground hover:bg-sidebar-row-hover hover:text-foreground"
             onClick={() =>
               failedQuery === null
-                ? setCount((current) => current + 1)
+                ? setCount({ through: nextPage, showMore: true })
                 : appAtomRegistry.refresh(failedQuery)
             }
           >

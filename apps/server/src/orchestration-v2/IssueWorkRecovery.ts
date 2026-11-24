@@ -300,10 +300,20 @@ export const makeIssueWorkRecovery = Effect.gen(function* () {
       "providerThreads",
       "turnItems",
     ]);
+    const workerRootId = child.thread.lineage.rootThreadId;
+    const fromPredecessor = workerRootId !== root.id;
+    if (
+      child.thread.deletedAt !== null ||
+      (fromPredecessor &&
+        (child.thread.archivedAt === null ||
+          !config.handoffHistory?.some((entry) => entry.threadId === workerRootId)))
+    )
+      return yield* Effect.fail(
+        "Repository ownership or the issue attempt changed. Refresh before closing out.",
+      );
     const terminal = (status: string) =>
       ["completed", "failed", "interrupted", "cancelled", "rolled_back"].includes(status);
     if (
-      child.thread.lineage.rootThreadId !== root.id ||
       child.runs.some((run) => !terminal(run.status)) ||
       child.subagents.some((task) => !terminal(task.status)) ||
       child.runtimeRequests.some((request) => request.status === "pending") ||
@@ -320,6 +330,24 @@ export const makeIssueWorkRecovery = Effect.gen(function* () {
       return yield* Effect.fail(
         "Cancel or finish the attempt's remaining work before closing it out.",
       );
+    const now = yield* DateTime.now;
+    const clearSuspension: EventInput = {
+      type: "thread.metadata-updated",
+      threadId: root.id,
+      occurredAt: now,
+      payload: {
+        ...root,
+        updatedAt: now,
+        repositoryOrchestration: {
+          ...config,
+          revision: config.revision + 1,
+          suspendedIssues: config.suspendedIssues.filter((entry) => entry.id !== command.issue.id),
+        },
+      },
+    };
+    // The successor owns the suspension. Archived results stay with the original lineage.
+    if (fromPredecessor) return [clearSuspension];
+
     const parentId = child.thread.lineage.parentThreadId;
     if (parentId === null) return yield* Effect.fail("The issue attempt has no parent.");
     const parent = yield* projectionStore.getThreadRecords(parentId, [
@@ -331,7 +359,6 @@ export const makeIssueWorkRecovery = Effect.gen(function* () {
       (task) => task.origin === "app_owned" && task.childThreadId === command.issueThreadId,
     );
     if (task === undefined) return yield* Effect.fail("The issue attempt has no delegated task.");
-    const now = yield* DateTime.now;
     const events: EventInput[] = [];
     for (const item of child.turnItems) {
       if (
@@ -405,20 +432,7 @@ export const makeIssueWorkRecovery = Effect.gen(function* () {
         },
       });
     }
-    events.push({
-      type: "thread.metadata-updated",
-      threadId: root.id,
-      occurredAt: now,
-      payload: {
-        ...root,
-        updatedAt: now,
-        repositoryOrchestration: {
-          ...config,
-          revision: config.revision + 1,
-          suspendedIssues: config.suspendedIssues.filter((entry) => entry.id !== command.issue.id),
-        },
-      },
-    });
+    events.push(clearSuspension);
     return events;
   });
 

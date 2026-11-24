@@ -35,7 +35,11 @@ import {
 } from "./threadFamilies.ts";
 
 const row = (id: string, title = id) =>
-  ({ id: ThreadId.make(id), title }) as unknown as OrchestrationV2ThreadShell;
+  ({
+    id: ThreadId.make(id),
+    title,
+    lineage: { rootThreadId: ThreadId.make(id), parentThreadId: null, relationshipToParent: null },
+  }) as unknown as OrchestrationV2ThreadShell;
 
 describe("threadFamilyRowsMissingFromShell", () => {
   it("adds only the rows the shell left out, once, with shell rows winning", () => {
@@ -257,7 +261,7 @@ describe("createThreadFamilyAtoms", () => {
         }),
       );
       expect((yield* whenSettled).pages).toHaveLength(1);
-      registry.set(count, 2);
+      registry.set(count, { through: 2, showMore: false });
       expect((yield* Queue.take(workerRequests)).workers).toEqual({ before: cursor });
       expect(mergedIds()).toEqual(["parent", "idle-child"]);
       yield* Queue.offer(
@@ -277,6 +281,7 @@ describe("createThreadFamilyAtoms", () => {
       );
       expect((yield* whenSettled).pages).toHaveLength(2);
       expect(mergedIds()).toEqual(["parent", "idle-child", "unseen"]);
+      expect(registry.get(count)).toBe(1);
 
       registry.set(
         shellState,
@@ -294,6 +299,62 @@ describe("createThreadFamilyAtoms", () => {
       expect(refreshed.pages).toHaveLength(1);
       expect(refreshed.pages[0]?.remainingWorkers).toBe(0);
       expect(mergedIds()).toEqual(["parent", "idle-child"]);
+
+      const restored = {
+        ...row("restored"),
+        lineage: {
+          rootThreadId: parent.id,
+          parentThreadId: parent.id,
+          relationshipToParent: "subagent" as const,
+        },
+      };
+      registry.set(
+        shellState,
+        AsyncResult.success({
+          ...shellAt(2),
+          snapshot: Option.some({
+            ...shellSnapshot,
+            snapshotSequence: 7,
+            threads: [parent, restored],
+          }),
+          removedAt: new Map([[unseen.id, 6]]),
+        }),
+      );
+      expect(registry.get(state).waiting).toBe(true);
+      expect((yield* Queue.take(workerRequests)).workers).toEqual({});
+      yield* Queue.offer(
+        replies,
+        Effect.succeed({
+          snapshotSequence: 7,
+          threads: [child],
+          nextWorkerPage: cursor,
+          remainingWorkers: 2,
+        }),
+      );
+      expect((yield* Queue.take(workerRequests)).workers).toEqual({ before: cursor });
+      const secondCursor = { threadId: restored.id, createdAt: "2026-09-30T00:00:00.000Z" };
+      yield* Queue.offer(
+        replies,
+        Effect.succeed({
+          snapshotSequence: 7,
+          threads: [restored],
+          nextWorkerPage: secondCursor,
+          remainingWorkers: 1,
+        }),
+      );
+      expect((yield* whenSettled).pages).toHaveLength(2);
+      expect(registry.get(count)).toBe(1);
+      registry.set(count, { through: 3, showMore: true });
+      expect(registry.get(state).waiting).toBe(true);
+      expect((yield* Queue.take(workerRequests)).workers).toEqual({ before: secondCursor });
+      const older = row("older");
+      yield* Queue.offer(
+        replies,
+        Effect.succeed({ snapshotSequence: 7, threads: [older], remainingWorkers: 0 }),
+      );
+      expect((yield* whenSettled).pages).toHaveLength(3);
+      expect(mergedIds()).toEqual(["parent", "restored", "idle-child", "older"]);
+      expect(registry.get(count)).toBe(2);
     }),
   );
 });

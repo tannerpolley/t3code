@@ -206,10 +206,6 @@ function isAppOwnedSubagentTask(
   );
 }
 
-/**
- * Joins provider-reported subagents to their thread rows, matching roster-only tasks by count.
- * Children in the owner's checkout (`ownerWorktreePath`) list first, inside its checkout lines.
- */
 export function describeProjectSidebarWork(
   tasks: ReadonlyArray<OrchestrationV2PendingBackgroundTask>,
   runningChildren: ReadonlyArray<ChildThread>,
@@ -229,6 +225,10 @@ export function describeProjectSidebarWork(
   );
 }
 
+/**
+ * Joins subagent tasks to thread rows by child thread ID and keeps roster-only tasks visible.
+ * Children in the owner's checkout (`ownerWorktreePath`) list first, inside its checkout lines.
+ */
 export function describeSidebarBackgroundWork(
   tasks: ReadonlyArray<OrchestrationV2PendingBackgroundTask>,
   runningChildren: ReadonlyArray<ChildThread>,
@@ -244,12 +244,6 @@ export function describeSidebarBackgroundWork(
     (task): task is Extract<OrchestrationV2PendingBackgroundTask, { kind: "subagent" }> =>
       task.kind === "subagent" && task.childThreadId === undefined,
   );
-  // ponytail: roster-only tasks have no child id, so the fallback can only pair by count; it
-  // cannot prove which running child owns each task.
-  let unlinkedChildren = runningChildren.filter(
-    (child) => !linked.some((task) => task.childThreadId === child.id),
-  ).length;
-
   const roleOrder = {
     implementor: 0,
     reviewer: 1,
@@ -288,11 +282,7 @@ export function describeSidebarBackgroundWork(
 
   const unmatchedSubagentRows: BackgroundWorkTaskRow[] = [
     ...linked.filter((task) => !listedChildIds.has(task.childThreadId)),
-    ...unlinked.filter((task) => {
-      if (isAppOwnedSubagentTask(task) || unlinkedChildren === 0) return true;
-      unlinkedChildren -= 1;
-      return false;
-    }),
+    ...unlinked,
   ].map((task) => ({
     taskId: task.taskId,
     label: task.description ?? task.taskId,
