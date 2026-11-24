@@ -248,12 +248,10 @@ const failedChildTest = (
                   projectId,
                   launchCommandId: CommandId.make("command:start-failure:create"),
                   revision: 1,
-                  paused: false,
                   workerLimit: 4,
                   readOnlyLimit: 4,
                   publishStatusComments: false,
                   publishCloseoutComments: false,
-                  milestones: [],
                   suspendedIssues: [],
                 },
               }

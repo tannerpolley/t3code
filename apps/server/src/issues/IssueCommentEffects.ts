@@ -227,13 +227,65 @@ export const enqueueIssueStatusEffects = Effect.fn("enqueueIssueStatusEffects")(
         ["command_execution", "dynamic_tool", "subagent"].includes(stored.event.payload.type) &&
         ["completed", "failed", "cancelled", "interrupted"].includes(stored.event.payload.status)),
   );
-  if (relevant.length === 0) return 0;
+  const transitions: PendingOrchestrationEffectV2[] = [];
+  for (const { event } of input.events) {
+    if (
+      event.type === "thread.created" &&
+      event.payload.lineage.relationshipToParent === "subagent" &&
+      event.payload.linkedIssue !== undefined
+    ) {
+      transitions.push({
+        id: `effect:issue-board:${event.id}`,
+        commandId: CommandId.make(`issue-board:${event.id}`),
+        threadId: event.threadId,
+        request: {
+          type: "issue.board.sync",
+          issue: event.payload.linkedIssue,
+          status: "In progress",
+        },
+      });
+    }
+    if (
+      event.type === "run.created" &&
+      event.payload.userMessageId?.startsWith("issue-owner-resume:")
+    ) {
+      const thread = yield* projections.getThread(event.threadId);
+      if (thread.linkedIssue === undefined) continue;
+      transitions.push({
+        id: `effect:issue-board:${event.id}`,
+        commandId: CommandId.make(`issue-board:${event.id}`),
+        threadId: event.threadId,
+        request: {
+          type: "issue.board.sync",
+          issue: thread.linkedIssue,
+          status: "In progress",
+        },
+      });
+    }
+    if (
+      event.type === "thread.pull-request-link-updated" &&
+      event.payload.snapshot?.state === "open" &&
+      !event.payload.snapshot.isDraft &&
+      event.payload.source !== "stack-dismissed"
+    ) {
+      const thread = yield* projections.getThread(event.threadId);
+      if (thread.linkedIssue === undefined) continue;
+      transitions.push({
+        id: `effect:issue-board:${event.id}`,
+        commandId: CommandId.make(`issue-board:${event.id}`),
+        threadId: event.threadId,
+        request: { type: "issue.board.sync", issue: thread.linkedIssue, status: "In review" },
+      });
+    }
+  }
+  if (transitions.length > 0) yield* outbox.enqueue(transitions);
+  if (relevant.length === 0) return transitions.length;
   const managedThreads = yield* sql<{ thread_id: string }>`
     SELECT thread_id FROM orchestration_v2_projection_threads
     WHERE thread_id IN ${sql.in([...new Set(relevant.map((stored) => stored.event.threadId))])}
       AND (json_type(payload_json, '$.linkedIssue') = 'object' OR json_type(payload_json, '$.repositoryOrchestration') = 'object')
   `;
-  if (managedThreads.length === 0) return 0;
+  if (managedThreads.length === 0) return transitions.length;
   const issues = new Map<string, ThreadLinkedIssue>();
   const add = (issue: ThreadLinkedIssue) =>
     issues.set(`${issue.host}:${issue.repositoryId}:${issue.id}`, issue);
@@ -286,7 +338,7 @@ export const enqueueIssueStatusEffects = Effect.fn("enqueueIssueStatusEffects")(
       },
     ]);
   }
-  return issues.size;
+  return issues.size + transitions.length;
 });
 
 /** History-dependent derivation runs in the comment lane, outside the event transaction. */
@@ -299,8 +351,8 @@ export const refreshIssueStatus = Effect.fn("refreshIssueStatus")(function* (inp
   readonly revision: number;
 }) {
   const { sql, projections, outbox, issue, revision } = input;
-  const policy = yield* sql<{ root_thread_id: string; paused: number }>`
-      SELECT root_thread_id, paused FROM orchestration_v2_projection_repository_orchestration
+  const policy = yield* sql<{ root_thread_id: string }>`
+      SELECT root_thread_id FROM orchestration_v2_projection_repository_orchestration
       WHERE host = ${issue.host} AND repository_id = ${issue.repositoryId} AND publish_status_comments = 1
     `;
   if (policy[0] === undefined) return;
@@ -314,7 +366,7 @@ export const refreshIssueStatus = Effect.fn("refreshIssueStatus")(function* (inp
   const shell = yield* projections.getThreadShell(threadId);
   const thread = yield* projections.getThread(threadId);
   const queued = work.ownerThreadId !== threadId;
-  const paused = policy[0].paused === 1;
+  const paused = false;
   // A busy thread's status needs only its runtime requests: the shell keeps just the newest,
   // and an older approval may still wait on the user. Messages, runs and children matter only
   // once it settles, so a working agent's tool steps don't reread its history.

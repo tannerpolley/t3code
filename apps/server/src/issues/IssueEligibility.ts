@@ -1,4 +1,7 @@
+import * as Config from "effect/Config";
+import * as Effect from "effect/Effect";
 import {
+  ISSUE_ADMISSION_HOLD_LABELS,
   type IssueSuspension,
   isManagedIssueImplementor,
   resolveThreadRole,
@@ -59,7 +62,7 @@ export const sameIssueRepository = (
   left.host.toLowerCase() === right.host.toLowerCase() && left.repositoryId === right.repositoryId;
 
 export const issueScopeExpansionError =
-  "The ancestor owner needs approval to expand the milestone or repository scope.";
+  "The ancestor owner needs approval to expand the repository scope.";
 
 export const openBlockerSuspensionReason =
   "An issue host blocker is open. Resolve it before resuming.";
@@ -80,3 +83,19 @@ export function issueEligibility(
   if (read.state !== "open") return "closed";
   return read.blockedBy.some((blocker) => blocker.state === "open") ? "blocked" : "eligible";
 }
+
+export const admitsTodo = (status: string | undefined, labels: readonly string[] | undefined) =>
+  status?.toLowerCase() === "todo" &&
+  labels !== undefined &&
+  !labels.some((label) =>
+    ISSUE_ADMISSION_HOLD_LABELS.some((hold) => hold.toLowerCase() === label.toLowerCase()),
+  );
+
+export const issueAdmissionEligible = (read: IssueWorkRead) =>
+  issueEligibility(read) === "eligible" && admitsTodo(read.planningStatus, read.labels);
+
+// The fork preview uses real GitHub issues with synthetic work.
+export const issueAutomationEnabled = Config.Boolean("T3CODE_ISSUE_AUTOMATION").pipe(
+  Config.withDefault(true),
+  Effect.orDie,
+);

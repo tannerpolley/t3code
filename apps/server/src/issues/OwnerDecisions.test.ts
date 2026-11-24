@@ -128,7 +128,6 @@ const setup = (
           Effect.sync(() => ({
             rootThreadId: repositoryOwner,
             projectId: ProjectId.make("science"),
-            paused: false,
             revision: 2,
           })),
       }),
@@ -253,12 +252,10 @@ const setup = (
           projectId: ProjectId.make("science"),
           launchCommandId: CommandId.make("handoff"),
           revision: 2,
-          paused: false,
           workerLimit: 4,
           readOnlyLimit: 4,
           publishStatusComments: false,
           publishCloseoutComments: false,
-          milestones: [],
           suspendedIssues: [],
           ...(includeSuccessor ? { retiredToThreadId: to } : {}),
         });

@@ -183,10 +183,7 @@ it.effect("keeps roots with persisted blocker suspensions eligible for automatic
         },
       });
       yield* sql`UPDATE orchestration_v2_projection_threads SET payload_json = ${payload} WHERE thread_id = 'root'`;
-      assert.deepEqual(
-        yield* store.activeRoots(),
-        reason === "Paused by owner" ? [] : [ThreadId.make("root")],
-      );
+      assert.deepEqual(yield* store.activeRoots(), [ThreadId.make("root")]);
     }
   }).pipe(Effect.provide(dependencies)),
 );
@@ -202,10 +199,10 @@ it.effect("keeps roots with an unheld queued reader active for the admission swe
     yield* sql`INSERT INTO orchestration_v2_projection_threads(thread_id, project_id, title, default_provider, runtime_mode, interaction_mode, created_at, updated_at, payload_json)
       VALUES ('reader', 'project', 'Reader', 'codex', 'full-access', 'default', '2026-11-23', '2026-11-23',
         '{"role":"reviewer","lineage":{"rootThreadId":"root","relationshipToParent":"subagent"}}')`;
-    assert.deepEqual(yield* store.activeRoots(), []);
+    assert.deepEqual(yield* store.activeRoots(), [ThreadId.make("root")]);
     yield* sql`INSERT INTO orchestration_v2_projection_runs(run_id, thread_id, ordinal, provider, status, requested_at, payload_json)
       VALUES ('run', 'reader', 1, 'codex', 'queued', '2026-11-23', '{"queueHeld":true}')`;
-    assert.deepEqual(yield* store.activeRoots(), []);
+    assert.deepEqual(yield* store.activeRoots(), [ThreadId.make("root")]);
     yield* sql`UPDATE orchestration_v2_projection_runs SET payload_json = '{"admissionWait":"read_only_limit"}'`;
     assert.deepEqual(yield* store.activeRoots(), [ThreadId.make("root")]);
   }).pipe(Effect.provide(dependencies)),
@@ -232,13 +229,13 @@ it.effect("rechecks a paused repository for closure after a managed result was o
       parent_node_id, provider, origin, status, completed_at, completion_delivery_state, updated_at, payload_json)
       VALUES ('task', 'root', 'worker', 'node', 'codex', 'app_owned', 'completed', '2026-11-23',
         'delivered', '2026-11-23', '{}')`;
-    assert.deepEqual(yield* store.activeRoots(), []);
+    assert.deepEqual(yield* store.activeRoots(), [ThreadId.make("root")]);
     yield* sql`UPDATE orchestration_v2_projection_subagents
       SET payload_json = '{"completionDelivery":{"state":"delivered","observedByRunId":"wake"}}'`;
     assert.deepEqual(yield* store.activeRoots(), [ThreadId.make("root")]);
     yield* sql`UPDATE orchestration_v2_projection_threads SET archived_at = '2026-11-24'
       WHERE thread_id = 'worker'`;
-    assert.deepEqual(yield* store.activeRoots(), []);
+    assert.deepEqual(yield* store.activeRoots(), [ThreadId.make("root")]);
   }).pipe(Effect.provide(dependencies)),
 );
 

@@ -41,7 +41,7 @@ checklist. Expand a thread to see its commands, process groups and nested agents
    showcases** uses folder icons; the **INBOX** is empty. The GitHub project is deliberately
    unsectioned, supplying the **Other projects** example.
 8. **08 · GitHub issues · t3code-sandbox** — the real private repository stays at
-   `GitHub/t3code-sandbox`. Its orchestrator is paused with publishing off. Issue Implementors
+   `GitHub/t3code-sandbox`. Its orchestrator has automatic issue work and publishing off. Issue Implementors
    #6 (Working), #7 (Input) and #15 (finished, real PR #24) retain their separate worktrees.
    Open the Issues roadmap for blue working/input rows and red dependency blocks; inspect
    Thread details for linked issues and PRs. Finished children may require Activity view or a
@@ -126,11 +126,11 @@ the supplied database. `shot.mjs` keeps direct routes to labeled examples for op
   chains, completed/not-planned examples, milestone `02 - Release 1.0`, priority labels,
   cross-project inbox issues #21/#22, and PRs #23 (merged), #24 (open), #25 (draft), as well as
   older #1–#12 data. Run it before starting the fresh database: the issue inbox labels newly
-  observed issues on GitHub even while repository work is paused. The repository clone only
+  observed cross-project issues on GitHub. The repository clone only
   fetches; `seed.py` uses read-only API calls for repository/linked-issue metadata.
-- **Passive repository work:** `paused=1`, no milestones, worker limit 1 (the minimum), and both
-  publish flags off prevent admission, scheduled work and comments. **Resume repository work**
-  (in Settings → Projects → Repository orchestration) or **Work through milestone** starts real agents.
+- **Passive repository work:** the launcher sets `T3CODE_ISSUE_AUTOMATION=false` and the
+  fixture turns off both comment publishing options. The board uses real GitHub status without
+  auto-starting workers from its cards.
 - **Issues pane:** lists the `gh` account's real repositories too and can take 15–40 seconds.
   Use the sandbox project or `/issues?host=github.com&repository=tannerpolley/t3code-sandbox`.
   Roadmap shows dependency/worker colors; the full page shows gray closed rows with Closed on.

@@ -25,6 +25,7 @@ export function IssueRow({
   className,
   referenceLabel,
   cycle,
+  layout = "row",
 }: {
   readonly issue: RepositoryIssueSummary;
   readonly environmentId?: EnvironmentId | undefined;
@@ -33,6 +34,7 @@ export function IssueRow({
   readonly className?: string;
   readonly referenceLabel?: string;
   readonly cycle?: boolean;
+  readonly layout?: "row" | "card";
 }) {
   const gt = useGT();
   const projects = useProjects();
@@ -46,6 +48,7 @@ export function IssueRow({
       className={cn(
         PULL_REQUEST_ROW_CLASS,
         "min-w-0 transition-colors has-[:focus-visible]:ring-1 has-[:focus-visible]:ring-inset has-[:focus-visible]:ring-ring",
+        layout === "card" && "flex-col items-start gap-1 px-2 py-2",
         selected ? "bg-accent" : "hover:bg-accent/60",
         className,
       )}
@@ -57,16 +60,26 @@ export function IssueRow({
           title: issue.title,
         })}
         aria-current={selected ? "page" : undefined}
-        className="flex min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-sm text-left focus-visible:outline-none"
+        className={cn(
+          "flex min-w-0 flex-1 cursor-pointer items-center gap-2 rounded-sm text-left focus-visible:outline-none",
+          layout === "card" && "w-full flex-none items-start",
+        )}
         onClick={onSelect}
       >
         <IssueStateIcon issue={{ ...issue, queued }} />
         <span className={PULL_REQUEST_ROW_NUMBER_CLASS}>
           {referenceLabel ?? `#${issue.number}`}
         </span>
-        <span className="min-w-0 truncate text-sm">{issue.title || gt("Untitled issue")}</span>
+        <span className={cn("min-w-0 text-sm", layout === "card" ? "line-clamp-2" : "truncate")}>
+          {issue.title || gt("Untitled issue")}
+        </span>
       </button>
-      <span className="flex min-w-0 max-w-1/2 items-center gap-1.5 text-2xs text-muted-foreground">
+      <span
+        className={cn(
+          "flex min-w-0 items-center gap-1.5 text-2xs text-muted-foreground empty:hidden",
+          layout === "card" ? "max-w-full flex-wrap" : "max-w-1/2",
+        )}
+      >
         <IssueStageBadges issue={issue} cycle={cycle} liveStatus={liveStatus} />
         <IssuePullRequests
           pullRequests={issue.pullRequests}

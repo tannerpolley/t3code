@@ -9,13 +9,11 @@ import {
   RepositoryOrchestration,
   IssueWorkRequested,
   IssueWorkStartInput,
-  RepositoryWorkInput,
 } from "./issueWork.ts";
 
 const decodeOwner = Schema.decodeUnknownSync(RepositoryOrchestration);
 const decodeRequest = Schema.decodeUnknownSync(IssueWorkRequested);
 const decodeStart = Schema.decodeUnknownSync(IssueWorkStartInput);
-const decodeMilestone = Schema.decodeUnknownSync(RepositoryWorkInput);
 
 describe("managed issue workspace compatibility", () => {
   it("loads old ownership and request rows while discarding their workspace choice", () => {
@@ -37,7 +35,7 @@ describe("managed issue workspace compatibility", () => {
         workspace,
         launchCommandId: "launch:1",
         revision: 1,
-        paused: false,
+        paused: true,
         workerLimit: 4,
         publishStatusComments: true,
         publishCloseoutComments: true,
@@ -48,7 +46,10 @@ describe("managed issue workspace compatibility", () => {
       });
       expect(owner.readOnlyLimit).toBe(4);
       expect(owner).not.toHaveProperty("workspace");
-      expect(owner.milestones[0]).not.toHaveProperty("workspace");
+      expect(owner).not.toHaveProperty("milestones");
+      expect(owner).not.toHaveProperty("paused");
+      expect(repositoryPhase(owner)).toBe("active");
+      expect(repositoryAdmitsWork(owner)).toBe(true);
       expect(
         decodeRequest({
           requestId: "request:1",
@@ -69,7 +70,6 @@ describe("managed issue workspace compatibility", () => {
         workspace,
       };
       expect(decodeStart(input)).not.toHaveProperty("workspace");
-      expect(decodeMilestone(input)).not.toHaveProperty("workspace");
     }
   });
 });
@@ -97,11 +97,10 @@ describe("repository phase", () => {
                 nextThreadId: ThreadId.make("next"),
                 summary: "Continue",
                 modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "test" },
-                wasPaused: paused,
               },
             }
           : {}),
-      } satisfies Pick<RepositoryOrchestration, "paused" | "handoff" | "retiredToThreadId">;
+      };
       expect(repositoryPhase(config)).toBe(
         retired
           ? "retired"
@@ -109,14 +108,10 @@ describe("repository phase", () => {
             ? "draining"
             : status
               ? "handoff_awaiting_approval"
-              : paused
-                ? "paused"
-                : "active",
+              : "active",
       );
-      expect(isValidRepositoryPhase(config)).toBe(
-        !(retired && status !== undefined) && !(status === "draining" && !paused),
-      );
-      expect(repositoryAdmitsWork(config)).toBe(!retired && (!paused || status === "draining"));
+      expect(isValidRepositoryPhase(config)).toBe(!(retired && status !== undefined));
+      expect(repositoryAdmitsWork(config)).toBe(!retired);
     },
   );
 });

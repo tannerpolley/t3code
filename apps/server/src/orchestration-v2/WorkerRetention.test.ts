@@ -92,7 +92,8 @@ const layerTest = Layer.mergeAll(
           Effect.map(DateTime.now, (now) => ({
             issue: managedIssue(issue.number),
             state: issue.number === 43 || DateTime.toEpochMillis(now) >= 2_000 ? "closed" : "open",
-            milestoneNumber: null,
+            planningStatus: "Todo",
+            labels: [],
             parent: null,
             subIssues: [],
             blockedBy: [],

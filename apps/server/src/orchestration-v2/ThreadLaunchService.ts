@@ -745,7 +745,6 @@ const make = Effect.gen(function* () {
                       "provision-worktree",
                       threadId,
                     )("This project no longer owns the repository's issue work.");
-                  if (owner.paused) return 0;
                   const config = yield* issueWork.configuration(owner.rootThreadId);
                   return config?.workerLimit ?? 0;
                 },

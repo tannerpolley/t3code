@@ -608,7 +608,60 @@ it.effect("labels each issue from another project once and never relabels it", (
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
 
-it.effect("a paused repository is not read, labeled or digested", () =>
+it.effect("moves only the owner's response from Needs you to Needs orchestrator", () =>
+  Effect.gen(function* () {
+    const { inbox, github } = yield* setup();
+    github.data.issues = [
+      issue(4, "Held for a decision", { labels: [{ name: "Needs you" }] }),
+      issue(5, "Held for another decision", { labels: [{ name: "Needs you" }] }),
+    ];
+    github.data.comments = [
+      comment(401, 4, "Proceed with the smaller design.", { author_association: "OWNER" }),
+      comment(501, 5, "Outside feedback", { author_association: "CONTRIBUTOR" }),
+    ];
+    yield* nextPoll(inbox);
+    const writes = github.requests.filter((request) => request.method !== undefined);
+    assert.isTrue(
+      writes.some(
+        (request) =>
+          request.path === "issues/4/labels" &&
+          JSON.stringify(request.body) === '{"labels":["Needs orchestrator"]}',
+      ),
+    );
+    assert.isTrue(
+      writes.some(
+        (request) => request.path === "issues/4/labels/Needs%20you" && request.method === "DELETE",
+      ),
+    );
+    assert.isFalse(writes.some((request) => request.path.startsWith("issues/5/labels")));
+    assert.deepEqual(
+      (yield* inbox.list({ host: "github.com", repository: "acme/b" })).events.map(
+        (row) => row.issueNumber,
+      ),
+      [4],
+    );
+    github.data.issues = [
+      issue(4, "Held again for a new decision", {
+        labels: [{ name: "Needs you" }],
+        updated_at: at(5),
+      }),
+    ];
+    const beforeReplay = github.requests.length;
+    yield* nextPoll(inbox);
+    assert.isTrue(
+      github.requests
+        .slice(beforeReplay)
+        .some((request) => request.path.startsWith("issues/comments")),
+    );
+    assert.isFalse(
+      github.requests
+        .slice(beforeReplay)
+        .some((request) => request.path.startsWith("issues/4/labels")),
+    );
+  }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
+);
+
+it.effect("an upgraded repository ignores its legacy pause column", () =>
   Effect.gen(function* () {
     const { inbox, github } = yield* setup();
     const sql = yield* SqlClient.SqlClient;
@@ -616,7 +669,7 @@ it.effect("a paused repository is not read, labeled or digested", () =>
     const before = github.requests.length;
     github.data.issues = [issue(5, `New\n${amineMarker}`)];
     yield* nextPoll(inbox);
-    assert.equal(github.requests.length, before);
+    assert.isAbove(github.requests.length, before);
   }).pipe(Effect.provide(SqlitePersistence.layerMemory)),
 );
 

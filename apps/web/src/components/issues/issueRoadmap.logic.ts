@@ -5,7 +5,12 @@ import {
   issueWorkerNeedsOwner,
   issueWorkerStatus,
 } from "@t3tools/shared/issueWorkerStatus";
-import { type IssueRepositoryRef, type RepositoryIssueSummary } from "@t3tools/contracts";
+import {
+  GITHUB_ISSUE_STATUSES,
+  type GitHubIssueStatus,
+  type IssueRepositoryRef,
+  type RepositoryIssueSummary,
+} from "@t3tools/contracts";
 import { issuePriorityRank } from "./issueProjects.logic";
 import { issueStage, ISSUE_STAGE_LABELS, type IssueStage } from "@t3tools/shared/issueStage";
 
@@ -227,4 +232,23 @@ export function createIssueRoadmapClock(issues: readonly RepositoryIssueSummary[
     };
   };
   return { subscribe, snapshot };
+}
+
+export function issueBoardColumns(issues: readonly RepositoryIssueSummary[]) {
+  const columns = new Map<GitHubIssueStatus, RepositoryIssueSummary[]>(
+    GITHUB_ISSUE_STATUSES.map((status) => [status, []]),
+  );
+  for (const issue of issues) {
+    const status =
+      GITHUB_ISSUE_STATUSES.find((value) => value === issue.planningStatus) ??
+      (issue.state === "open"
+        ? "Backlog"
+        : issue.stateReason === "duplicate"
+          ? "Duplicate"
+          : issue.stateReason === "not_planned"
+            ? "Not planned"
+            : "Done");
+    columns.get(status)!.push(issue);
+  }
+  return Array.from(columns, ([status, issues]) => ({ status, issues }));
 }

@@ -229,7 +229,6 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
   delegate_task: tool(["Delegate", "Delegating", "Delegated", "a child task"], "delegate"),
   queue_issue: tool(["Queue", "Queuing", "Queued", "an issue"], "issue-work"),
   unqueue_issue: tool(["Remove", "Removing", "Removed", "an issue from the queue"], "issue-work"),
-  work_through_milestone: tool(["Start", "Starting", "Started", "milestone work"], "issue-work"),
   repository_status: tool(["Check", "Checking", "Checked", "child status"], "issue-work"),
   get_repository_orchestration: tool(
     ["Check", "Checking", "Checked", "repository orchestration"],
@@ -241,10 +240,6 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
   ),
   end_repository_orchestration: tool(
     ["End", "Ending", "Ended", "repository orchestration"],
-    "issue-work",
-  ),
-  set_repository_work_paused: tool(
-    ["Update", "Updating", "Updated", "repository pause state"],
     "issue-work",
   ),
   request_repository_handoff: tool(

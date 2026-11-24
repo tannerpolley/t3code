@@ -14,7 +14,14 @@ import {
   type ScopedThreadRef,
 } from "@t3tools/contracts";
 import { EnvironmentRpcUnavailableError } from "@t3tools/client-runtime/rpc";
-import { LockIcon, PinIcon, PinOffIcon, RefreshCwIcon, SearchIcon } from "lucide-react";
+import {
+  ArrowLeftIcon,
+  LockIcon,
+  PinIcon,
+  PinOffIcon,
+  RefreshCwIcon,
+  SearchIcon,
+} from "lucide-react";
 import { type ReactNode, useEffect, useRef, useState } from "react";
 
 import {
@@ -40,8 +47,7 @@ import { Spinner } from "../ui/spinner";
 import { IssueFilterMenu, useIssueFilterPreferences } from "./IssueFilterMenu";
 import { acceptIssueListPage, type IssueListSnapshot } from "./issuePaging.logic";
 import { IssueTreeRow, IssueTreeTag } from "./IssueTree";
-import { IssueSection } from "./IssueSection";
-import { IssueRoadmap } from "./IssueRoadmap";
+import { IssueKanban } from "./IssueRoadmap";
 import {
   filterAndSortIssues,
   viewerRepositoriesFirst,
@@ -234,8 +240,10 @@ export function IssueBrowser({
   onSelectIssue,
   onRefresh,
   className,
+  canBrowseRepositories = true,
 }: {
   readonly variant: "page" | "panel";
+  readonly canBrowseRepositories?: boolean;
   readonly repositories: ReturnType<typeof useIssueRepositoryTargets>;
   readonly search: IssueBrowserSearch;
   readonly onSearchChange: (patch: IssueBrowserSearch) => void;
@@ -589,7 +597,7 @@ export function IssueBrowser({
       ) || state?.refreshing === true;
     return (
       <>
-        <IssueRoadmap
+        <IssueKanban
           scope={entry}
           environmentId={entry.environmentId}
           inbox={
@@ -599,8 +607,7 @@ export function IssueBrowser({
               reference={{ host: entry.host, repository: entry.repository }}
             />
           }
-          issues={snapshot.issues}
-          visibleNumbers={new Set(filteredIssues.map((issue) => issue.number))}
+          issues={filteredIssues}
           onSelect={(issue) => selectIssue(issue, entry, snapshot)}
           {...(entry.selectedIssueNumber === undefined
             ? {}
@@ -647,92 +654,75 @@ export function IssueBrowser({
           {renderRepositoryBody(entry)}
         </section>
       );
-    const panelId = `issue-repository-${entry.key.replace(/[^a-z0-9_-]/gi, "-")}`;
     return (
-      <IssueSection key={`${entry.environmentId}:${entry.key}`} scope={entry} section="repository">
-        {(collapsed, toggleCollapsed) => (
-          <section>
-            <div className="group/repository flex items-center">
-              <IssueTreeRow
-                level={0}
-                controls={panelId}
-                expanded={!collapsed}
-                onToggle={toggleCollapsed}
-                count={entry.countLabel}
-              >
-                <span className="min-w-0 truncate text-sm font-medium">
-                  {/* Another owner's repository keeps its owner so a fork and its upstream stay apart. */}
-                  {viewerOwners.has(entry.owner.toLowerCase()) ? null : (
-                    <span className="font-normal text-muted-foreground">{entry.owner}/</span>
-                  )}
-                  {entry.repository.slice(entry.repository.indexOf("/") + 1)}
-                </span>
-                {hosts.length > 1 ? (
-                  <span className="truncate text-2xs text-muted-foreground">{entry.host}</span>
-                ) : null}
-                {entry.isPrivate ? (
-                  <LockIcon
-                    aria-label={gt("Private")}
-                    className="size-3 shrink-0 text-muted-foreground"
-                  />
-                ) : null}
-                {entry.isArchived ? (
-                  <IssueTreeTag>
-                    <T>Archived</T>
-                  </IssueTreeTag>
-                ) : null}
-                {entry.isFork ? (
-                  <IssueTreeTag>
-                    <T>Fork</T>
-                  </IssueTreeTag>
-                ) : null}
-                {entry.pinned ? (
-                  <IssueTreeTag>
-                    <T>Pinned</T>
-                  </IssueTreeTag>
-                ) : null}
-                {capableEnvironmentList.length > 1 ? (
-                  <span className="truncate text-2xs text-muted-foreground">
-                    {environmentLabels.get(entry.environmentId) ?? entry.environmentId}
-                  </span>
-                ) : null}
-              </IssueTreeRow>
-              {/* Unpinned, the pin shows on row hover or focus; the wrapper owns that fade. */}
-              <span
-                className={
-                  entry.pinned
-                    ? "shrink-0"
-                    : "shrink-0 opacity-0 pointer-coarse:opacity-100 group-hover/repository:opacity-100 focus-within:opacity-100"
-                }
-              >
-                <Button
-                  aria-label={
-                    entry.pinned
-                      ? gt("Unpin {repository}", { repository: entry.repository })
-                      : gt("Always show {repository}", { repository: entry.repository })
-                  }
-                  title={entry.pinned ? gt("Unpin") : gt("Always show, whatever the filters say")}
-                  aria-pressed={entry.pinned}
-                  onClick={() => togglePinned(entry.key, entry.pinned)}
-                  size="icon-xs"
-                  variant="ghost"
-                >
-                  {entry.pinned ? <PinOffIcon /> : <PinIcon />}
-                </Button>
-              </span>
-            </div>
-            {!collapsed ? (
-              <div id={panelId}>
-                <IssueRepositoryStatusLine
-                  environmentId={entry.environmentId}
-                  reference={{ host: entry.host, repository: entry.repository }}
-                />
-                {renderRepositoryBody(entry)}
-              </div>
+      <section key={`${entry.environmentId}:${entry.key}`}>
+        <div className="group/repository flex items-center">
+          <IssueTreeRow
+            onSelect={() => onSearchChange({ host: entry.host, repository: entry.repository })}
+            count={entry.countLabel}
+          >
+            <span className="min-w-0 truncate text-sm font-medium">
+              {/* Another owner's repository keeps its owner so a fork and its upstream stay apart. */}
+              {viewerOwners.has(entry.owner.toLowerCase()) ? null : (
+                <span className="font-normal text-muted-foreground">{entry.owner}/</span>
+              )}
+              {entry.repository.slice(entry.repository.indexOf("/") + 1)}
+            </span>
+            {hosts.length > 1 ? (
+              <span className="truncate text-2xs text-muted-foreground">{entry.host}</span>
             ) : null}
-          </section>
-        )}
-      </IssueSection>
+            {entry.isPrivate ? (
+              <LockIcon
+                aria-label={gt("Private")}
+                className="size-3 shrink-0 text-muted-foreground"
+              />
+            ) : null}
+            {entry.isArchived ? (
+              <IssueTreeTag>
+                <T>Archived</T>
+              </IssueTreeTag>
+            ) : null}
+            {entry.isFork ? (
+              <IssueTreeTag>
+                <T>Fork</T>
+              </IssueTreeTag>
+            ) : null}
+            {entry.pinned ? (
+              <IssueTreeTag>
+                <T>Pinned</T>
+              </IssueTreeTag>
+            ) : null}
+            {capableEnvironmentList.length > 1 ? (
+              <span className="truncate text-2xs text-muted-foreground">
+                {environmentLabels.get(entry.environmentId) ?? entry.environmentId}
+              </span>
+            ) : null}
+          </IssueTreeRow>
+          {/* Unpinned, the pin shows on row hover or focus; the wrapper owns that fade. */}
+          <span
+            className={
+              entry.pinned
+                ? "shrink-0"
+                : "shrink-0 opacity-0 pointer-coarse:opacity-100 group-hover/repository:opacity-100 focus-within:opacity-100"
+            }
+          >
+            <Button
+              aria-label={
+                entry.pinned
+                  ? gt("Unpin {repository}", { repository: entry.repository })
+                  : gt("Always show {repository}", { repository: entry.repository })
+              }
+              title={entry.pinned ? gt("Unpin") : gt("Always show, whatever the filters say")}
+              aria-pressed={entry.pinned}
+              onClick={() => togglePinned(entry.key, entry.pinned)}
+              size="icon-xs"
+              variant="ghost"
+            >
+              {entry.pinned ? <PinOffIcon /> : <PinIcon />}
+            </Button>
+          </span>
+        </div>
+      </section>
     );
   });
 
@@ -842,13 +832,23 @@ export function IssueBrowser({
     <section className={cn("flex min-h-0 min-w-0 flex-1 flex-col", className)}>
       <header className="@container/issues-header shrink-0 border-b border-border/60 px-4 py-3">
         <div className="flex flex-wrap items-center gap-2">
+          {explicitScope && canBrowseRepositories ? (
+            <Button
+              aria-label={gt("Repositories")}
+              onClick={() => onSearchChange({ host: undefined, repository: undefined })}
+              size="icon-xs"
+              variant="ghost"
+            >
+              <ArrowLeftIcon />
+            </Button>
+          ) : null}
           {variant === "panel" ? (
-            <>
+            <div className="flex min-w-0 flex-1 items-center gap-2 @max-[36rem]/issues-header:basis-full">
               <IssueStateIcon issue={{ state: "open" }} />
               <h2 className="min-w-0 flex-1 truncate text-base font-semibold">
                 {urlRepository?.repository ?? <T context="page title, list of issues">Issues</T>}
               </h2>
-            </>
+            </div>
           ) : urlRepository ? (
             <span className="min-w-0 truncate text-sm font-medium">{urlRepository.repository}</span>
           ) : null}
@@ -958,6 +958,7 @@ export function IssueListPanel({ threadRef }: { readonly threadRef: ScopedThread
   return (
     <IssueBrowser
       variant="panel"
+      canBrowseRepositories={(scope ?? projectScope) == null}
       repositories={repositories}
       search={{ ...search, ...(scope ?? projectScope) }}
       onSearchChange={(patch) => setSearch((current) => ({ ...current, ...patch }))}

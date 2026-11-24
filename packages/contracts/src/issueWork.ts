@@ -4,13 +4,14 @@ import * as Effect from "effect/Effect";
 
 import {
   CommandId,
+  IsoDateTime,
   NonNegativeInt,
   ProjectId,
   RunId,
   ThreadId,
   TrimmedNonEmptyString,
 } from "./baseSchemas.ts";
-import { ModelRoleId } from "./threadRole.ts";
+import { ModelRoleId, ThreadRole } from "./threadRole.ts";
 import { ModelSelection } from "./modelSelection.ts";
 import { ThreadLinkedIssue } from "./threadIssue.ts";
 import { RepositoryIssueRef, IssueRepositoryRef } from "./repositoryIssue.ts";
@@ -26,13 +27,6 @@ export const DEFAULT_REPOSITORY_WORK_SETTINGS = {
   publishStatusComments: true,
   publishCloseoutComments: true,
 } as const;
-
-export const RepositoryMilestonePlan = Schema.Struct({
-  number: Schema.Int.check(Schema.isGreaterThan(0)),
-  modelRoleId: ModelRoleId,
-  status: Schema.Literals(["running", "complete", "blocked", "awaiting_approval", "unreadable"]),
-  fingerprint: Schema.String,
-});
 
 const RepositoryUsageSprintEndReason = Schema.Literals(["reset", "early_reset", "stopped"]);
 
@@ -54,7 +48,7 @@ export const IssueSuspensionKind = Schema.Literals([
 ]);
 export type IssueSuspensionKind = typeof IssueSuspensionKind.Type;
 
-export const LEGACY_AUTOMATIC_SUSPENSIONS = {
+const LEGACY_AUTOMATIC_SUSPENSIONS = {
   blocked: [
     "An issue host blocker is open. Resolve it before resuming.",
     "A GitHub blocker is open. Resolve it before resuming.",
@@ -90,7 +84,6 @@ export type IssueSuspension = typeof IssueSuspension.Type;
 
 export const RepositoryPhase = Schema.Literals([
   "active",
-  "paused",
   "handoff_awaiting_approval",
   "handoff_verifying",
   "draining",
@@ -98,35 +91,46 @@ export const RepositoryPhase = Schema.Literals([
 ]);
 export type RepositoryPhase = typeof RepositoryPhase.Type;
 type RepositoryPhaseFields = {
-  readonly paused: boolean;
   readonly handoff?: { readonly status: "awaiting_approval" | "draining" } | undefined;
+  readonly restore?: object | undefined;
   readonly automaticHandoff?: { readonly status: "verifying" | "failed" } | undefined;
   readonly retiredToThreadId?: string | null | undefined;
 };
 
+export const RepositoryRestore = Schema.Struct({
+  requestId: CommandId,
+  targetThreadId: ThreadId,
+  expectedRevision: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
+  reason: TrimmedNonEmptyString,
+  requestedAt: IsoDateTime,
+});
+export type RepositoryRestore = typeof RepositoryRestore.Type;
+
 export const repositoryPhase = (config: RepositoryPhaseFields): RepositoryPhase => {
   if (config.retiredToThreadId !== undefined) return "retired";
   if (config.automaticHandoff?.status === "verifying") return "handoff_verifying";
+  if (config.restore !== undefined) return "draining";
   if (config.handoff?.status === "draining") return "draining";
   if (config.handoff !== undefined) return "handoff_awaiting_approval";
-  return config.paused ? "paused" : "active";
+  return "active";
 };
 export const isValidRepositoryPhase = (config: RepositoryPhaseFields) =>
-  !(config.retiredToThreadId !== undefined && config.handoff !== undefined) &&
+  !(
+    config.retiredToThreadId !== undefined &&
+    (config.handoff !== undefined || config.restore !== undefined)
+  ) &&
+  !(config.restore !== undefined && config.handoff !== undefined) &&
   !(
     config.automaticHandoff?.status === "verifying" &&
-    (config.handoff !== undefined || config.retiredToThreadId !== undefined)
-  ) &&
-  !(config.handoff?.status === "draining" && !config.paused);
+    (config.handoff !== undefined ||
+      config.restore !== undefined ||
+      config.retiredToThreadId !== undefined)
+  );
 
-// Awaiting approval preserves the existing pause state; draining admits already queued work.
+// Draining continues already admitted work.
 export const repositoryAdmitsWork = (config: RepositoryPhaseFields) => {
   const phase = repositoryPhase(config);
-  return (
-    phase === "active" ||
-    phase === "draining" ||
-    (phase === "handoff_awaiting_approval" && !config.paused)
-  );
+  return phase !== "retired" && phase !== "handoff_verifying";
 };
 
 export const RepositoryOrchestration = Schema.Struct({
@@ -136,16 +140,12 @@ export const RepositoryOrchestration = Schema.Struct({
   projectId: ProjectId,
   launchCommandId: CommandId,
   revision: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
-  paused: Schema.Boolean,
   workerLimit: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 32 })),
   readOnlyLimit: Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 32 })).pipe(
     Schema.withDecodingDefaultKey(Effect.succeed(DEFAULT_REPOSITORY_WORK_SETTINGS.readOnlyLimit)),
   ),
   publishStatusComments: Schema.Boolean,
   publishCloseoutComments: Schema.Boolean,
-  milestones: Schema.Array(RepositoryMilestonePlan).pipe(
-    Schema.withDecodingDefaultKey(Effect.succeed([])),
-  ),
   suspendedIssues: Schema.Array(IssueSuspension).pipe(
     Schema.withDecodingDefaultKey(Effect.succeed([])),
   ),
@@ -156,7 +156,6 @@ export const RepositoryOrchestration = Schema.Struct({
       summary: TrimmedNonEmptyString,
       modelSelection: ModelSelection,
       status: Schema.Literals(["awaiting_approval", "draining"]),
-      wasPaused: Schema.Boolean,
       requestedAt: Schema.optional(Schema.String),
       verification: Schema.optional(
         Schema.Struct({
@@ -166,6 +165,7 @@ export const RepositoryOrchestration = Schema.Struct({
       ),
     }),
   ),
+  restore: Schema.optional(RepositoryRestore),
   automaticHandoff: Schema.optional(
     Schema.Struct({
       sourceRunId: RunId,
@@ -209,14 +209,6 @@ export const RepositoryWorkTarget = Schema.Struct({
   repositoryId: TrimmedNonEmptyString,
 });
 
-export const RepositoryWorkInput = Schema.Struct({
-  ...IssueRepositoryRef.fields,
-  projectId: ProjectId,
-  modelRoleId: ModelRoleId,
-  milestoneNumber: Schema.Int.check(Schema.isGreaterThan(0)),
-  clientRequestId: CommandId,
-});
-export type RepositoryWorkInput = typeof RepositoryWorkInput.Type;
 export const RepositoryWorkerLimitInput = Schema.Struct({
   ...IssueRepositoryRef.fields,
   workerLimit: RepositoryOrchestration.fields.workerLimit,
@@ -254,12 +246,6 @@ export const RepositoryWorkEndInput = Schema.Struct({
 });
 export type RepositoryWorkEndInput = typeof RepositoryWorkEndInput.Type;
 
-export const RepositoryWorkControlInput = Schema.Struct({
-  ...IssueRepositoryRef.fields,
-  paused: Schema.Boolean,
-  clientRequestId: CommandId,
-});
-export type RepositoryWorkControlInput = typeof RepositoryWorkControlInput.Type;
 export const RepositoryHandoffRequestInput = Schema.Struct({
   ...IssueRepositoryRef.fields,
   expectedRevision: Schema.Int.check(Schema.isGreaterThanOrEqualTo(1)),
@@ -458,6 +444,7 @@ export const IssueWorkRequested = Schema.Struct({
   issueThreadId: Schema.NullOr(ThreadId),
   attemptKey: Schema.String,
   modelSelection: ModelSelection,
+  workerRole: Schema.optional(ThreadRole),
   cancellation: Schema.optional(IssueWorkCancellation),
 });
 export type IssueWorkRequested = typeof IssueWorkRequested.Type;

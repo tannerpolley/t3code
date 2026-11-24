@@ -1189,8 +1189,7 @@ export const layer = Layer.effect(
                     taskError("Could not resolve the repository owner.", { cause }),
                   ),
                 );
-              if (owner === null || owner.paused)
-                return yield* taskError("Repository work is unavailable or paused.");
+              if (owner === null) return yield* taskError("Repository work is unavailable.");
               return owner;
             });
             // A handoff can commit between resolving and sending to the old root.

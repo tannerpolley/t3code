@@ -33,7 +33,7 @@ export const makeIssueWorkProjection = (
         ) VALUES (
           ${owner.host}, ${owner.repositoryId}, ${owner.repository}, ${threadId},
           ${owner.projectId}, ${"worktree"}, ${owner.launchCommandId},
-          ${owner.revision}, ${owner.paused ? 1 : 0}, ${owner.workerLimit},
+          ${owner.revision}, 0, ${owner.workerLimit},
           ${owner.publishStatusComments ? 1 : 0}, ${owner.publishCloseoutComments ? 1 : 0},
           ${DateTime.formatIso(occurredAt)}, ${DateTime.formatIso(occurredAt)}
         )
@@ -195,7 +195,7 @@ export const makeIssueWorkProjection = (
       const owner = event.payload.repositoryOrchestration;
       const updated = yield* sql<{ readonly root_thread_id: string }>`
                   UPDATE orchestration_v2_projection_repository_orchestration
-                  SET paused = ${owner.paused ? 1 : 0}, worker_limit = ${owner.workerLimit},
+                  SET paused = 0, worker_limit = ${owner.workerLimit},
                       revision = ${owner.revision}, updated_at = ${DateTime.formatIso(event.occurredAt)}
                   WHERE root_thread_id = ${event.threadId} RETURNING root_thread_id
                 `;
@@ -207,7 +207,7 @@ export const makeIssueWorkProjection = (
             : yield* sql<{ readonly root_thread_id: string }>`
                           UPDATE orchestration_v2_projection_repository_orchestration
                           SET root_thread_id = ${event.threadId}, launch_command_id = ${owner.launchCommandId},
-                            paused = ${owner.paused ? 1 : 0}, worker_limit = ${owner.workerLimit},
+                            paused = 0, worker_limit = ${owner.workerLimit},
                             revision = ${owner.revision}, updated_at = ${DateTime.formatIso(event.occurredAt)}
                           WHERE host = ${owner.host} AND repository_id = ${owner.repositoryId}
                             AND root_thread_id IN ${sql.in(owner.handoffHistory!.map((entry) => entry.threadId))}

@@ -42,11 +42,9 @@ import {
   IssueWorkStartResult,
   IssueWorkStatusInput,
   IssueWorkStatusResult,
-  RepositoryWorkInput,
   RepositoryHandoffInput,
   RepositoryOrchestratorInput,
   RepositoryWorkEndInput,
-  RepositoryWorkControlInput,
   RepositoryWorkerLimitInput,
   RepositoryReadOnlyLimitInput,
   RepositoryWorkRestoreInput,
@@ -66,10 +64,8 @@ export const ISSUE_WS_METHODS = {
   issuesQueue: "issues.queue",
   issuesUnqueue: "issues.unqueue",
   issuesWorkStatus: "issues.workStatus",
-  issuesWorkMilestone: "issues.workMilestone",
   issuesRepositoryStatus: "issues.repositoryStatus",
   issuesEndRepository: "issues.endRepository",
-  issuesSetPaused: "issues.setPaused",
   issuesCloseOut: "issues.closeOut",
   issuesSetWorkerLimit: "issues.setWorkerLimit",
   ownerDecisionsList: "issues.decisions.list",
@@ -147,11 +143,6 @@ const WsIssuesWorkStatusRpc = Rpc.make(ISSUE_WS_METHODS.issuesWorkStatus, {
   success: IssueWorkStatusResult,
   error: IssueRpcError,
 });
-const WsIssuesWorkMilestoneRpc = Rpc.make(ISSUE_WS_METHODS.issuesWorkMilestone, {
-  payload: RepositoryWorkInput,
-  success: RepositoryWorkResult,
-  error: IssueRpcError,
-});
 const WsIssuesRepositoryStatusRpc = Rpc.make(ISSUE_WS_METHODS.issuesRepositoryStatus, {
   payload: IssueRepositoryRef,
   success: RepositoryWorkResult,
@@ -174,11 +165,6 @@ const WsIssuesCloseOutRpc = Rpc.make(ISSUE_WS_METHODS.issuesCloseOut, {
 });
 const WsIssuesEndRepositoryRpc = Rpc.make(ISSUE_WS_METHODS.issuesEndRepository, {
   payload: RepositoryWorkEndInput,
-  success: RepositoryWorkResult,
-  error: IssueRpcError,
-});
-const WsIssuesSetPausedRpc = Rpc.make(ISSUE_WS_METHODS.issuesSetPaused, {
-  payload: RepositoryWorkControlInput,
   success: RepositoryWorkResult,
   error: IssueRpcError,
 });
@@ -263,10 +249,8 @@ export const issueRpcs = [
   WsIssuesQueueRpc,
   WsIssuesUnqueueRpc,
   WsIssuesWorkStatusRpc,
-  WsIssuesWorkMilestoneRpc,
   WsIssuesRepositoryStatusRpc,
   WsIssuesEndRepositoryRpc,
-  WsIssuesSetPausedRpc,
   WsIssuesCloseOutRpc,
   WsIssuesSetWorkerLimitRpc,
   WsIssuesSetReadOnlyLimitRpc,
