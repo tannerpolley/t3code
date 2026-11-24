@@ -279,14 +279,7 @@ function RepositoryControls({
       input:
         action === "cancel"
           ? { ...common, action }
-          : {
-              ...common,
-              action,
-              summary: config.handoff?.summary ?? summary.trim(),
-              ...(config.handoff === undefined
-                ? {}
-                : { modelSelection: config.handoff.modelSelection }),
-            },
+          : { ...common, action, summary: summary.trim() },
     });
     setBusy(false);
     if (result._tag === "Failure")
@@ -477,7 +470,6 @@ function RepositoryControls({
             handoff={config.handoff}
             busy={busy}
             onCancel={() => void transfer("cancel")}
-            onApprove={() => void transfer("approve")}
           />
         ) : handoffExpanded ? (
           <div className="flex w-full max-w-md flex-col gap-2 pt-1">
@@ -600,13 +592,11 @@ function PendingHandoffLine({
   handoff,
   busy,
   onCancel,
-  onApprove,
 }: {
   environmentId: EnvironmentId;
   handoff: NonNullable<RepositoryOrchestration["handoff"]>;
   busy: boolean;
   onCancel: () => void;
-  onApprove: () => void;
 }) {
   const gt = useGT();
   const requestedMs = handoff.requestedAt === undefined ? NaN : Date.parse(handoff.requestedAt);
@@ -622,7 +612,7 @@ function PendingHandoffLine({
       <span className="min-w-0 break-words">
         {draining
           ? gt("Handoff to {target} is draining", { target })
-          : gt("Handoff to {target} awaits approval", { target })}
+          : gt("Handoff to {target} is pending", { target })}
       </span>
       {handoff.requestedAt === undefined ? null : (
         <span className="shrink-0">
@@ -638,11 +628,6 @@ function PendingHandoffLine({
       <Button size="xs" variant="ghost" className="shrink-0" disabled={busy} onClick={onCancel}>
         {gt("Cancel")}
       </Button>
-      {draining ? null : (
-        <Button size="xs" className="shrink-0" disabled={busy} onClick={onApprove}>
-          {gt("Approve")}
-        </Button>
-      )}
     </div>
   );
 }

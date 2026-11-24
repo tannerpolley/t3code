@@ -464,8 +464,9 @@ threshold, open **Settings → Threads → Orchestration**. A project can use it
 To replace the orchestrator's conversation manually, open **Repository orchestration** in the project's
 settings, choose **Hand off to a fresh thread** from the menu beside its orchestrator, and provide a
 summary. Starting the handoff pauses new issue admissions while existing workers and their final
-results finish. The fresh thread receives your summary and a recovery inventory. The orchestrator
-can also request a handoff after its context compacts. Either request starts draining right away.
+results finish. The fresh thread receives your summary and a recovery inventory. With automatic
+handoffs enabled, the orchestrator can also request one after its context compacts. Either request
+starts draining right away.
 You can cancel a pending handoff in Settings, and the same menu opens previous orchestrators.
 For a routine provider or model change, keep the same thread.
 

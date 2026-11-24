@@ -404,14 +404,14 @@ export const OrchestratorToolkit = Toolkit.make(
   ProposeIssueChangeTool,
   Tool.make("request_repository_handoff", {
     description:
-      "Request a handoff of this repository's registered root. Omit targetThreadId for a fresh thread, or name an existing top-level thread in the same project. Read get_repository_orchestration for its ownership revision, and supply a recovery summary. Only the current root may request it. T3 immediately pauses new admissions, drains existing workers and final deliveries, gives the target thread a server recovery inventory, then atomically replaces the owner. Routine model changes should keep the current thread.",
+      "Start a handoff as the registered repository root in full-access, default mode. Omit targetThreadId for a fresh thread, or name an existing top-level thread in the same project. Read get_repository_orchestration for its ownership revision and supply a short recovery summary. T3 immediately pauses new admissions, drains existing workers and final deliveries, and gives the successor a recovery inventory. Routine model changes should keep the current thread.",
     parameters: RepositoryHandoffRequestInput,
     success: RepositoryWorkResult,
     failure: OrchestratorMcpFailure,
     failureMode: "return",
     dependencies,
   })
-    .annotate(Tool.Destructive, false)
+    .annotate(Tool.Destructive, true)
     .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients),
   Tool.make("work_through_milestone", {
     description:
@@ -452,7 +452,7 @@ export const OrchestratorToolkit = Toolkit.make(
     .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients),
   Tool.make("get_repository_orchestration", {
     description:
-      "Check repository work admission: owner, revision, worker and read-only capacity, milestones, and ordered issue queue. Use phase to tell which work can start: draining admits already queued work, and handoff_awaiting_approval is a saved handoff that will start draining on reconcile.",
+      "Check the repository owner, revision, capacity, milestones, and ordered issue queue. The effective orchestratorHandoffTokens threshold is null when automatic handoffs are disabled. The draining phase admits already queued work, and handoff_awaiting_approval is a saved handoff that starts draining on reconcile.",
     parameters: IssueRepositoryRef,
     success: RepositoryWorkResult,
     failure: OrchestratorMcpFailure,

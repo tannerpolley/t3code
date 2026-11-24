@@ -202,10 +202,9 @@
   "9a177023bb38a981": "Responde aprovações",
   "9f7af9830925ca2c": "Permite que este agente aceite ou recuse aprovações de comandos nas conversas que iniciou e em seus subagentes. Ele sempre pode responder perguntas.",
   "9be5b8420ee64ec7": "A transferência para {target} está sendo concluída",
-  "e05b2595e2c7c313": "A transferência para {target} aguarda aprovação",
+  "f94e61808bdaa986": "A transferência para {target} está pendente",
   "c1303d131afc6a17": "Mais de um dia",
   "00ad8aeed0a6c461": "Cancelar",
-  "ac48cc297029db41": "Aprovar",
   "97144d3a3218d931": "O T3 pausa o início de novos trabalhos em issues até que o trabalho em andamento termine e depois transfere o controle para uma nova conversa.",
   "9a73e6f99e93612a": "Iniciar transferência"
 }

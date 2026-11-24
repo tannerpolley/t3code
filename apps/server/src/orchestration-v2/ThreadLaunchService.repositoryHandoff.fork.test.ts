@@ -23,6 +23,7 @@ import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import {
   CommandId,
   EnvironmentId,
+  IssueWorkError,
   MessageId,
   NodeId,
   ProviderDriverKind,
@@ -146,6 +147,7 @@ describe("fresh-thread repository handoff", () => {
       providerAvailable?: () => boolean;
       continuation?: boolean;
       handoffWake?: boolean;
+      scheduler?: Layer.Layer<Scheduler.Scheduler>;
       continuationRequests?: Context.Service.Shape<
         typeof ProviderContinuationRequests.ProviderContinuationRequests
       >;
@@ -283,6 +285,7 @@ describe("fresh-thread repository handoff", () => {
       Layer.mock(SecretRequests.SecretRequests)({}),
       // Managed issue workers never read the caller's checkout commit.
       Layer.mock(GitVcsDriver.GitVcsDriver)({}),
+      options.scheduler ?? Layer.empty,
     );
     const { wrapStore } = options;
     const service = IssueWorkService.layer.pipe(
@@ -753,6 +756,12 @@ describe("fresh-thread repository handoff", () => {
       yield* settings.updateSettings({
         projectSettingsOverrides: { [projectId]: { orchestratorHandoffTokens: null } },
       });
+      assert.isNull(
+        (yield* (yield* OrchestratorMcp.OrchestratorMcpService).repositoryStatus(
+          scope(rootId),
+          reference,
+        )).orchestratorHandoffTokens,
+      );
       yield* usage(200_000, "idle-threshold");
       yield* service.reconcile(rootId);
       assert.isNull(yield* threads.getThreadShell(nextId));
@@ -3556,8 +3565,16 @@ describe("fresh-thread repository handoff", () => {
     }).pipe(Effect.provide(fixture({ continuation: true }))),
   );
 
-  it.effect("reconciles a saved handoff from before automatic draining", () =>
-    Effect.gen(function* () {
+  it.effect("reconciles a saved handoff even when another root fails its pass", () => {
+    let runDueWork: Effect.Effect<void> | undefined;
+    const failingRoot = ThreadId.make("stale-handoff-root");
+    const scheduler = Layer.mock(Scheduler.Scheduler)({
+      register: <E, R>(_name: string, work: Effect.Effect<void, E, R>) =>
+        Effect.gen(function* () {
+          runDueWork = work.pipe(Effect.provideContext(yield* Effect.context<R>()), Effect.orDie);
+        }),
+    });
+    return Effect.gen(function* () {
       const service = yield* IssueWorkService.IssueWorkService;
       const store = yield* IssueWorkStore.IssueWorkStore;
       const threads = yield* ThreadManagement.ThreadManagementService;
@@ -3585,14 +3602,33 @@ describe("fresh-thread repository handoff", () => {
         },
       });
       assert.include(yield* store.activeRoots(), rootId);
-      yield* service.reconcile(rootId);
+      assert.isDefined(runDueWork);
+      yield* runDueWork!;
       yield* worker.drain();
       const result = yield* service.repositoryStatus(reference);
       assert.equal(result.rootThreadId, target);
       assert.isTrue(result.orchestration!.paused);
       assert.isUndefined(result.orchestration!.handoff);
-    }).pipe(Effect.provide(fixture({ recovery: true }))),
-  );
+    }).pipe(
+      Effect.provide(
+        fixture({
+          recovery: true,
+          scheduler,
+          wrapStore: (store) => ({
+            ...store,
+            activeRoots: () =>
+              store.activeRoots().pipe(Effect.map((roots) => [failingRoot, ...roots])),
+            configuration: (id) =>
+              id === failingRoot
+                ? Effect.fail(
+                    new IssueWorkError({ code: "invalid-request", message: "Stale root" }),
+                  )
+                : store.configuration(id),
+          }),
+        }),
+      ),
+    );
+  });
 
   it.effect(
     "cancelling a draining handoff says why it refuses, then restores the pause state",
@@ -3663,6 +3699,27 @@ describe("fresh-thread repository handoff", () => {
       const threads = yield* ThreadManagement.ThreadManagementService;
       const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
       yield* createRoot;
+      const input = {
+        ...reference,
+        expectedRevision: 1,
+        summary: "Decisions to preserve.",
+        clientRequestId: CommandId.make("mcp-handoff:request"),
+      };
+      yield* threads.dispatch({
+        type: "thread.interaction-mode.set",
+        threadId: rootId,
+        commandId: CommandId.make("mcp-handoff:plan"),
+        interactionMode: "plan",
+      });
+      const refused = yield* mcp.requestRepositoryHandoff(scope(rootId), input).pipe(Effect.flip);
+      assert.equal(refused.code, "interaction_mode_escalation_denied");
+      assert.equal((yield* service.repositoryStatus(reference)).phase, "active");
+      yield* threads.dispatch({
+        type: "thread.interaction-mode.set",
+        threadId: rootId,
+        commandId: CommandId.make("mcp-handoff:default"),
+        interactionMode: "default",
+      });
       yield* threads.dispatch({
         type: "message.dispatch",
         commandId: CommandId.make("mcp-handoff:root-start"),
@@ -3676,12 +3733,7 @@ describe("fresh-thread repository handoff", () => {
       });
       yield* worker.drain();
       const requestedAt = DateTime.formatIso(yield* DateTime.now);
-      const pending = yield* mcp.requestRepositoryHandoff(scope(rootId), {
-        ...reference,
-        expectedRevision: 1,
-        summary: "Decisions to preserve.",
-        clientRequestId: CommandId.make("mcp-handoff:request"),
-      });
+      const pending = yield* mcp.requestRepositoryHandoff(scope(rootId), input);
       assert.equal(pending.rootThreadId, rootId);
       assert.equal(pending.phase, "draining");
       assert.isTrue(pending.orchestration!.paused);

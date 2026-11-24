@@ -9,6 +9,7 @@ import * as Option from "effect/Option";
 import type * as IssueChangeService from "../issues/IssueChangeService.ts";
 import type * as IssueWorkService from "../issues/IssueWorkService.ts";
 import {
+  requireThreadScope,
   threadLinkFor,
   type McpInvocationScope,
   type McpThreadInvocationScope,
@@ -137,11 +138,12 @@ export function makeRepositoryMcpMethods({
     ),
     requestRepositoryHandoff: Effect.fn("OrchestratorMcpService.requestRepositoryHandoff")(
       function* (scope, input) {
-        const caller = yield* loadThreadCaller(scope, "request_repository_handoff");
+        const { thread } = yield* requireThreadScope(scope, "request_repository_handoff");
+        yield* requireRepositoryController(scope);
         if (Option.isNone(issueWork))
           return yield* failure("orchestration_error", "Issue work is unavailable.");
         return yield* issueWork.value
-          .requestHandoff(caller.parent.thread.id, input)
+          .requestHandoff(thread.threadId, input)
           .pipe(Effect.mapError((error) => failure("invalid_request", error.message)));
       },
     ),
