@@ -424,6 +424,7 @@ describe("project settings permissions", () => {
     const draftId = DraftId.make("draft-handed-off");
     const [primaryProject, remoteProject] = state.projects;
     const drafts = useComposerDraftStore.getState();
+    using _draft = { [Symbol.dispose]: () => drafts.clearDraftThread(draftId) };
     drafts.setLogicalProjectDraftThreadId(
       "github.com/example/shared-repo",
       scopeProjectRef(primaryId, primaryProject!.id),

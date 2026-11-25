@@ -1401,6 +1401,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
             {multiline ? titleLineIcons : null}
             {pinIndicator}
             {multiline ? null : terminalStatusIcon}
+            {inFolder && !multiline ? prBadge : null}
             {multiline ? null : issueBadge}
             {isRegeneratingTitle ? (
               <span role="status" className="sr-only">
