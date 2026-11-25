@@ -410,6 +410,14 @@ function launcherFixture() {
     }),
   );
   write(
+    "packages/server/package.json",
+    JSON.stringify({
+      name: "t3",
+      dependencies: { example: "workspace:*" },
+      scripts: { test: "vp test run" },
+    }),
+  );
+  write(
     "packages/unaffected/package.json",
     JSON.stringify({ name: "unaffected", scripts: { test: "vp test run" } }),
   );
@@ -431,7 +439,9 @@ function launcherFixture() {
     import fs from 'node:fs';
     import path from 'node:path';
     const args = process.argv.slice(2);
-    fs.writeFileSync(path.join(process.env.RECORDS, process.pid + '.json'), JSON.stringify({ args, cwd: process.cwd(), maxWorkers: process.env.VITEST_MAX_WORKERS }));
+    const probe = spawnSync('git', ['config', '--global', '--get', 't3.validation-probe'], { encoding: 'utf8' });
+    const hasGlobalGitConfig = probe.stdout.trim() === 'inherited';
+    fs.writeFileSync(path.join(process.env.RECORDS, process.pid + '.json'), JSON.stringify({ args, cwd: process.cwd(), maxWorkers: process.env.VITEST_MAX_WORKERS, hasGlobalGitConfig }));
     console.log('fixture stdout: ' + args[0]);
     console.error('fixture stderr: ' + args[0]);
     if (args[0] === 'fmt' && process.env.FIXTURE_MUTATE_INPUT === '1')
@@ -485,6 +495,8 @@ function launcherFixture() {
   );
   const records = NodePath.join(root, "records");
   NodeFS.mkdirSync(records);
+  const globalGitConfig = NodePath.join(records, "fixture.gitconfig");
+  NodeFS.writeFileSync(globalGitConfig, "[t3]\n\tvalidation-probe = inherited\n");
   return {
     root,
     source,
@@ -507,6 +519,7 @@ function launcherFixture() {
           encoding: "utf8",
           env: {
             ...env,
+            GIT_CONFIG_GLOBAL: globalGitConfig,
             TEMP: NodeOS.tmpdir(),
             RECORDS: records,
             FAIL_STEP: failStep,
@@ -516,10 +529,15 @@ function launcherFixture() {
         },
       );
     },
-    calls: (): Array<{ args: Array<string>; cwd: string; maxWorkers: string }> =>
-      NodeFS.readdirSync(records).map((file) =>
-        JSON.parse(NodeFS.readFileSync(NodePath.join(records, file), "utf8")),
-      ),
+    calls: (): Array<{
+      args: Array<string>;
+      cwd: string;
+      maxWorkers: string;
+      hasGlobalGitConfig: boolean;
+    }> =>
+      NodeFS.readdirSync(records)
+        .filter((file) => file.endsWith(".json"))
+        .map((file) => JSON.parse(NodeFS.readFileSync(NodePath.join(records, file), "utf8"))),
     [Symbol.dispose]() {
       NodeFS.rmSync(root, { recursive: true, force: true });
     },
@@ -527,14 +545,14 @@ function launcherFixture() {
 }
 
 it.skipIf(HostProcess.Platform.defaultValue() !== "linux")(
-  "runs full typecheck and affected suites after a passing fast check",
+  "runs full typecheck and affected suites with isolated Git config after a passing fast check",
   () => {
     using project = launcherFixture();
     project.write(project.source, "export const value = 2;\n");
     project.write(project.uncoveredSource, "export const value = 2;\n");
     const fast = project.run();
     assert.strictEqual(fast.status, 0, fast.stderr);
-    assert.isFalse(project.calls().some(({ args }) => args.at(-1) === "test"));
+    assert.isFalse(project.calls().some(({ args }) => args[0] === "run" && args.includes("test")));
     assert.isTrue(
       project
         .calls()
@@ -545,6 +563,10 @@ it.skipIf(HostProcess.Platform.defaultValue() !== "linux")(
     assert.strictEqual(full.status, 0, full.stderr);
     assert.include(full.stdout, "full typecheck");
     const calls = project.calls();
+    assert.isTrue(calls.find(({ args }) => args[0] === "fmt")?.hasGlobalGitConfig);
+    for (const { args, hasGlobalGitConfig } of calls.filter(({ args }) => args.includes("test"))) {
+      assert.isFalse(hasGlobalGitConfig, args.join(" "));
+    }
     assert.strictEqual(
       calls.filter(({ args }) => args[0] === "test" && args.includes(project.uncoveredTest)).length,
       2,
@@ -554,11 +576,15 @@ it.skipIf(HostProcess.Platform.defaultValue() !== "linux")(
     );
     assert.sameDeepMembers(
       calls
-        .filter(({ args }) => args.at(-1) === "test")
+        .filter(({ args }) => args[0] === "run" && args.includes("test"))
         .map(({ args, maxWorkers }) => [args, maxWorkers]),
       [
         [["run", "--filter", "example", "test"], "2"],
         [["run", "--filter", "@t3tools/web", "test"], "1"],
+        ...["1/8", "2/8", "3/8", "4/8", "5/8", "6/8", "7/8", "8/8"].map((shard) => [
+          ["run", "--filter", "t3", "test", "--shard", shard],
+          "1",
+        ]),
       ],
     );
   },
@@ -651,6 +677,7 @@ it("checks changed source paths through the Windows launcher", () => {
     args: ["lint", "--no-error-on-unmatched-pattern", project.source],
     cwd: project.root,
     maxWorkers: "2",
+    hasGlobalGitConfig: true,
   });
   expect(calls.some(({ args }) => args[0] === "fmt" && args.includes(project.source))).toBe(true);
   expect(calls.some(({ args }) => args[0] === "run" && args.includes("typecheck"))).toBe(true);

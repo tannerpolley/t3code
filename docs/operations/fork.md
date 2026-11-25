@@ -76,7 +76,7 @@ For a managed handoff, the orchestrator checks that the worker worktree is clean
 vp run check:changed --full-validation origin/main
 ```
 
-On Linux, each subprocess in either `check:changed` mode holds `~/.t3code-validation.lock` for the duration of its command. Keep the lock file in place. Full validation runs full typecheck, affected package suites, and the selected Vitest files. Each selected file must be discoverable. Vitest rejects focused tests, uses at most two workers, and the web and server suites use one worker each for Playwright. Require a zero exit status and verify the worktree is still clean at the validated SHA. If generated inputs change during a run, repeat validation.
+On Linux, each subprocess in either `check:changed` mode holds `~/.t3code-validation.lock` for the duration of its command. Keep the lock file in place. Test subprocesses use an empty global Git config. Full validation runs full typecheck, affected package suites, and the selected Vitest files. Each selected file must be discoverable. Vitest rejects focused tests, uses at most two workers, and the web and server suites use one worker each for Playwright. The server suite uses eight weighted shards with a separate timeout for each shard. Require a zero exit status and verify the worktree is still clean at the validated SHA. If generated inputs change during a run, repeat validation.
 
 Fetch `origin/main` immediately before GitHub merge. Incorporate any new target tip and repeat validation even when GitHub reports a clean merge. The GitHub merge request binds the head SHA. The target check is a separate operation and can race another writer after the fetch. Send validation failures back to the issue owner for repair.
 
@@ -84,7 +84,7 @@ The commit hook launches repo-wide Knip. After their targeted checks, managed wo
 
 - Type check one package: `nice -n 10 ../../node_modules/.bin/tsc-rs --noEmit` inside it. Plain `tsc` can take 20+ minutes.
 - Tests: `vp test run <files>`.
-  - Run Git tests with `GIT_CONFIG_GLOBAL=/dev/null`, because the owner's global hooks interfere. One failure about binary diff statistics on Git 2.43 comes from the environment, not the code.
+  - When running Git tests directly, set `GIT_CONFIG_GLOBAL=/dev/null`, because the owner's global hooks interfere. One failure about binary diff statistics on Git 2.43 comes from the environment, not the code.
   - A branch that adds an MCP tool must also pass `apps/server/src/mcp/toolkits/core.test.ts`, which checks tool labels.
 - GitHub Actions are off on the GitHub copy: every workflow is disabled. Upstream's build and test workflows need its paid Blacksmith runners and would wait in the queue forever, and the rest serve upstream's own repository. A workflow that a sync adds starts out enabled: turn it off with `gh workflow disable -R tannerpolley/t3code <name>`.
 - The owner's launcher sets `T3CODE_PR_WATCH_NO_CHECKS_REPOSITORIES=github.com/tannerpolley/t3code` for the desktop's server. This comma-separated list of `host/owner/repo` keys skips the initial wait for checks on those repositories. Checks that do report, such as review-bot checks, still count. Set the same variable on a standalone server that should use this policy.

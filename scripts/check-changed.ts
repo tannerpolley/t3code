@@ -473,14 +473,22 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
     ...(process.stdout.isTTY ? { FORCE_COLOR: "1" } : {}),
     ...(input.fullValidation ? { CI: ci } : {}),
   };
-  const vp = (args: ReadonlyArray<string>, cwd = root, testWorkers = 2) =>
+  const vp = (args: ReadonlyArray<string>, cwd = root, testWorkers?: number) =>
     Effect.scoped(
       Effect.gen(function* () {
         const [command, commandArgs] = vitePlusCommand(args, platform);
         if (input.fullValidation) yield* Console.log(`\n> vp ${args.join(" ")}`);
+        // Git for Windows rejects the null device as a config file.
+        const testGitConfig =
+          testWorkers === undefined
+            ? {}
+            : {
+                GIT_CONFIG_GLOBAL:
+                  platform === "win32" ? yield* fs.makeTempFileScoped() : "/dev/null",
+              };
         const options: ChildProcess.CommandOptions = {
           cwd,
-          env: { ...env, VITEST_MAX_WORKERS: String(testWorkers) },
+          env: { ...env, ...testGitConfig, VITEST_MAX_WORKERS: String(testWorkers ?? 2) },
           extendEnv: true,
           forceKillAfter: "5 seconds",
         };
@@ -572,7 +580,10 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
   ].filter((dir) => files.some((file) => file.startsWith(`${dir}/`)));
   const filters = (names: ReadonlyArray<string>) => names.flatMap((name) => ["--filter", name]);
   const typecheckWorkers = Math.min(concurrency, affected.length);
-  const command = (name: string, args: ReadonlyArray<string>) => ({ name, run: vp(args) });
+  const command = (name: string, args: ReadonlyArray<string>, testWorkers?: number) => ({
+    name,
+    run: vp(args, root, testWorkers),
+  });
   const compilerFiles = compilerApps.reduce((count, app) => count + app.names.length, 0);
 
   const steps: Array<Step<never>> = [
@@ -618,15 +629,23 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
             },
           ]
         : []),
-    // From the repo root, the root vite.config.ts hands each file to its package's config.
-    ...suites.map((pkg) => ({
-      name: `test (${pkg.name})`,
-      run: vp(
-        ["run", "--filter", pkg.name, "test"],
-        root,
-        pkg.name === "@t3tools/web" || pkg.name === "t3" ? 1 : 2,
-      ),
-    })),
+    ...suites.flatMap((pkg) => {
+      const args = ["run", "--filter", pkg.name, "test"];
+      if (pkg.name === "t3") {
+        // Use CI's eight weighted shards so serial worker startup is spread across timeout windows.
+        const shards = 8;
+        return Array.from({ length: shards }, (_, index) => {
+          const shard = `${index + 1}/${shards}`;
+          return {
+            name: `test (t3 ${shard})`,
+            run: vp([...args, "--shard", shard], root, 1),
+          };
+        });
+      }
+      return [
+        { name: `test (${pkg.name})`, run: vp(args, root, pkg.name === "@t3tools/web" ? 1 : 2) },
+      ];
+    }),
     ...(vitestTests.length > 0
       ? [
           {
@@ -640,25 +659,27 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
       : []),
     ...(nodeTests.length > 0
       ? [
-          command(`node --test (${nodeTests.length} files)`, [
-            "exec",
-            "node",
-            "--test",
-            "--test-concurrency=1",
-            ...nodeTests,
-          ]),
+          command(
+            `node --test (${nodeTests.length} files)`,
+            ["exec", "node", "--test", "--test-concurrency=1", ...nodeTests],
+            1,
+          ),
         ]
       : []),
     ...(compilerApps.length > 0
       ? [
           {
-            ...command(`react compiler (${compilerFiles} files)`, [
-              "test",
-              "run",
-              ...compilerApps.map((app) => app.test),
-              "-t",
-              compilerApps.flatMap((app) => app.pattern).join("|"),
-            ]),
+            ...command(
+              `react compiler (${compilerFiles} files)`,
+              [
+                "test",
+                "run",
+                ...compilerApps.map((app) => app.test),
+                "-t",
+                compilerApps.flatMap((app) => app.pattern).join("|"),
+              ],
+              2,
+            ),
             serial: true,
           },
         ]
