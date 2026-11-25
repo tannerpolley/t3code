@@ -104,7 +104,7 @@ it("sends a Codex follow-up on a cold Claude thread without compacting first", a
   await userEvent.type(page.getByPlaceholder("Search models..."), "GPT-5.4");
   await page.getByRole("option", { name: "GPT-5.4", exact: false }).click();
   await expect
-    .element(page.getByRole("button", { name: "GPT-5.4 Normal", exact: true }))
+    .element(page.getByRole("button", { name: "GPT-5.4, Normal", exact: true }))
     .toBeVisible();
   await expect.element(compactAndSend).not.toBeInTheDocument();
   // Picking a model leaves the composer's settings menu open.
