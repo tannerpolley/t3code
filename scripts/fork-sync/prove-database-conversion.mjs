@@ -30,6 +30,7 @@ const settings = {
   codexDefaultSpeed: "fast",
   autoUseExpiringResetCredits: true,
   snoozeLimitedThreads: true,
+  usageLimitRecovery: "switch",
 };
 
 function ledger(sqlite, table) {
@@ -488,7 +489,9 @@ try {
       INSERT INTO issue_inbox_events (host, repository_id, repository, event_key, issue_number,
         issue_title, kind, tagged, high_priority, needs_triage, url, snippet, occurred_at, digest_id)
         VALUES ('github.com', 'repository-id', 'example/project', 'key', 700, 'Issue', 'comment',
-          1, 0, 0, 'https://example.test', 'Comment', current_timestamp, 1)`);
+          1, 0, 0, 'https://example.test', 'Comment', current_timestamp, NULL)`);
+    verifyBlocked("pendingInboxDigestEvents");
+    sqlite.exec("UPDATE issue_inbox_events SET digest_id = 1");
     verifyBlocked("pendingInboxDigestEvents");
     sqlite.exec("UPDATE issue_inbox_digests SET delivered_at = current_timestamp");
 
@@ -497,18 +500,29 @@ try {
     verifyBlocked("pendingInlineShellDeliveries");
     sqlite.exec("UPDATE inline_shell_runs SET delivered_by = 'delivery'");
 
+    sqlite.exec(`INSERT INTO orchestration_v2_projection_runs
+      (run_id, thread_id, ordinal, provider, provider_instance_id, status, requested_at, completed_at, payload_json)
+      VALUES ('failed', 'owner-thread', 1, 'codex', 'codex', 'failed', current_timestamp, current_timestamp,
+        '{"modelSelection":{"instanceId":"codex","model":"gpt-5"},"rootNodeId":"failure-node"}');
+      INSERT INTO orchestration_v2_projection_turn_items
+        (turn_item_id, thread_id, run_id, node_id, ordinal, type, status, updated_at, payload_json)
+        VALUES ('failed-item', 'owner-thread', 'failed', 'failure-node', 1, 'error', 'failed',
+          current_timestamp, '{"failure":{"class":"usage_limit"}}')`);
+    verifyBlocked("pendingProviderSwitches");
     sqlite.exec(`UPDATE orchestration_v2_projection_threads
-      SET payload_json = json_set(payload_json, '$.autoProviderSwitch',
-        json('{"runId":"failed","to":{"instanceId":"codex","model":"gpt-5"}}'))
-      WHERE thread_id = 'owner-thread';
-      INSERT INTO orchestration_v2_projection_runs
-        (run_id, thread_id, ordinal, provider, provider_instance_id, status, requested_at, completed_at, payload_json)
-      VALUES ('failed', 'owner-thread', 1, 'codex', 'codex', 'failed', current_timestamp, current_timestamp, '{}')`);
+      SET provider_instance_id = 'claudeAgent', payload_json = json_set(payload_json,
+        '$.modelSelection', json('{"instanceId":"claudeAgent","model":"claude"}'),
+        '$.autoProviderSwitch', json('{"runId":"failed","to":{"instanceId":"claudeAgent","model":"claude"}}'))
+      WHERE thread_id = 'owner-thread'`);
     verifyBlocked("pendingProviderSwitches");
     sqlite.exec(`INSERT INTO orchestration_v2_projection_runs
       (run_id, thread_id, ordinal, provider, provider_instance_id, status, requested_at, completed_at, payload_json)
-      VALUES ('continuation', 'owner-thread', 2, 'codex', 'codex', 'completed', current_timestamp,
-        current_timestamp, '{"userMessageId":"limit-switch-resume:owner-thread:failed"}')`);
+      VALUES ('continuation', 'owner-thread', 2, 'claudeAgent', 'claudeAgent', 'queued', current_timestamp,
+        NULL, '{"userMessageId":"limit-switch-resume:owner-thread:failed"}');
+      INSERT INTO orchestration_v2_projection_messages
+        (message_id, thread_id, run_id, role, streaming, created_at, updated_at, payload_json)
+      VALUES ('limit-switch-resume:owner-thread:failed', 'owner-thread', 'continuation', 'user', 0,
+        current_timestamp, current_timestamp, '{}')`);
     const settled = JSON.parse(success("dry-run")).blockers;
     for (const name of [
       "repositoryRestores",
@@ -519,7 +533,11 @@ try {
       NodeAssert.equal(settled[name], 0, name);
     }
     sqlite.exec(`DELETE FROM orchestration_v2_projection_runs;
-      UPDATE orchestration_v2_projection_threads SET payload_json = json_remove(payload_json, '$.autoProviderSwitch')
+      DELETE FROM orchestration_v2_projection_turn_items WHERE turn_item_id = 'failed-item';
+      DELETE FROM orchestration_v2_projection_messages WHERE message_id = 'limit-switch-resume:owner-thread:failed';
+      UPDATE orchestration_v2_projection_threads SET provider_instance_id = 'codex',
+        payload_json = json_set(json_remove(payload_json, '$.autoProviderSwitch'),
+          '$.modelSelection', json('{"instanceId":"codex","model":"gpt-5"}'))
       WHERE thread_id = 'owner-thread';
       INSERT INTO orchestration_v2_projection_thread_references VALUES ('owner-thread', 'archived-reference')`);
   }
@@ -655,6 +673,11 @@ try {
   const conversion = JSON.parse(success("convert").trimEnd().split("\n").at(-1));
   NodeAssert.deepEqual(conversion, { converted: true, verifiedThreads: 3 });
   refuse("convert", /already converted/);
+  {
+    using sqlite = new NodeSqlite.DatabaseSync(db, { readOnly: true });
+    NodeAssert.deepEqual(ledger(sqlite, "effect_sql_migrations"), old.migrations.migrationManifest);
+    NodeAssert.deepEqual(ledger(sqlite, "t3_fork_migrations"), forkLedger);
+  }
   await startServer(upstream, root);
   NodeAssert.deepEqual(await readThreads(fresh), before);
   const { decideThreadResume } =

@@ -138,36 +138,61 @@ const blockers = {
   ],
   pendingInboxDigestEvents: [
     "issue_inbox_events",
-    `read_at IS NULL AND EXISTS (
-    SELECT 1 FROM issue_inbox_digests digest WHERE digest.digest_id = entry.digest_id AND digest.delivered_at IS NULL)`,
-  ],
-  pendingProviderSwitches: [
-    threads,
-    `archived_at IS NULL AND deleted_at IS NULL
-    AND json_extract(payload_json, '$.settledOverride') IS NOT 'settled'
-    AND json_type(payload_json, '$.autoProviderSwitch.to') = 'object'
-    AND json_extract(payload_json, '$.modelSelection.instanceId') IS json_extract(payload_json, '$.autoProviderSwitch.to.instanceId')
-    AND json_extract(payload_json, '$.modelSelection.model') IS json_extract(payload_json, '$.autoProviderSwitch.to.model')
-    AND coalesce(json_extract(payload_json, '$.modelSelection.options'), '[]')
-      IS coalesce(json_extract(payload_json, '$.autoProviderSwitch.to.options'), '[]')
-    AND EXISTS (SELECT 1 FROM ${runs} failed
-      WHERE failed.run_id = json_extract(entry.payload_json, '$.autoProviderSwitch.runId')
-        AND failed.thread_id = entry.thread_id AND failed.status = 'failed'
-        AND failed.run_id = (SELECT latest.run_id FROM ${runs} latest
-          WHERE latest.thread_id = entry.thread_id AND latest.status <> 'queued'
-            AND NOT (latest.status = 'cancelled' AND json_extract(latest.payload_json, '$.startedAt') IS NULL)
-          ORDER BY latest.completed_at IS NULL DESC, latest.completed_at DESC, latest.ordinal DESC, latest.run_id DESC
-          LIMIT 1)
-        AND NOT EXISTS (SELECT 1 FROM ${runs} continuation
-          WHERE continuation.thread_id = entry.thread_id
-            AND json_extract(continuation.payload_json, '$.userMessageId') =
-              'limit-switch-resume:' || entry.thread_id || ':' || failed.run_id)
-        AND NOT EXISTS (SELECT 1 FROM orchestration_v2_projection_context_transfers transfer
-          WHERE transfer.source_thread_id = entry.thread_id AND transfer.type = 'subagent_result'
-            AND json_extract(transfer.payload_json, '$.sourcePoint.runId') = failed.run_id)
+    `read_at IS NULL AND (
+      (tagged = 1 AND digest_id IS NULL)
+      OR EXISTS (SELECT 1 FROM issue_inbox_digests digest
+        WHERE digest.digest_id = entry.digest_id AND digest.delivered_at IS NULL)
     )`,
   ],
 };
+
+const switchSelection = (selection) => `
+  json_extract(entry.payload_json, '$.modelSelection.instanceId') IS json_extract(${selection}, '$.instanceId')
+  AND json_extract(entry.payload_json, '$.modelSelection.model') IS json_extract(${selection}, '$.model')
+  AND coalesce(json_extract(entry.payload_json, '$.modelSelection.options'), '[]')
+    IS coalesce(json_extract(${selection}, '$.options'), '[]')`;
+// Continuation dispatch writes the message and its run together, giving two primary-key lookups.
+const pendingProviderSwitch = `archived_at IS NULL AND deleted_at IS NULL
+  AND json_extract(payload_json, '$.settledOverride') IS NOT 'settled'
+  AND json_type(payload_json, '$.repositoryOrchestration.retiredToThreadId') IS NULL
+  AND (json_type(payload_json, '$.autoProviderSwitch.to') = 'object'
+    OR provider_instance_id IN (SELECT value FROM json_each(?)))
+  AND EXISTS (SELECT 1 FROM ${runs} failed
+    WHERE failed.run_id = (SELECT latest.run_id FROM ${runs} latest
+      INDEXED BY orchestration_v2_projection_runs_last_executed_idx
+      WHERE latest.thread_id = entry.thread_id AND latest.status <> 'queued'
+        AND NOT (latest.status = 'cancelled' AND json_extract(latest.payload_json, '$.startedAt') IS NULL)
+      ORDER BY (latest.completed_at IS NULL) DESC, latest.completed_at DESC, latest.ordinal DESC, latest.run_id DESC
+      LIMIT 1)
+      AND failed.status = 'failed'
+      AND (json_extract(entry.payload_json, '$.snoozedUntil') IS NULL
+        OR julianday(json_extract(entry.payload_json, '$.snoozedUntil')) <= julianday('now')
+        OR json_extract(entry.payload_json, '$.snoozedAt') IS NULL
+        OR julianday(failed.completed_at) > julianday(json_extract(entry.payload_json, '$.snoozedAt')))
+      AND CASE WHEN json_extract(entry.payload_json, '$.autoProviderSwitch.runId') IS failed.run_id
+        THEN ${switchSelection("json_extract(entry.payload_json, '$.autoProviderSwitch.to')")}
+        ELSE entry.provider_instance_id IN (SELECT value FROM json_each(?))
+          AND ${switchSelection("json_extract(failed.payload_json, '$.modelSelection')")}
+          AND 'usage_limit' = (SELECT CASE WHEN json_valid(item.payload_json)
+            THEN json_extract(item.payload_json, '$.failure.class') END
+            FROM orchestration_v2_projection_turn_items item
+            INDEXED BY orchestration_v2_projection_turn_items_node_ordinal_idx
+            WHERE item.run_id = failed.run_id AND item.thread_id = entry.thread_id
+              AND item.type = 'error' AND item.status = 'failed'
+              AND item.node_id IS json_extract(failed.payload_json, '$.rootNodeId')
+            ORDER BY item.updated_at DESC, item.ordinal DESC, item.turn_item_id DESC LIMIT 1)
+      END
+      AND NOT EXISTS (SELECT 1 FROM orchestration_v2_projection_runtime_requests pending
+        WHERE pending.thread_id = entry.thread_id AND pending.status = 'pending')
+      AND NOT EXISTS (SELECT 1 FROM ${messages} message
+        JOIN ${runs} continuation ON continuation.run_id = message.run_id
+        WHERE message.message_id = 'limit-switch-resume:' || entry.thread_id || ':' || failed.run_id
+          AND continuation.thread_id = entry.thread_id
+          AND json_extract(continuation.payload_json, '$.userMessageId') = message.message_id)
+      AND NOT EXISTS (SELECT 1 FROM orchestration_v2_projection_context_transfers transfer
+        WHERE transfer.source_thread_id = entry.thread_id AND transfer.type = 'subagent_result'
+          AND json_extract(transfer.payload_json, '$.sourcePoint.runId') = failed.run_id)
+  )`;
 
 const retiredTriggers = [
   "orchestration_v2_thread_references_insert",
@@ -222,18 +247,19 @@ function validateLedgers(recorded) {
 }
 
 // A live dry run uses separate bounded statements. The high key caps the scan even as new rows arrive.
-function scan(db, table, fields, dryRun) {
-  if (!dryRun) return db.prepare(`SELECT ${fields} FROM ${table} AS entry`).get();
+function scan(db, table, fields, dryRun, ...args) {
+  if (!dryRun) return db.prepare(`SELECT ${fields} FROM ${table} AS entry`).get(...args);
   const end = scalar(db, `SELECT max(rowid) FROM ${table}`);
   const nextPage = db.prepare(`SELECT rowid FROM ${table}
     WHERE rowid > ? AND rowid <= ? ORDER BY rowid LIMIT 1 OFFSET 1023`);
   const page = db.prepare(
     `SELECT ${fields} FROM ${table} AS entry WHERE entry.rowid > ? AND entry.rowid <= ?`,
   );
-  const totals = page.get(0, 0);
+  const totals = page.get(...args, 0, 0);
   for (let cursor = 0; cursor < end;) {
     const next = nextPage.get(cursor, end)?.rowid ?? end;
-    for (const [key, count] of Object.entries(page.get(cursor, next))) totals[key] += count;
+    for (const [key, count] of Object.entries(page.get(...args, cursor, next)))
+      totals[key] += count;
     cursor = next;
   }
   return totals;
@@ -342,6 +368,25 @@ async function run(db, mode, settingsPath) {
       scan(db, table, `count(CASE WHEN ${where} THEN 1 END) AS count`, mode === "dry-run").count,
     ]),
   );
+  const providers =
+    settings.usageLimitRecovery === "switch"
+      ? {
+          codex: { driver: "codex" },
+          claudeAgent: { driver: "claudeAgent" },
+          ...settings.providerInstances,
+        }
+      : {};
+  const switchProviders = JSON.stringify(
+    Object.keys(providers).filter((id) => ["codex", "claudeAgent"].includes(providers[id]?.driver)),
+  );
+  blocked.pendingProviderSwitches = scan(
+    db,
+    threads,
+    `count(CASE WHEN ${pendingProviderSwitch} THEN 1 END) AS count`,
+    mode === "dry-run",
+    switchProviders,
+    switchProviders,
+  ).count;
   const before = countRows(db, mode === "dry-run");
   console.log(
     JSON.stringify(
