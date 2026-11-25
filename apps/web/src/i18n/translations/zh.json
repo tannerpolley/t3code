@@ -9838,7 +9838,6 @@
   "44eac2e9f0540171": "无法重置提供方实例",
   "e58b52d05807b929": "正在刷新提供方",
   "1d7cade347f52bbd": "权限受限",
-  "c165e95dd1b35bfd": "此连接可以查看 {environment} 的提供方，但无法更改其设置。",
   "909f245bc73b0f32": "此提供方实例在该设备上已不可用。",
   "daf14fa8c7bedb74": "尚未配置提供方。",
   "2757a250104b4b7e": "高级",
@@ -13764,5 +13763,14 @@
   "73beacabd7ca1993": "{count, plural, other {显示 {count} 个正在运行的项目}}",
   "98515f1201b25dcc": "另有 {count} 个",
   "cdd60e2fb71b5d07": "已关闭（已完成）",
-  "bf34ae7839ba9dd1": "不可用：{count} 个"
+  "bf34ae7839ba9dd1": "不可用：{count} 个",
+  "e351e22d0be49f2b": "Codex 速度：{environment} 上的{speed}",
+  "72dc8979fc87df5c": "Codex 速度：{speed}",
+  "f94eea5cf4e7d9d6": "默认",
+  "7b44f2dcd82a0ea1": "此会话无权管理 {environment} 上的提供方。",
+  "7aa202a739c5f90d": "使用默认设置的 Codex 线程和工作代理会从下一轮开始应用此设置。模型会在所选速度范围内使用支持的最快速度。",
+  "e2a5cf66eeec090e": "默认速度",
+  "d19249179ab508d3": "使用 Codex 配置",
+  "afecbf6b765a2fb0": "极速",
+  "3c8f3dd37881c169": "Codex 速度 普通 快速 极速 服务级别"
 }

@@ -76,7 +76,11 @@ import {
   resolveProjectProviderInstanceEnabled,
   SECRET_REQUEST_UNSAVED_NOTE,
 } from "@t3tools/contracts";
-import { getProviderOptionCurrentValue, withLegacyUltracodeEffort } from "@t3tools/shared/model";
+import {
+  getProviderOptionCurrentValue,
+  withLegacyUltracodeEffort,
+  withoutCodexSpeed,
+} from "@t3tools/shared/model";
 import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
@@ -1814,11 +1818,12 @@ const make = Effect.gen(function* () {
       instanceId === inheritedSelection.instanceId &&
       (advertised?.slug ?? model) ===
         (advertisedModel(provider, inheritedSelection.model)?.slug ?? inheritedSelection.model);
+    const inheritedOptions =
+      provider.driver === "codex"
+        ? withoutCodexSpeed(inheritedSelection.options)
+        : inheritedSelection.options;
     let options = inheritsOptions
-      ? knownOptions(
-          withLegacyUltracodeEffort(descriptors, inheritedSelection.options),
-          descriptors,
-        )
+      ? knownOptions(withLegacyUltracodeEffort(descriptors, inheritedOptions), descriptors)
       : undefined;
     if (requestedOptions !== undefined || antigravityTarget !== undefined) {
       const selections = new Map(
@@ -2935,6 +2940,9 @@ const make = Effect.gen(function* () {
         providerCredits,
       );
       const inherited = parent?.thread.modelSelection;
+      const inheritedProvider = providers.find(
+        (provider) => provider.instanceId === inherited?.instanceId,
+      );
       const searchTerms = input.search?.toLowerCase().split(/\s+/).filter(Boolean) ?? [];
       return {
         parentThreadId: parent?.thread.id ?? null,
@@ -2942,10 +2950,10 @@ const make = Effect.gen(function* () {
         inheritedModel: inherited?.model ?? null,
         inheritedOptions:
           knownOptions(
-            inherited?.options,
-            providers
-              .find((provider) => provider.instanceId === inherited?.instanceId)
-              ?.models.find((model) => model.slug === inherited?.model)?.capabilities
+            inheritedProvider?.driver === "codex"
+              ? withoutCodexSpeed(inherited?.options)
+              : inherited?.options,
+            inheritedProvider?.models.find((model) => model.slug === inherited?.model)?.capabilities
               ?.optionDescriptors,
           ) ?? [],
         runtimeMode: limits.runtimeMode,

@@ -3,6 +3,7 @@ import { SettingsGroup } from "./SettingsGroup";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import {
   AuthSettingsWriteScope,
+  CodexDefaultSpeed,
   AuthProvidersManageScope,
   AuthOrchestrationReadScope,
 } from "@t3tools/contracts";
@@ -94,6 +95,7 @@ import {
   EmptyTitle,
 } from "../ui/empty";
 import { ScrollArea } from "../ui/scroll-area";
+import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { stackedThreadToast, toastManager } from "../ui/toast";
@@ -111,6 +113,7 @@ import { CodexSetupSection, CodexManagedRuntimeFields } from "./CodexSetupSectio
 import { readCodexSetupMode } from "./CodexSetupSection.logic";
 import { providerClients } from "./providerDriverMeta";
 import { useSearchableSetting } from "./settingsSearch";
+import { CODEX_SPEED_LABELS } from "./codexSpeedCopy";
 import { CompactIdleThreadsRow } from "./SettingsPanels";
 import {
   backgroundActivityOverrideSettings,
@@ -385,7 +388,8 @@ function ProviderSettingsPanelContent(target: ProviderSettingsTarget) {
     if (
       !target.scoped &&
       (searchTargetId === searchableSetting("provider-health-check-interval").id ||
-        searchTargetId === searchableSetting("usage-providers").id) &&
+        searchTargetId === searchableSetting("usage-providers").id ||
+        searchTargetId === searchableSetting("codex-default-speed").id) &&
       !selectedEnvironmentCanRenderSettings &&
       searchableEnvironmentId !== undefined
     ) {
@@ -580,6 +584,7 @@ export function EnvironmentProviderSettings({
   const searchableSetting = useSearchableSetting();
   const gt = useGT();
   const settings = useEnvironmentSettings(environmentId);
+  const messages = useMessages();
   const managedPolicy = useManagedPolicy(environmentId);
   // A policy that allows no provider leaves nothing to add.
   const canAddProvider =
@@ -1093,11 +1098,48 @@ export function EnvironmentProviderSettings({
             <SettingsRow
               title={gt("Limited permissions")}
               description={gt(
-                "This session can view {environment}''s providers but can't change their settings.",
+                "This session lacks permission to manage providers on {environment}.",
                 { environment: environmentLabel },
               )}
             />
           </SettingsGroup>
+        ) : null}
+        {rows.some((row) => row.driver === "codex") ? (
+          <SettingsSection title="Codex">
+            <SettingsRow
+              {...searchableSetting("codex-default-speed")}
+              description={gt(
+                "Applies on the next turn to Codex threads and workers using the default. Models use the fastest supported speed up to your choice.",
+              )}
+              control={
+                <Select<CodexDefaultSpeed | "config">
+                  value={settings.codexDefaultSpeed ?? "config"}
+                  disabled={!canWriteSettings}
+                  onValueChange={(value) => {
+                    if (value !== null) {
+                      updateSettings({ codexDefaultSpeed: value === "config" ? null : value });
+                    }
+                  }}
+                >
+                  <SelectTrigger size="sm" aria-label={gt("Default speed")}>
+                    <SelectValue>
+                      {settings.codexDefaultSpeed == null
+                        ? gt("Use Codex config")
+                        : messages(CODEX_SPEED_LABELS[settings.codexDefaultSpeed])}
+                    </SelectValue>
+                  </SelectTrigger>
+                  <SelectPopup align="end" alignItemWithTrigger={false}>
+                    <SelectItem value="config">{gt("Use Codex config")}</SelectItem>
+                    {CodexDefaultSpeed.literals.map((speed) => (
+                      <SelectItem key={speed} value={speed}>
+                        {messages(CODEX_SPEED_LABELS[speed])}
+                      </SelectItem>
+                    ))}
+                  </SelectPopup>
+                </Select>
+              }
+            />
+          </SettingsSection>
         ) : null}
         <SettingsGroup
           divided={false}

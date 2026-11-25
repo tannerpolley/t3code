@@ -9820,7 +9820,6 @@
   "44eac2e9f0540171": "Não foi possível redefinir a instância do provedor",
   "e58b52d05807b929": "Atualizando provedores",
   "1d7cade347f52bbd": "Permissões limitadas",
-  "c165e95dd1b35bfd": "Esta sessão pode ver os provedores de {environment}, mas não pode alterar as configurações deles.",
   "909f245bc73b0f32": "Esta instância do provedor não está mais disponível neste dispositivo.",
   "daf14fa8c7bedb74": "Nenhum provedor configurado.",
   "2757a250104b4b7e": "Avançado",
@@ -13744,5 +13743,14 @@
   "73beacabd7ca1993": "{count, plural, one {Mostrar {count} item em execução} other {Mostrar {count} itens em execução}}",
   "98515f1201b25dcc": "+{count} a mais",
   "cdd60e2fb71b5d07": "Fechada como concluída",
-  "bf34ae7839ba9dd1": "Indisponibilidade: {count}"
+  "bf34ae7839ba9dd1": "Indisponibilidade: {count}",
+  "e351e22d0be49f2b": "Velocidade do Codex: {speed} em {environment}",
+  "72dc8979fc87df5c": "Velocidade do Codex: {speed}",
+  "f94eea5cf4e7d9d6": "Padrão",
+  "7b44f2dcd82a0ea1": "Esta sessão não tem permissão para gerenciar provedores em {environment}.",
+  "7aa202a739c5f90d": "Aplica-se no próximo turno às conversas e aos agentes do Codex que usam o padrão. Os modelos usam a maior velocidade compatível até o limite escolhido.",
+  "e2a5cf66eeec090e": "Velocidade padrão",
+  "d19249179ab508d3": "Usar a configuração do Codex",
+  "afecbf6b765a2fb0": "Ultrarrápida",
+  "3c8f3dd37881c169": "Codex velocidade normal rápida ultrarrápida nível de serviço"
 }

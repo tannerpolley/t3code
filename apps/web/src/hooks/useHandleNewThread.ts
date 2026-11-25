@@ -60,6 +60,7 @@ import { useThreadRouteTarget } from "./useThreadRouteTarget";
 import { readUnloadedThreadCount } from "../state/olderSettledShelf";
 import { resolveProjectDefaultProviderModelSelection } from "../providerInstances";
 import { resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
+import { withoutCodexSpeed } from "@t3tools/shared/model";
 
 export const LAST_USED_PROJECT_STORAGE_KEY = "t3code:last-used-project:v1";
 export const lastUsedProjectKeySchema = Schema.NullOr(Schema.String);
@@ -196,7 +197,28 @@ export function createNewThreadHandler(router: AnyRouter) {
     const composerModelSelection = composerActiveProvider
       ? (carrySourceComposer?.modelSelectionByProvider[composerActiveProvider] ?? null)
       : null;
-    const carryModelSelection = composerModelSelection ?? carrySourceShell?.modelSelection ?? null;
+    const sourceModelSelection = composerModelSelection ?? carrySourceShell?.modelSelection ?? null;
+    const sourceEnvironmentId =
+      currentRouteTarget?.kind === "server"
+        ? currentRouteTarget.threadRef.environmentId
+        : carrySourceDraft?.environmentId;
+    const sourceConfig =
+      sourceEnvironmentId === undefined
+        ? undefined
+        : environmentServerConfigs.get(sourceEnvironmentId);
+    const sourceProvider =
+      sourceModelSelection &&
+      (sourceConfig?.providers?.find(
+        ({ instanceId }) => instanceId === sourceModelSelection.instanceId,
+      )?.driver ??
+        sourceConfig?.settings.providerInstances?.[sourceModelSelection.instanceId]?.driver ??
+        sourceModelSelection.instanceId);
+    let carryModelSelection = sourceModelSelection;
+    if (carryModelSelection?.options && sourceProvider === "codex") {
+      const { options, ...selection } = carryModelSelection;
+      const carriedOptions = withoutCodexSpeed(options);
+      carryModelSelection = carriedOptions ? { ...selection, options: carriedOptions } : selection;
+    }
     const carryInteractionMode =
       carrySourceComposer?.interactionMode ??
       carrySourceShell?.interactionMode ??
@@ -376,7 +398,10 @@ export function createNewThreadHandler(router: AnyRouter) {
         const storedDraft = getComposerDraft(emptyStoredDraftThread.draftId);
         const storedDraftHasExplicitModelPick = hasExplicitComposerModelSelection(storedDraft);
         if (!storedDraftHasExplicitModelPick) {
-          applyStickyState(emptyStoredDraftThread.draftId);
+          applyStickyState(
+            emptyStoredDraftThread.draftId,
+            environmentServerConfigs.get(projectRef.environmentId)?.providers,
+          );
           const modelSelectionOverride = resolveModelSelectionOverride(
             emptyStoredDraftThread.draftId,
           );
@@ -466,7 +491,7 @@ export function createNewThreadHandler(router: AnyRouter) {
         runtimeMode: defaultRuntimeMode,
         ...(carryInteractionMode ? { interactionMode: carryInteractionMode } : {}),
       });
-      applyStickyState(draftId);
+      applyStickyState(draftId, environmentServerConfigs.get(projectRef.environmentId)?.providers);
       const modelSelectionOverride = resolveModelSelectionOverride(draftId);
       if (modelSelectionOverride) {
         setModelSelection(draftId, modelSelectionOverride, { replaceOptions: true });

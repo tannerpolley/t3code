@@ -7,7 +7,7 @@ import {
   type ProviderOptionSelection,
   type ServerProvider,
 } from "@t3tools/contracts";
-import { withLegacyUltracodeEffort } from "@t3tools/shared/model";
+import { offeredCodexServiceTier, withLegacyUltracodeEffort } from "@t3tools/shared/model";
 
 export const advertisedModel = (provider: ServerProvider, model: string) =>
   provider.models.find((candidate) => candidate.slug === model) ??
@@ -83,6 +83,7 @@ export function providerConstraints(
 function invalidOptionSelections(
   selections: ReadonlyArray<ProviderOptionSelection>,
   descriptors: ReadonlyArray<ProviderOptionDescriptor> | undefined,
+  driver: ProviderDriverKind,
 ): ReadonlyArray<string> {
   const problems: Array<string> = [];
   const seen = new Set<string>();
@@ -103,12 +104,17 @@ function invalidOptionSelections(
       problems.push(`Option ${selection.id} expects a boolean value.`);
       continue;
     }
-    if (
-      descriptor.type === "select" &&
-      !descriptor.options.some((choice) => choice.id === selection.value)
-    ) {
-      const choices = descriptor.options.map((choice) => choice.id).join(", ");
-      problems.push(`Option ${selection.id} must be one of: ${choices}.`);
+    if (descriptor.type === "select") {
+      const alias =
+        driver === "codex" && descriptor.id === "serviceTier" && typeof selection.value === "string"
+          ? offeredCodexServiceTier(descriptor.options, selection.value)
+          : undefined;
+      if (
+        !descriptor.options.some((choice) => choice.id === selection.value || choice.id === alias)
+      ) {
+        const choices = descriptor.options.map((choice) => choice.id).join(", ");
+        problems.push(`Option ${selection.id} must be one of: ${choices}.`);
+      }
     }
   }
   return problems;
@@ -170,6 +176,7 @@ export function checkDelegateTarget(input: {
     const invalid = invalidOptionSelections(
       withLegacyUltracodeEffort(descriptors, input.options) ?? [],
       descriptors,
+      provider.driver,
     );
     if (invalid.length > 0) {
       return fail(

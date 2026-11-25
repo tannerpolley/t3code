@@ -35,6 +35,7 @@ import {
 } from "../../provider/codexUsageLimits.ts";
 import {
   type AgentFeedbackMode,
+  type CodexDefaultSpeed,
   CodexSettings,
   defaultInstanceIdForDriver,
   isOrchestrationV2WorkActive,
@@ -60,7 +61,15 @@ import {
   dynamicToolSurface,
   dynamicToolTitle,
 } from "@t3tools/shared/toolActivity";
-import { getModelSelectionStringOptionValue, modelSelectionsEqual } from "@t3tools/shared/model";
+import {
+  getCodexServiceTierDescriptor,
+  getCodexServiceTierOptionValue,
+  getModelSelectionStringOptionValue,
+  modelSelectionsEqual,
+  offeredCodexServiceTier,
+  resolveCodexSpeed,
+  resolveSelectableModel,
+} from "@t3tools/shared/model";
 import { appendGeneratedImageEmbeds } from "@t3tools/shared/generatedImageMarkdown";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import { mcpToolResultOutput } from "@t3tools/shared/toolOutput";
@@ -120,7 +129,6 @@ import { ChildProcess, ChildProcessSpawner } from "effect/process";
 
 import { resolveAttachmentPath, resolveAttachmentPathById } from "../../attachmentStore.ts";
 import * as PortScanner from "../../preview/PortScanner.ts";
-import { getCodexServiceTierOptionValue } from "../../codexModelOptions.ts";
 import { ServerConfig } from "../../config.ts";
 import { makeBackgroundTaskLogWriter } from "../backgroundTaskFiles.ts";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
@@ -950,6 +958,13 @@ function codexCyberAccess(
   return descriptor?.type === "select" ? { defaultProgram: descriptor.currentValue } : undefined;
 }
 
+function codexServiceTierDescriptor(models: ReadonlyArray<ServerProviderModel>, model: string) {
+  const slug = resolveSelectableModel(CODEX_PROVIDER, model, models);
+  return getCodexServiceTierDescriptor(
+    models.find((candidate) => candidate.slug === slug)?.capabilities,
+  );
+}
+
 export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTurnStartParams")(
   function* (input: {
     readonly nativeThreadId: string;
@@ -963,6 +978,7 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
     readonly orchestration?: McpProviderSession.McpOrchestrationPolicy;
     /** ChatGPT token sharing does not accept service tiers. */
     readonly omitServiceTier?: boolean;
+    readonly serviceTier?: string | undefined;
     readonly appContext?: ProviderAdapter.ProviderAdapterV2TurnInput["appContext"];
     /** Set only for a model that offers Cyber Access; custom models never do. */
     readonly cyberAccess?: { readonly defaultProgram: string | undefined } | undefined;
@@ -996,7 +1012,7 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
     const serviceTier =
       input.omitServiceTier === true
         ? undefined
-        : getCodexServiceTierOptionValue(input.modelSelection);
+        : (input.serviceTier ?? getCodexServiceTierOptionValue(input.modelSelection));
     // A chosen program goes as is, even one the model lacks, so Codex rejects it visibly.
     const cyberAccessProgram =
       input.cyberAccess === undefined
@@ -2168,7 +2184,7 @@ export const createCodexAdapterV2 = Effect.fn("CodexAdapterV2.createCodexAdapter
   { instanceId, environment, enabled, config }: ProviderAdapterDriverCreateInput<CodexSettings>,
   hooks: Pick<
     CodexAdapterV2Options,
-    "onUsageLimits" | "resolveRuntime" | "compatibility" | "models"
+    "onUsageLimits" | "resolveRuntime" | "compatibility" | "models" | "defaultSpeed"
   > = {},
 ) {
   const clientFactory = yield* CodexAppServerClientFactory;
@@ -2224,6 +2240,7 @@ export interface CodexAdapterV2Options {
   readonly onUsageLimits?: ManagedServerProvider["applyUsageLimits"];
   /** The provider's published models, read per turn for catalog defaults. */
   readonly models?: Effect.Effect<ReadonlyArray<ServerProviderModel>>;
+  readonly defaultSpeed?: Effect.Effect<CodexDefaultSpeed | null>;
   readonly resolveRuntime?: Effect.Effect<CodexEffectiveRuntime, ProviderSetupError, Scope.Scope>;
   readonly compatibility?: (
     version: string,
@@ -2975,6 +2992,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           readonly nativeTurnId: string;
           readonly startedAt: DateTime.Utc;
           readonly waitForNativeStart?: boolean;
+          readonly serviceTier?: string | undefined;
         }) {
           const existing = (yield* Ref.get(activeTurns)).get(input.nativeTurnId);
           if (existing !== undefined) {
@@ -3059,6 +3077,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 strength: "strong",
               },
               ordinal: input.turnInput.providerTurnOrdinal,
+              ...(input.serviceTier === undefined ? {} : { serviceTier: input.serviceTier }),
               status: "running",
               startedAt: input.startedAt,
               completedAt: null,
@@ -8391,15 +8410,28 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           }
           const mcpSession = yield* mcpSessions.read(turnInput.threadId);
           const models = adapterOptions.models === undefined ? [] : yield* adapterOptions.models;
-          const configuredReasoningSummary = yield* client
+          const codexConfig = yield* client
             .request("config/read", { cwd: turnInput.runtimePolicy.cwd, includeLayers: false })
             .pipe(
-              Effect.map((response) => response.config.model_reasoning_summary ?? undefined),
+              Effect.map((response) => response.config),
               Effect.catchIf(isNotWireTimeout, () =>
                 Effect.logDebug("Codex config read failed.").pipe(Effect.as(undefined)),
               ),
               withAppServerDeadline("config/read"),
             );
+          const defaultSpeed = yield* adapterOptions.defaultSpeed ?? Effect.succeed(null);
+          const serviceTier =
+            adapterOptions.defaultSpeed === undefined
+              ? undefined
+              : resolveCodexSpeed({
+                  descriptor: codexServiceTierDescriptor(models, turnInput.modelSelection.model),
+                  // A worker's selected role options seed its saved model selection.
+                  threadTier: getCodexServiceTierOptionValue(turnInput.modelSelection),
+                  defaultSpeed,
+                  configuredTier:
+                    codexConfig === undefined ? undefined : (codexConfig.service_tier ?? null),
+                }).tier;
+          const configuredReasoningSummary = codexConfig?.model_reasoning_summary ?? undefined;
           const turnStartParams = yield* buildCodexTurnStartParams({
             cyberAccess: codexCyberAccess(models, turnInput.modelSelection.model),
             nativeThreadId: threadId,
@@ -8414,6 +8446,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               ? {}
               : { orchestration: mcpSession.orchestration }),
             omitServiceTier: adapterOptions.resolveRuntime !== undefined,
+            serviceTier,
             ...(turnInput.appContext === undefined ? {} : { appContext: turnInput.appContext }),
             ...(configuredReasoningSummary === undefined ? {} : { configuredReasoningSummary }),
           });
@@ -8469,6 +8502,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                       nativeTurnId: started.turn.id,
                       startedAt: codexTimestamp(started.turn.startedAt),
                       waitForNativeStart: started.turn.startedAt === null,
+                      serviceTier: turnStartParams.serviceTier ?? undefined,
                     }),
                   );
                   for (const { handle } of matching) yield* handle;
@@ -8750,10 +8784,17 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           threadId: string,
           modelSelection: ModelSelection | undefined,
         ) {
+          if (adapterOptions.resolveRuntime !== undefined || modelSelection === undefined) return;
+          const selectedTier = getCodexServiceTierOptionValue(modelSelection);
+          if (selectedTier === undefined) return;
           const serviceTier =
-            adapterOptions.resolveRuntime === undefined
-              ? getCodexServiceTierOptionValue(modelSelection)
-              : undefined;
+            adapterOptions.models === undefined
+              ? selectedTier
+              : offeredCodexServiceTier(
+                  codexServiceTierDescriptor(yield* adapterOptions.models, modelSelection.model)
+                    ?.options ?? [],
+                  selectedTier,
+                );
           if (serviceTier === undefined) return;
           const applied = yield* client
             .request("thread/settings/update", { threadId, serviceTier })

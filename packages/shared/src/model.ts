@@ -1,4 +1,5 @@
 import {
+  type CodexDefaultSpeed,
   type CustomModelSetting,
   MODEL_SLUG_ALIASES_BY_PROVIDER,
   ModelCapabilities,
@@ -7,6 +8,7 @@ import {
   ProviderInstanceId,
   type ProviderOptionDescriptor,
   type ProviderOptionSelection,
+  type SelectProviderOptionDescriptor,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -148,6 +150,100 @@ export function withImplicitFastModeDefault(
   return [...(modelOptions ?? []), { id: "fastMode", value: false }];
 }
 
+export function offeredCodexServiceTier(
+  options: ReadonlyArray<{ readonly id: string }>,
+  tier: string | null | undefined,
+): string | undefined {
+  if (!tier) return undefined;
+  if (tier === "default" || tier === "standard") return "default";
+  return (
+    options.find(({ id }) => id === tier)?.id ??
+    (tier === "fast" || tier === "priority"
+      ? options.find(({ id }) => id === "fast" || id === "priority")?.id
+      : undefined)
+  );
+}
+
+export function getCodexServiceTierDescriptor(caps: ModelCapabilities | null | undefined) {
+  return caps?.optionDescriptors?.find(
+    (option): option is SelectProviderOptionDescriptor =>
+      option.id === "serviceTier" && option.type === "select",
+  );
+}
+
+export function getCodexServiceTierOptionValue(
+  selection: Pick<ModelSelection, "options"> | null | undefined,
+) {
+  const options = selection?.options;
+  return (
+    getProviderOptionStringSelectionValue(options, "serviceTier") ??
+    (getProviderOptionBooleanSelectionValue(options, "fastMode") === true ? "fast" : undefined)
+  );
+}
+
+export function resolveCodexSpeed(input: {
+  descriptor?: Pick<SelectProviderOptionDescriptor, "options" | "currentValue"> | undefined;
+  threadTier?: string | undefined;
+  roleTier?: string | undefined;
+  defaultSpeed?: CodexDefaultSpeed | null | undefined;
+  /** The effective CLI tier for the working directory. An omitted value uses the catalog snapshot. */
+  configuredTier?: string | null | undefined;
+  /** A completed or running turn keeps the tier already used, even if the catalog changes. */
+  recordedTier?: string | null | undefined;
+}): { tier: string; speed: "standard" | "fast" | "ultrafast" | undefined } {
+  const options = input.descriptor?.options ?? [];
+  const offered = (tier: string | null | undefined) => offeredCodexServiceTier(options, tier);
+  const nativeTier = options.find((option) => option.isDefault)?.id;
+  const configuredTier =
+    input.configuredTier === undefined ? input.descriptor?.currentValue : input.configuredTier;
+  const tier =
+    input.recordedTier ??
+    offered(input.threadTier) ??
+    offered(input.roleTier) ??
+    (input.defaultSpeed == null
+      ? (offered(configuredTier) ?? offered(nativeTier) ?? "default")
+      : input.defaultSpeed === "normal"
+        ? "default"
+        : ((input.defaultSpeed === "ultrafast" ? offered("ultrafast") : undefined) ??
+          offered("fast") ??
+          "default"));
+  const speed =
+    tier === "priority" || tier === "fast"
+      ? "fast"
+      : tier === "ultrafast"
+        ? "ultrafast"
+        : tier === "default" || tier === "standard"
+          ? "standard"
+          : undefined;
+  return { tier, speed };
+}
+
+export function withoutCodexSpeed<T extends ProviderOptionSelection>(
+  options: ReadonlyArray<T> | null | undefined,
+): Array<T> | undefined {
+  const remaining = options?.filter(({ id }) => id !== "serviceTier" && id !== "fastMode");
+  return remaining?.length ? remaining : undefined;
+}
+
+export function withCodexSpeedFrom(
+  options: ReadonlyArray<ProviderOptionSelection> | undefined,
+  source: ReadonlyArray<ProviderOptionSelection> | null | undefined,
+): ReadonlyArray<ProviderOptionSelection> | undefined {
+  const remaining = withoutCodexSpeed(options);
+  const speed = source?.filter(({ id }) => id === "serviceTier" || id === "fastMode");
+  return speed?.length ? [...(remaining ?? []), ...speed] : remaining;
+}
+
+export function codexSpeedOverrideOptions(
+  options: ReadonlyArray<ProviderOptionSelection> | null | undefined,
+): ReadonlyArray<ProviderOptionSelection> | undefined {
+  const tier = getRawSelectionValueById(options, "serviceTier");
+  if (typeof tier === "string" || getRawSelectionValueById(options, "fastMode") !== true) {
+    return options ?? undefined;
+  }
+  return [...(options ?? []), { id: "serviceTier", value: "fast" }];
+}
+
 function resolveDescriptorChoiceValue(
   descriptor: Extract<ProviderOptionDescriptor, { type: "select" }>,
   raw: string | null | undefined,
@@ -167,6 +263,10 @@ function resolveDescriptorChoiceValue(
   }
   if (descriptor.options.some((option) => option.id === trimmed)) {
     return trimmed;
+  }
+  if (descriptor.id === "serviceTier") {
+    const tier = offeredCodexServiceTier(descriptor.options, trimmed);
+    if (descriptor.options.some((option) => option.id === tier)) return tier;
   }
   return descriptor.currentValue ?? descriptor.options.find((option) => option.isDefault)?.id;
 }

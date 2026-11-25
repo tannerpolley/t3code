@@ -4,15 +4,27 @@ import {
   isReasoningControl,
   selectableProviderOptionChoices,
 } from "@t3tools/client-runtime/model-traits";
-import type { ProviderOptionDescriptor, RuntimeMode } from "@t3tools/contracts";
+import type {
+  CodexDefaultSpeed,
+  ModelSelection,
+  ProviderOptionDescriptor,
+  RuntimeMode,
+} from "@t3tools/contracts";
 import type { EffortDisplay } from "@t3tools/contracts/settings";
-import { getProviderOptionCurrentLabel } from "@t3tools/shared/model";
+import {
+  getCodexServiceTierDescriptor,
+  getCodexServiceTierOptionValue,
+  getProviderOptionCurrentLabel,
+  resolveCodexSpeed,
+  resolveSelectableModel,
+} from "@t3tools/shared/model";
 import { msg, T, useGT, useMessages } from "gt-react";
 import { CheckIcon, ChevronRightIcon, ChevronUpIcon, WorkflowIcon } from "lucide-react";
 import { type KeyboardEvent, type ReactNode, use, useRef, useState } from "react";
 
 import { m, type MessageResolver } from "~/i18n/messages";
 import { cn } from "~/lib/utils";
+import { CODEX_SPEED_LABELS } from "../settings/codexSpeedCopy";
 import {
   Menu,
   MenuPopup,
@@ -37,6 +49,11 @@ import {
 
 type SelectDescriptor = Extract<ProviderOptionDescriptor, { type: "select" }>;
 type BooleanDescriptor = Extract<ProviderOptionDescriptor, { type: "boolean" }>;
+
+export interface ComposerCodexSpeed {
+  defaultSpeed?: CodexDefaultSpeed | null | undefined;
+  activeTurn?: { tier: string; selection: ModelSelection } | undefined;
+}
 
 /** Service tiers, Claude's Fast mode, and Ultracode sit in the footer, not the column. */
 function splitSpeed(
@@ -88,18 +105,41 @@ export function describeComposerEffort(
   effortDisplay: EffortDisplay,
   size: ComposerControlSize,
   resolve: MessageResolver = m,
+  codexSpeed?: ComposerCodexSpeed,
 ): { suffix: ReactNode; detail: string | null } {
   if (!traits) return { suffix: null, detail: null };
   const visibility = getTraitsSectionVisibility({ ...traits, resolve });
-  if (!visibility.hasAnyControls) return { suffix: null, detail: null };
   const modelSelection =
     traits.instanceId && traits.model
       ? { instanceId: traits.instanceId, model: traits.model, options: traits.modelOptions ?? [] }
       : null;
+  const codex = traits.provider === "codex" && !visibility.modelIsUnavailable;
+  const descriptor = codex ? getCodexServiceTierDescriptor(visibility.caps) : undefined;
+  const activeTurn = codexSpeed?.activeTurn;
+  const recordedTier =
+    activeTurn &&
+    modelSelection &&
+    activeTurn.selection.instanceId === modelSelection.instanceId &&
+    (activeTurn.selection.model === modelSelection.model ||
+      resolveSelectableModel(traits.provider, activeTurn.selection.model, traits.models) ===
+        modelSelection.model)
+      ? activeTurn.tier
+      : undefined;
+  const effectiveSpeed = codex
+    ? resolveCodexSpeed({
+        descriptor,
+        threadTier: getCodexServiceTierOptionValue(modelSelection),
+        defaultSpeed: codexSpeed?.defaultSpeed,
+        recordedTier,
+      })
+    : undefined;
+  if (!visibility.hasAnyControls && !effectiveSpeed) return { suffix: null, detail: null };
   const primary = visibility.primarySelectDescriptor;
   const display = buildTraitsTriggerDisplay(
     {
-      descriptors: visibility.descriptors,
+      descriptors: effectiveSpeed
+        ? visibility.descriptors.filter(({ id }) => id !== "serviceTier" && id !== "fastMode")
+        : visibility.descriptors,
       primarySelectDescriptorId: primary?.id ?? null,
       ultrathinkPromptControlled: visibility.ultrathinkPromptControlled,
       modelSelection,
@@ -137,7 +177,17 @@ export function describeComposerEffort(
               modelSelection,
               traits.reportedModelSelection,
             ) ?? (reasoning.id === "thinking" ? reasoning.label : null));
-  const fast = display.speedLabel === "Fast" || display.speedLabel === "Ultrafast";
+  const ultra = effectiveSpeed
+    ? effectiveSpeed.speed === "ultrafast"
+    : display.speedLabel === "Ultrafast";
+  const fast =
+    ultra || (effectiveSpeed ? effectiveSpeed.speed === "fast" : display.speedLabel === "Fast");
+  const speedLabel = effectiveSpeed?.speed
+    ? resolve(
+        CODEX_SPEED_LABELS[effectiveSpeed.speed === "standard" ? "normal" : effectiveSpeed.speed],
+      )
+    : descriptor?.options.find(({ id }) => id === effectiveSpeed?.tier)?.label;
+  const detail = [display.label, speedLabel].filter(Boolean).join(" · ");
   // Agent options such as modes live in the picker; the trigger adds only the context window.
   const contextWindow =
     visibility.contextWindowDescriptor &&
@@ -146,10 +196,10 @@ export function describeComposerEffort(
       modelSelection,
       traits.reportedModelSelection,
     );
-  if (!word && !glyph && !fast && !display.ultracode && !contextWindow)
-    return { suffix: null, detail: display.label };
+  if (!word && !glyph && !fast && !speedLabel && !display.ultracode && !contextWindow)
+    return { suffix: null, detail };
   return {
-    detail: display.label,
+    detail,
     suffix: (
       <span
         className={cn(
@@ -165,7 +215,13 @@ export function describeComposerEffort(
         ) : glyph ? (
           <EffortGlyph count={glyph.count} filled={glyph.filled} size={size} />
         ) : null}
-        {fast ? <FastBolt ultra={display.speedLabel === "Ultrafast"} /> : null}
+        {fast ? (
+          <FastBolt ultra={ultra} />
+        ) : speedLabel ? (
+          <span data-composer-control-label data-composer-secondary-trait className="text-xs">
+            {speedLabel}
+          </span>
+        ) : null}
         {display.ultracode ? (
           <WorkflowIcon aria-hidden="true" data-composer-control-icon className="size-3" />
         ) : null}
@@ -625,31 +681,43 @@ function SpeedControl(props: { traits: TraitsSelectionInput }) {
       aria-label={speedSelect?.label ?? fastToggle?.label}
       className="flex rounded-lg bg-input/40 p-0.5"
     >
-      {speedSelect
-        ? selectableProviderOptionChoices(speedSelect).map((option) => (
+      {speedSelect ? (
+        <>
+          {props.traits.provider === "codex" ? (
+            <SpeedSegment
+              checked={traits.inheritsCodexSpeed}
+              label={gt("Default", { $context: "inherit the default speed" })}
+              onPick={traits.clearCodexSpeed}
+            />
+          ) : null}
+          {selectableProviderOptionChoices(speedSelect).map((option) => (
             <SpeedSegment
               key={option.id}
-              checked={option.id === traits.selectValue(speedSelect)}
+              checked={
+                (props.traits.provider !== "codex" || !traits.inheritsCodexSpeed) &&
+                option.id === traits.selectValue(speedSelect)
+              }
               label={option.label}
               description={option.description}
               onPick={() => traits.changeSelect(speedSelect, option.id)}
             />
-          ))
-        : fastToggle
-          ? ([false, true] as const).map((value) => (
-              <SpeedSegment
-                key={String(value)}
-                checked={(fastToggle.currentValue === true) === value}
-                speed={value ? "Fast" : "Standard"}
-                label={
-                  value
-                    ? gt("Fast", { $context: "response speed" })
-                    : gt("Standard", { $context: "response speed" })
-                }
-                onPick={() => traits.changeBoolean(fastToggle.id, value)}
-              />
-            ))
-          : null}
+          ))}
+        </>
+      ) : fastToggle ? (
+        ([false, true] as const).map((value) => (
+          <SpeedSegment
+            key={String(value)}
+            checked={(fastToggle.currentValue === true) === value}
+            speed={value ? "Fast" : "Standard"}
+            label={
+              value
+                ? gt("Fast", { $context: "response speed" })
+                : gt("Standard", { $context: "response speed" })
+            }
+            onPick={() => traits.changeBoolean(fastToggle.id, value)}
+          />
+        ))
+      ) : null}
     </div>
   );
 }

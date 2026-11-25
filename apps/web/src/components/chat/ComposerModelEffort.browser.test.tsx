@@ -87,6 +87,22 @@ function Column() {
   );
 }
 
+it("shows Normal for a Codex model with no selectable traits", async () => {
+  const traits: TraitsSelectionInput = {
+    provider: ProviderDriverKind.make("codex"),
+    instanceId: ProviderInstanceId.make("codex"),
+    model: "bare-custom",
+    models: [{ slug: "bare-custom", name: "Custom Codex", isCustom: true, capabilities: null }],
+    onModelOptionsChange: () => undefined,
+  };
+  const display = describeComposerEffort(traits, "bars", "sm", undefined, {
+    defaultSpeed: "ultrafast",
+  });
+  await using screen = await render(<p role="status">{display.suffix}</p>, { router: false }); // no routes involved
+  await expect.element(screen.getByRole("status")).toHaveTextContent("Normal");
+  expect(display.detail).toBe("Normal");
+});
+
 it("draws an agent's reasoning as bars and keeps its mode out of the levels", async () => {
   await using screen = await render(<Column />, { router: false }); // no routes involved
   const status = screen.getByRole("status");

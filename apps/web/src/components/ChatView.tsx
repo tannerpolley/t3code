@@ -574,9 +574,6 @@ export default function ChatView(props: ChatViewProps) {
     composerRef,
   });
   const composerDraftTarget = queuedRunEdit.draftTarget;
-  const reportedModelSelection = serverProjection
-    ? deriveReportedModelSelection(serverProjection)
-    : null;
   const threadStatus = useThreadStatus(routeThreadDetailRef);
   const threadSyncError = useThreadError(routeThreadDetailRef);
   const threadSyncPhase = resolveThreadSyncPhase({
@@ -591,6 +588,23 @@ export default function ChatView(props: ChatViewProps) {
   const activeProviderThread = serverProjection?.providerThreads.find(
     (thread) => thread.id === serverProjection.thread.activeProviderThreadId,
   );
+  const reportedModelSelection = serverProjection
+    ? deriveReportedModelSelection(serverProjection)
+    : null;
+  const activeCodexTurn =
+    activeProviderThread?.driver === "codex"
+      ? serverProjection?.providerTurns.findLast(
+          (turn) =>
+            turn.providerThreadId === activeProviderThread.id &&
+            turn.status === "running" &&
+            turn.serviceTier !== undefined,
+        )
+      : undefined;
+  const activeCodexSelection =
+    activeCodexTurn && serverProjection
+      ? (serverProjection.runs.find((run) => run.activeAttemptId === activeCodexTurn.runAttemptId)
+          ?.modelSelection ?? serverProjection.thread.modelSelection)
+      : undefined;
   const activeThreadLiveTokenUsage = latestProviderTurnTokenUsage(
     serverProjection?.providerTurns ?? [],
     serverProjection,
@@ -3926,6 +3940,16 @@ export default function ChatView(props: ChatViewProps) {
                               <ChatComposer
                                 canOperateThread={canOperateThread}
                                 reportedModelSelection={reportedModelSelection}
+                                codexSpeed={{
+                                  defaultSpeed: serverConfig?.settings?.codexDefaultSpeed,
+                                  activeTurn:
+                                    activeCodexTurn?.serviceTier && activeCodexSelection
+                                      ? {
+                                          tier: activeCodexTurn.serviceTier,
+                                          selection: activeCodexSelection,
+                                        }
+                                      : undefined,
+                                }}
                                 multipleModelSelections={multipleModelSelections}
                                 supportsMultipleModels={
                                   serverConfig?.environment.capabilities

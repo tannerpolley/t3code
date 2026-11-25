@@ -9827,7 +9827,6 @@
   "44eac2e9f0540171": "Kunde inte återställa leverantörsinstansen",
   "e58b52d05807b929": "Uppdaterar leverantörer",
   "1d7cade347f52bbd": "Begränsade behörigheter",
-  "c165e95dd1b35bfd": "Den här sessionen kan visa leverantörerna för {environment} men inte ändra deras inställningar.",
   "909f245bc73b0f32": "Leverantörsinstansen är inte längre tillgänglig på den här enheten.",
   "daf14fa8c7bedb74": "Inga leverantörer konfigurerade.",
   "2757a250104b4b7e": "Avancerat",
@@ -13752,5 +13751,14 @@
   "73beacabd7ca1993": "{count, plural, one {Visa {count} aktivt objekt} other {Visa {count} aktiva objekt}}",
   "98515f1201b25dcc": "+{count} till",
   "cdd60e2fb71b5d07": "Stängt som slutfört",
-  "bf34ae7839ba9dd1": "Otillgängliga: {count}"
+  "bf34ae7839ba9dd1": "Otillgängliga: {count}",
+  "e351e22d0be49f2b": "Codex hastighet: {speed} på {environment}",
+  "72dc8979fc87df5c": "Codex hastighet: {speed}",
+  "f94eea5cf4e7d9d6": "Standard",
+  "7b44f2dcd82a0ea1": "Den här sessionen saknar behörighet att hantera leverantörer på {environment}.",
+  "7aa202a739c5f90d": "Gäller från nästa tur för Codex-trådar och agenter som använder standarden. Modellerna använder den snabbaste hastighet de har stöd för, upp till ditt val.",
+  "e2a5cf66eeec090e": "Standardhastighet",
+  "d19249179ab508d3": "Använd Codex-konfigurationen",
+  "afecbf6b765a2fb0": "Ultrasnabb",
+  "3c8f3dd37881c169": "Codex hastighet normal snabb ultrasnabb tjänstenivå"
 }

@@ -17,10 +17,13 @@ import {
 } from "@t3tools/contracts";
 import {
   buildProviderOptionSelectionsFromDescriptors,
+  codexSpeedOverrideOptions,
   getProviderOptionCurrentLabel,
   getProviderOptionDescriptors,
   isClaudeUltrathinkPrompt,
   normalizeModelSlug,
+  withCodexSpeedFrom,
+  withoutCodexSpeed,
 } from "@t3tools/shared/model";
 import { msg, T, useMessages } from "gt-react";
 import { memo } from "react";
@@ -139,7 +142,7 @@ function getSelectedTraits(
       )
     : getProviderOptionDescriptors({
         caps,
-        selections: modelOptions,
+        selections: provider === "codex" ? codexSpeedOverrideOptions(modelOptions) : modelOptions,
       });
   const selectDescriptors = descriptors.filter(
     (descriptor): descriptor is Extract<ProviderOptionDescriptor, { type: "select" }> =>
@@ -240,6 +243,16 @@ export function getTraitsSectionVisibility(input: {
   };
 }
 
+function preserveCodexSpeedOnTraitChange(
+  provider: ProviderDriverKind,
+  modelOptions: ProviderOptions | null | undefined,
+  changedId: string,
+  next: ProviderOptions | undefined,
+): ProviderOptions | undefined {
+  if (provider !== "codex" || changedId === "serviceTier" || changedId === "fastMode") return next;
+  return withCodexSpeedFrom(next, modelOptions);
+}
+
 /**
  * `modelOptions` must already carry the composer's implicit defaults (see
  * `withImplicitFastModeDefault`) so the persisted selection matches what the
@@ -288,7 +301,18 @@ export function getReasoningTraitStep(input: {
     (option) => choices.includes(option),
   );
   const change = next && getTraitSelectChange(selected, descriptor, input.prompt, next.id);
-  return change?.modelOptions ? { prompt: change.prompt, modelOptions: change.modelOptions } : null;
+  return change?.modelOptions
+    ? {
+        prompt: change.prompt,
+        modelOptions:
+          preserveCodexSpeedOnTraitChange(
+            input.provider,
+            input.modelOptions,
+            descriptor.id,
+            change.modelOptions,
+          ) ?? [],
+      }
+    : null;
 }
 
 export interface TraitsMenuContentProps {
@@ -372,12 +396,23 @@ export function useTraitsSelection({
       onPromptEdit?.(
         (prompt) => getTraitSelectChange(selected, descriptor, prompt, value)?.prompt ?? prompt,
       );
-      updateModelOptions(change.modelOptions);
+      updateModelOptions(
+        preserveCodexSpeedOnTraitChange(provider, modelOptions, descriptor.id, change.modelOptions),
+      );
     },
+    inheritsCodexSpeed:
+      provider === "codex" &&
+      !codexSpeedOverrideOptions(modelOptions)?.some((option) => option.id === "serviceTier"),
+    clearCodexSpeed: () => updateModelOptions(withoutCodexSpeed(modelOptions)),
     changeBoolean: (descriptorId: string, value: boolean) => {
       updateModelOptions(
-        buildProviderOptionSelectionsFromDescriptors(
-          replaceDescriptorCurrentValue(selected.descriptors, descriptorId, value),
+        preserveCodexSpeedOnTraitChange(
+          provider,
+          modelOptions,
+          descriptorId,
+          buildProviderOptionSelectionsFromDescriptors(
+            replaceDescriptorCurrentValue(selected.descriptors, descriptorId, value),
+          ),
         ),
       );
     },

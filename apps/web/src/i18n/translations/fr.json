@@ -9820,7 +9820,6 @@
   "44eac2e9f0540171": "Impossible de réinitialiser l’instance du fournisseur",
   "e58b52d05807b929": "Actualisation des fournisseurs",
   "1d7cade347f52bbd": "Autorisations limitées",
-  "c165e95dd1b35bfd": "Cette session peut afficher les fournisseurs de {environment} mais pas modifier leurs paramètres.",
   "909f245bc73b0f32": "Cette instance de fournisseur n’est plus disponible sur cet appareil.",
   "daf14fa8c7bedb74": "Aucun fournisseur configuré.",
   "2757a250104b4b7e": "Avancé",
@@ -13744,5 +13743,14 @@
   "73beacabd7ca1993": "{count, plural, one {Afficher {count} élément en cours} other {Afficher {count} éléments en cours}}",
   "98515f1201b25dcc": "+{count} de plus",
   "cdd60e2fb71b5d07": "Fermé comme terminé",
-  "bf34ae7839ba9dd1": "Indisponibilité : {count}"
+  "bf34ae7839ba9dd1": "Indisponibilité : {count}",
+  "e351e22d0be49f2b": "Vitesse de Codex : {speed} sur {environment}",
+  "72dc8979fc87df5c": "Vitesse de Codex : {speed}",
+  "f94eea5cf4e7d9d6": "Par défaut",
+  "7b44f2dcd82a0ea1": "Cette session n’a pas l’autorisation de gérer les fournisseurs sur {environment}.",
+  "7aa202a739c5f90d": "S’applique dès le prochain tour aux fils et agents Codex qui utilisent la vitesse par défaut. Chaque modèle utilise la vitesse la plus élevée qu’il prend en charge, dans la limite de votre choix.",
+  "e2a5cf66eeec090e": "Vitesse par défaut",
+  "d19249179ab508d3": "Utiliser la configuration de Codex",
+  "afecbf6b765a2fb0": "Ultra rapide",
+  "3c8f3dd37881c169": "Codex vitesse normale rapide ultra rapide niveau de service"
 }

@@ -1,5 +1,6 @@
 import { ModelSelection } from "@t3tools/contracts";
 import type { UsageSpeed } from "@t3tools/provider-core/server/usage";
+import { getCodexServiceTierOptionValue, resolveCodexSpeed } from "@t3tools/shared/model";
 import * as NodeSqliteClient from "@t3tools/shared/nodeSqliteClient";
 import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
@@ -7,8 +8,6 @@ import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
-
-import { getCodexServiceTierOptionValue } from "../codexModelOptions.ts";
 
 export class CodexUsageHistoryReadError extends Schema.TaggedError<CodexUsageHistoryReadError>()(
   "CodexUsageHistoryReadError",
@@ -57,9 +56,11 @@ const make = Effect.gen(function* () {
       readonly native_thread_id: string | null;
       readonly native_turn_id: string;
       readonly selection_json: string | null;
+      readonly service_tier: string | null;
     }>`
       SELECT json_extract(attempt.payload_json, '$.nativeThreadId') AS native_thread_id,
         json_extract(turn.payload_json, '$.nativeTurnRef.nativeId') AS native_turn_id,
+        json_extract(turn.payload_json, '$.serviceTier') AS service_tier,
         (
           SELECT json_extract(event.payload_json, '$.modelSelection')
           FROM orchestration_events AS event
@@ -105,12 +106,10 @@ const make = Effect.gen(function* () {
         )
       )
         continue;
-      const tier = getCodexServiceTierOptionValue(selection.value);
-      if (tier === "fast" || tier === "priority") resolved.set(request, "fast");
-      else if (tier === "ultrafast") resolved.set(request, "ultrafast");
-      else if (tier === undefined || tier === "default" || tier === "standard") {
-        resolved.set(request, "standard");
-      }
+      const { speed } = resolveCodexSpeed({
+        recordedTier: match.service_tier ?? getCodexServiceTierOptionValue(selection.value),
+      });
+      if (speed !== undefined) resolved.set(request, speed);
     }
     return resolved;
   });

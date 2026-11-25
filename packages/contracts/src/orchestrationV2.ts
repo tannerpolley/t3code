@@ -1545,6 +1545,8 @@ export const OrchestrationV2ProviderTurn = Schema.Struct({
   turnTokenUsage: Schema.optional(TurnTokenUsage),
   /** The model the provider reported running this turn's root agent, which can differ from the requested one. */
   model: Schema.optional(TrimmedNonEmptyString),
+  /** The tier sent at the start of a native turn, for transcripts that omit it. */
+  serviceTier: Schema.optional(TrimmedNonEmptyString),
   /** True when the provider dropped this turn's request before persisting it to native history. */
   promptDropped: Schema.optional(Schema.Literal(true)),
 });

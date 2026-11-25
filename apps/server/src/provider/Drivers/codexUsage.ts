@@ -1,4 +1,5 @@
 import type { CodexSettings } from "@t3tools/contracts";
+import { resolveCodexSpeed } from "@t3tools/shared/model";
 import * as Effect from "effect/Effect";
 import * as Path from "effect/Path";
 import * as Schema from "effect/Schema";
@@ -290,7 +291,10 @@ function parseCodexRecord(parsed: unknown, state: CodexScanState): readonly Usag
     state.sawThreadSettings = true;
     const settings = payloadRecord["thread_settings"];
     if (typeof settings === "object" && settings !== null) {
-      state.speed = codexSpeed((settings as Record<string, unknown>)["service_tier"]);
+      const tier = (settings as Record<string, unknown>)["service_tier"];
+      state.speed =
+        resolveCodexSpeed({ recordedTier: typeof tier === "string" ? tier : undefined }).speed ??
+        "standard";
     }
     return [];
   }
@@ -479,13 +483,6 @@ function codexRequestRecord(
       : {}),
     dedupeKey: null,
   };
-}
-
-/** Missing, default and standard tiers bill as standard; fast aliases priority. */
-function codexSpeed(serviceTier: unknown): UsageSpeed {
-  if (serviceTier === "priority" || serviceTier === "fast") return "fast";
-  if (serviceTier === "ultrafast") return "ultrafast";
-  return "standard";
 }
 
 export const codexUsageFormat: TranscriptUsageFormat<CodexScanState> = {

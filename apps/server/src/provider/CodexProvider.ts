@@ -38,6 +38,7 @@ import {
   codexModelFamily,
   createModelCapabilities,
   formatCodexModelName,
+  resolveCodexSpeed,
 } from "@t3tools/shared/model";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import { codexAppServerArgs, resolveCodexLaunchArgs } from "./codexLaunchArgs.ts";
@@ -423,15 +424,21 @@ function applyConfiguredCodexServiceTier(
   models: ReadonlyArray<ServerProviderModel>,
   serviceTier: string | undefined,
 ): ReadonlyArray<ServerProviderModel> {
-  if (!serviceTier) return models;
-  return withConfiguredSelectDefault(
-    models,
-    "serviceTier",
-    (options) =>
-      options.find(
-        (option) =>
-          option.id === serviceTier || (serviceTier === "fast" && option.id === "priority"),
-      )?.id,
+  return mapCodexOptionDescriptors(models, (descriptors) =>
+    descriptors.map((descriptor) => {
+      if (descriptor.id !== "serviceTier" || descriptor.type !== "select") return descriptor;
+      const options = descriptor.options.some((option) => option.isDefault)
+        ? descriptor.options
+        : descriptor.options.map((option) =>
+            option.id === descriptor.currentValue ? { ...option, isDefault: true } : option,
+          );
+      return {
+        ...descriptor,
+        options,
+        currentValue: resolveCodexSpeed({ descriptor: { options }, configuredTier: serviceTier })
+          .tier,
+      };
+    }),
   );
 }
 
@@ -468,16 +475,19 @@ function applyConfiguredCodexCyberAccess(
   );
 }
 
-/**
- * Codex has no static default capability set, so a bare custom slug borrows
- * the first built-in's descriptors; an entry with its own capabilities keeps
- * them.
- */
-function appendCustomCodexModels(
+/** A bare custom slug can borrow the first built-in's controls, except speed tiers. */
+export function appendCustomCodexModels(
   models: ReadonlyArray<ServerProviderModel>,
   customModels: ReadonlyArray<CustomModelSetting>,
 ): ReadonlyArray<ServerProviderModel> {
-  const fallbackCapabilities = models.find((model) => model.capabilities)?.capabilities ?? null;
+  const builtInCapabilities = models.find((model) => model.capabilities)?.capabilities;
+  const fallbackCapabilities = builtInCapabilities?.optionDescriptors
+    ? {
+        optionDescriptors: builtInCapabilities.optionDescriptors.filter(
+          ({ id }) => id !== "serviceTier",
+        ),
+      }
+    : null;
   return providerModelsFromSettings(models, customModels, fallbackCapabilities);
 }
 
