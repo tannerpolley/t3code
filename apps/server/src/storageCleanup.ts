@@ -1224,17 +1224,8 @@ const make = Effect.gen(function* () {
         if (!deleted) ordered.push(thread);
         for (const member of ordered) {
           const attempt = yield* randomUuidV4;
-          if (
-            archive &&
-            member.id !== thread.id &&
-            member.archivedAt === null &&
-            member.role !== "writer"
-          )
-            yield* engine.dispatch({
-              type: "thread.archive",
-              commandId: CommandId.make(`storage-cleanup:merged-slot:${member.id}:${attempt}`),
-              threadId: member.id,
-            });
+          if (archive && member.id !== thread.id && member.archivedAt === null)
+            yield* engine.archiveFinishedWorker(member.id);
           yield* engine.dispatch({
             type: "thread.metadata.update",
             commandId: CommandId.make(`storage-cleanup:release-slot:${member.id}:${attempt}`),

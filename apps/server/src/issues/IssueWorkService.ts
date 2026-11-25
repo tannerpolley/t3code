@@ -1590,7 +1590,7 @@ ${exhaustionMarker}`,
           );
         }
         if (currentWorker && shell.activeRunId === null && shell.status !== "queued") {
-          yield* threads.archiveObservedWorker(threadId);
+          yield* threads.archiveFinishedWorker(threadId).pipe(Effect.ignore({ log: true }));
         }
         if (!admitsWork) continue;
         // Closed and re-parented attempts still require an explicit Resume decision.

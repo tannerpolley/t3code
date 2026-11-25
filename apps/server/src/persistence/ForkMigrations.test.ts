@@ -96,6 +96,7 @@ describe("fork migration ledger", () => {
           { migration_id: 34, name: "UsageBudget" },
           { migration_id: 35, name: "RequeueQueueNotices" },
           { migration_id: 36, name: "UpstreamUsageLimitIndex" },
+          { migration_id: 37, name: "IssueAttemptCloseOut" },
         ],
       );
       const columns = yield* sql<{ name: string }>`PRAGMA table_info(owner_decisions)`;
@@ -333,6 +334,7 @@ describe("fork migration ledger", () => {
           { migration_id: 34, name: "UsageBudget" },
           { migration_id: 35, name: "RequeueQueueNotices" },
           { migration_id: 36, name: "UpstreamUsageLimitIndex" },
+          { migration_id: 37, name: "IssueAttemptCloseOut" },
         ],
       );
       assert.ok((yield* tableNames).has("orchestration_v2_projection_thread_usage"));

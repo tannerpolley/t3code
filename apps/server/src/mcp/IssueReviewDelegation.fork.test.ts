@@ -8,6 +8,7 @@ import {
   EventId,
   ProviderSessionId,
   resolveThreadRole,
+  RunId,
   ThreadId,
 } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
@@ -15,12 +16,14 @@ import * as DateTime from "effect/DateTime";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
 import * as Stream from "effect/Stream";
+import { TestClock } from "effect/testing";
 import * as TrackerIssueService from "../issue/IssueService.ts";
 import * as ThreadIssueService from "../orchestration-v2/ThreadIssueService.ts";
 import * as IssueWorkService from "../issues/IssueWorkService.ts";
 import * as IssueWorkStore from "../issues/IssueWorkStore.ts";
 import * as EventSink from "../orchestration-v2/EventSink.ts";
 import * as EffectOutbox from "../orchestration-v2/EffectOutbox.ts";
+import * as ProjectionMaintenance from "../orchestration-v2/ProjectionMaintenance.ts";
 import { continueRestartedRun } from "../orchestration-v2/RestartContinuation.ts";
 import { ServerSettingsService } from "../serverSettings.ts";
 import * as EffectWorker from "../orchestration-v2/EffectWorker.ts";
@@ -37,6 +40,7 @@ import {
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as GitVcsDriver from "../vcs/GitVcsDriver.ts";
+import backfillIssueAttemptCloseOut from "../persistence/ForkMigrations/037_IssueAttemptCloseOut.ts";
 import type { McpInvocationScope } from "./McpInvocationContext.ts";
 import * as OrchestratorMcpService from "./OrchestratorMcpService.ts";
 
@@ -396,7 +400,7 @@ it.effect(
   },
 );
 
-it.effect.each(["retained", "archived", "archived before handoff"] as const)(
+it.effect.each(["interrupted", "delivered", "archived", "archived before handoff"] as const)(
   "close-out (%s worker) requires the repository root, a closed issue and a stopped attempt, clears suspension and survives Resume and retries",
   (disposition) => {
     const harness = setup();
@@ -426,13 +430,27 @@ it.effect.each(["retained", "archived", "archived before handoff"] as const)(
         .pipe(Effect.flip);
       assert.include(active.message, "remaining work");
       yield* work.reconcile(root);
-      assert.lengthOf((yield* store.configuration(root))!.suspendedIssues, 1);
-      yield* threads.dispatch({
-        type: "thread.stop",
-        commandId: CommandId.make("stop-closed-worker"),
-        threadId: childId,
+      const suspended = (yield* store.configuration(root))!.suspendedIssues;
+      assert.lengthOf(suspended, 1);
+      assert.equal(suspended[0]?.kind, "closed");
+      const runId = (yield* threads.getThreadShell(childId))!.activeRunId!;
+      const sink = yield* EventSink.EventSinkV2;
+      // Older servers queued an interrupt when GitHub closed the issue.
+      yield* sink.writeWithEffects({
+        events: [],
+        effects: [
+          {
+            id: "effect:legacy-closed-issue-interrupt",
+            commandId: CommandId.make("legacy-closed-issue-interrupt"),
+            threadId: childId,
+            request: { type: "issue.suspension.interrupt", runId },
+          },
+        ],
       });
       yield* worker.drain();
+      const stopped = yield* threads.getThreadRecords(childId, ["runs", "turnItems"]);
+      assert.equal(stopped.runs.at(-1)?.status, "interrupted");
+      assert.isTrue(stopped.turnItems.some((item) => item.type === "run_interrupt_request"));
       const retained = (yield* threads.getThreadProjection(childId)).thread;
       assert.isNull(retained.archivedAt);
       assert.isNull(retained.deletedAt);
@@ -445,7 +463,9 @@ it.effect.each(["retained", "archived", "archived before handoff"] as const)(
         .closeOut({ ...input, clientRequestId: CommandId.make("active-close-out") })
         .pipe(Effect.flip);
       assert.include(rejectedRetry.message, "remaining work");
-      if (disposition !== "retained") {
+      const alreadyArchived =
+        disposition === "archived" || disposition === "archived before handoff";
+      if (alreadyArchived) {
         yield* threads.dispatch({
           type: "thread.archive",
           commandId: CommandId.make("archive-closed-worker"),
@@ -453,7 +473,7 @@ it.effect.each(["retained", "archived", "archived before handoff"] as const)(
         });
       }
       const beforeCloseOut = (yield* threads.getThreadProjection(childId)).thread;
-      assert.equal(beforeCloseOut.archivedAt !== null, disposition !== "retained");
+      assert.equal(beforeCloseOut.archivedAt !== null, alreadyArchived);
       let closingRoot = root;
       let closingRevision = config.revision;
       if (disposition === "archived before handoff") {
@@ -531,9 +551,33 @@ it.effect.each(["retained", "archived", "archived before handoff"] as const)(
           config.suspendedIssues,
         );
       }
-      const previousTask = (yield* threads.getThreadRecords(root, ["subagents"])).subagents.find(
+      let previousTask = (yield* threads.getThreadRecords(root, ["subagents"])).subagents.find(
         (task) => task.childThreadId === childId,
       )!;
+      if (disposition === "delivered") {
+        const sink = yield* EventSink.EventSinkV2;
+        const now = yield* DateTime.now;
+        previousTask = {
+          ...previousTask,
+          status: "completed",
+          result: "Merged",
+          completedAt: now,
+          updatedAt: now,
+          completionDelivery: { state: "acknowledged", observedByRunId: RunId.make("result-wake") },
+        };
+        yield* sink.write({
+          events: [
+            {
+              type: "subagent.updated",
+              id: EventId.make("observed-before-close-out"),
+              threadId: root,
+              nodeId: previousTask.id,
+              occurredAt: now,
+              payload: previousTask,
+            },
+          ],
+        });
+      }
       const accepted = {
         ...input,
         expectedRevision: closingRevision,
@@ -543,16 +587,133 @@ it.effect.each(["retained", "archived", "archived before handoff"] as const)(
       assert.lengthOf(closed.orchestration!.suspendedIssues, 0);
       assert.isTrue(yield* store.resultAvailable(childId));
       const afterCloseOut = (yield* threads.getThreadProjection(childId)).thread;
-      assert.deepEqual(afterCloseOut.archivedAt, beforeCloseOut.archivedAt);
       assert.isNull(afterCloseOut.deletedAt);
       assert.equal(afterCloseOut.worktreePath, retained.worktreePath);
       const parent = yield* threads.getThreadRecords(root, ["subagents"]);
       const task = parent.subagents.find((task) => task.childThreadId === childId)!;
       if (closingRoot === root) assert.equal(task.status, "completed");
       else assert.deepEqual(task, previousTask);
+      if (disposition === "delivered") {
+        assert.deepEqual(task.completionDelivery, previousTask.completionDelivery);
+      }
+      if (alreadyArchived) assert.deepEqual(afterCloseOut.archivedAt, beforeCloseOut.archivedAt);
+      else assert.isNotNull(afterCloseOut.archivedAt);
       assert.deepEqual(yield* work.closeOut(accepted), closed);
       assert.lengthOf((yield* store.configuration(closingRoot))!.suspendedIssues, 0);
     }).pipe(Effect.provide(harness.layer));
+  },
+);
+
+it.effect.each(["closed out", "restored", "disposed", "nested disposal", "pruned"] as const)(
+  "reconciles a historical %s worker using the persisted close-out receipt",
+  (disposition) => {
+    const harness = setup();
+    return Effect.gen(function* () {
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const work = yield* IssueWorkService.IssueWorkService;
+      const store = yield* IssueWorkStore.IssueWorkStore;
+      const sink = yield* EventSink.EventSinkV2;
+      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+      const root = yield* createReviewRoot();
+      const issue = reviewIssue(1);
+      yield* delegateReviewIssue(root, issue, "historical-close-out-worker");
+      const childId = (yield* store.issueOwner(issue))!;
+      harness.close();
+      yield* threads.dispatch({
+        type: "thread.stop",
+        commandId: CommandId.make("stop-historical-worker"),
+        threadId: childId,
+      });
+      yield* worker.drain();
+      const parent = yield* threads.getThreadRecords(root, ["subagents", "nodes"]);
+      const task = parent.subagents.find((entry) => entry.childThreadId === childId)!;
+      const node = parent.nodes.find((entry) => entry.id === task.id)!;
+      const now = yield* DateTime.now;
+      const commandId = CommandId.make("historical-result");
+      yield* sink.commitCommand({
+        commandId,
+        commandType: disposition === "disposed" ? "thread.stop" : "issue.work.close-out",
+        threadId: root,
+        acceptedAt: now,
+        events: [
+          {
+            type: "subagent.updated",
+            id: EventId.make("historical-result-task"),
+            threadId: root,
+            nodeId: task.id,
+            occurredAt: now,
+            payload: {
+              ...task,
+              status: "completed",
+              result: "Finished",
+              completedAt: now,
+              updatedAt: now,
+              completionDelivery: { state: "disposed", observedByRunId: null },
+            },
+          },
+          ...(disposition === "nested disposal"
+            ? []
+            : [
+                {
+                  type: "node.updated" as const,
+                  id: EventId.make("historical-result-node"),
+                  threadId: root,
+                  nodeId: task.id,
+                  occurredAt: now,
+                  payload: { ...node, status: "completed" as const, completedAt: now },
+                },
+              ]),
+          {
+            type: "thread.metadata-updated",
+            id: EventId.make("historical-result-root"),
+            threadId: root,
+            occurredAt: now,
+            payload: { ...parent.thread, updatedAt: now },
+          },
+        ],
+        effects: [],
+      });
+      if (disposition === "restored") {
+        yield* threads.dispatch({
+          type: "thread.archive",
+          commandId: CommandId.make("archive-historical-worker"),
+          threadId: childId,
+        });
+        yield* TestClock.adjust("1 second");
+        yield* threads.dispatch({
+          type: "thread.unarchive",
+          commandId: CommandId.make("unarchive-historical-worker"),
+          threadId: childId,
+        });
+      }
+      if (disposition === "pruned") {
+        const maintenance = yield* ProjectionMaintenance.ProjectionMaintenanceV2;
+        yield* maintenance.pruneEventStore();
+        yield* TestClock.adjust("1 day");
+        yield* maintenance.pruneEventStore();
+        const events = yield* sink.readByCommandId({ commandId }).pipe(Stream.runCollect);
+        assert.deepEqual(
+          events.map(({ event }) => event.type),
+          ["thread.metadata-updated"],
+        );
+      }
+      yield* backfillIssueAttemptCloseOut;
+      yield* work.reconcile(root);
+      assert.equal(
+        (yield* threads.getThreadShell(childId))?.archivedAt !== null,
+        disposition === "closed out",
+      );
+      if (disposition === "pruned") {
+        yield* work.closeOut({
+          host: issue.host,
+          repository: issue.repository,
+          issueId: issue.id,
+          expectedRevision: (yield* store.configuration(root))!.revision,
+          clientRequestId: CommandId.make("close-out-again"),
+        });
+        assert.isNotNull((yield* threads.getThreadShell(childId))?.archivedAt);
+      }
+    }).pipe(Effect.provide(ProjectionMaintenance.layer.pipe(Layer.provideMerge(harness.layer))));
   },
 );
 

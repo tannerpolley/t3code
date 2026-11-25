@@ -627,9 +627,10 @@ Workers with running or queued work, pending questions or approvals, or unfinish
 child work stay visible. Writers, orchestrators, pinned threads, side chats, and
 threads you created are exempt. Archive children on linked environments manually.
 
-A managed issue worker stays visible while its issue is open. Once its result has
-been delivered and the issue is closed, T3 Code archives it. Use the issue’s
-restore or resume flow to retry its work.
+A managed issue worker stays visible while its issue is open. After the issue
+closes, T3 Code archives the worker once the parent receives its result or the
+orchestrator closes out the stopped attempt. Use the issue’s restore or resume
+flow to retry its work.
 
 A follow-up to another archived worker restores the thread automatically. You can
 also restore it from **Settings → Archived threads**. If T3 Code returned its shared

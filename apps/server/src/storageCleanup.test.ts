@@ -57,6 +57,7 @@ import {
   CommandId,
   EventId,
   MessageId,
+  NodeId,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -4156,7 +4157,9 @@ describe("storage cleanup reports and local file policies", () => {
   it.live.each(mergedSlotWorkers)("reclaims a detached merged %s slot", (workerState) => {
     const database = Sqlite.layerMemory;
     const reviewer = ThreadId.make("reviewer");
+    const observed = ThreadId.make("observed-review");
     let failReviewerRead = false;
+    let observedArchiveReads = 0;
     return runCleanupTest(
       Effect.gen(function* () {
         const engine = yield* Orchestrator.OrchestratorV2;
@@ -4218,6 +4221,9 @@ describe("storage cleanup reports and local file policies", () => {
         const root = ThreadId.make("root");
         const worker = ThreadId.make("worker");
         const sideChat = ThreadId.make("side-chat");
+        const pinned = ThreadId.make("pinned-review");
+        const undelivered = ThreadId.make("undelivered-review");
+        const activeReviewers = workerState === "archived" ? [observed, pinned, undelivered] : [];
         const projectId = ProjectId.make("project-1");
         const create = {
           type: "thread.create",
@@ -4249,7 +4255,7 @@ describe("storage cleanup reports and local file policies", () => {
             suspendedIssues: [],
           },
         });
-        for (const threadId of [worker, reviewer, sideChat]) {
+        for (const threadId of [worker, reviewer, sideChat, ...activeReviewers]) {
           yield* engine.dispatch({
             ...create,
             commandId: CommandId.make(`create-${threadId}`),
@@ -4268,10 +4274,12 @@ describe("storage cleanup reports and local file policies", () => {
                 occurredAt: thread.updatedAt,
                 payload: {
                   ...thread,
+                  ...(activeReviewers.includes(threadId) ? { createdBy: "agent" } : {}),
+                  ...(threadId === pinned ? { pinnedAt: thread.updatedAt } : {}),
                   lineage: {
                     rootThreadId: root,
                     parentThreadId:
-                      threadId === worker ? root : threadId === reviewer ? worker : reviewer,
+                      threadId === worker ? root : threadId === sideChat ? reviewer : worker,
                     relationshipToParent: threadId === sideChat ? "fork" : "subagent",
                     ...(threadId === sideChat ? { sideChat: true } : {}),
                   },
@@ -4279,6 +4287,46 @@ describe("storage cleanup reports and local file policies", () => {
               },
             ],
           });
+          if (activeReviewers.includes(threadId)) {
+            const id = NodeId.make(`task:${threadId}`);
+            yield* sink.write({
+              events: [
+                {
+                  type: "subagent.updated",
+                  id: EventId.make(`review-result:${threadId}`),
+                  threadId: worker,
+                  nodeId: id,
+                  occurredAt: thread.updatedAt,
+                  payload: {
+                    id,
+                    threadId: worker,
+                    runId: null,
+                    parentNodeId: id,
+                    origin: "app_owned",
+                    createdBy: "agent",
+                    driver: ProviderDriverKind.make("codex"),
+                    providerInstanceId: modelSelection.instanceId,
+                    providerThreadId: null,
+                    childThreadId: threadId,
+                    nativeTaskRef: null,
+                    prompt: "Review",
+                    title: null,
+                    model: null,
+                    status: "completed",
+                    result: "Reviewed",
+                    startedAt: thread.updatedAt,
+                    completedAt: thread.updatedAt,
+                    updatedAt: thread.updatedAt,
+                    completionDelivery: {
+                      state: threadId === undelivered ? "delivered" : "acknowledged",
+                      observedByRunId: null,
+                    },
+                  },
+                },
+              ],
+            });
+            continue;
+          }
           if (threadId === worker && workerState === "visible interrupted") {
             const runId = RunId.make("interrupted-worker-run");
             yield* sink.write({
@@ -4333,20 +4381,23 @@ describe("storage cleanup reports and local file policies", () => {
         expect(oldRelease.message).toContain("archived and cannot change workspace");
         expect(yield* store.slotsInUse(root)).toBe(0);
 
-        failReviewerRead = true;
+        failReviewerRead = workerState === "visible interrupted";
         const interrupted = yield* service.runNow;
         expect(interrupted.entries[0]).toMatchObject({ outcome: "failed" });
         expect((yield* projections.getThread(sideChat)).worktreePath).toBeNull();
-        expect((yield* projections.getThread(reviewer)).worktreePath).toBe(slot);
+        const stillBound = workerState === "archived" ? observed : reviewer;
+        expect((yield* projections.getThread(stillBound)).worktreePath).toBe(slot);
         expect(yield* store.slotsInUse(root)).toBe(0);
 
         failReviewerRead = false;
         const report = yield* service.runNow;
         expect(report.entries[0]?.reason).toBe("Returned to the issue worktree pool");
-        for (const threadId of [worker, reviewer, sideChat]) {
+        for (const threadId of [worker, reviewer, sideChat, ...activeReviewers]) {
           const thread = yield* projections.getThread(threadId);
-          expect(thread.archivedAt === null).toBe(
-            threadId === worker && workerState === "visible interrupted",
+          expect(thread.archivedAt === null, threadId).toBe(
+            threadId === pinned ||
+              threadId === undelivered ||
+              (threadId === worker && workerState === "visible interrupted"),
           );
           expect(thread.worktreePath).toBeNull();
         }
@@ -4401,6 +4452,10 @@ describe("storage cleanup reports and local file policies", () => {
                 runEffectWorker: false,
                 wrapProjectionStore: (store) => ({
                   ...store,
+                  getSettlementCandidates: (threadId, workers) =>
+                    threadId === observed && workers !== undefined && ++observedArchiveReads === 2
+                      ? Effect.fail(new ProjectionStore.ProjectionStoreSetupError({}))
+                      : store.getSettlementCandidates(threadId, workers),
                   getThreadProviderContext: (threadId, targetInstanceId) =>
                     failReviewerRead && threadId === reviewer
                       ? Effect.fail(new ProjectionStore.ProjectionStoreReadError({ threadId }))
