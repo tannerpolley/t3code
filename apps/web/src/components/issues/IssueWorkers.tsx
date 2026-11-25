@@ -12,9 +12,7 @@ import { Link } from "@tanstack/react-router";
 import { useGT } from "gt-react";
 
 import { useThreadShell } from "~/state/entities";
-import { useEnvironmentQuery } from "~/state/query";
 import { environmentThreadDetails } from "~/state/threads";
-import { vcsEnvironment } from "~/state/vcs";
 import { ChildApproval } from "../chat/ChildThreadApprovals";
 import { PendingQuestionForm } from "../PendingQuestionForm";
 import { useWorkerStatusLabels } from "./IssueLiveWork";
@@ -52,9 +50,6 @@ export function IssueWorkers({
             {worker.branch ? (
               <p className="break-all font-mono text-muted-foreground">{worker.branch}</p>
             ) : null}
-            {worker.status === "working" && worker.worktreePath === null ? (
-              <WorkerSlotWait threadRef={scopeThreadRef(environmentId, worker.threadId)} />
-            ) : null}
             {issueWorkerNeedsOwner(worker) ? (
               <WorkerRequest threadRef={scopeThreadRef(environmentId, worker.threadId)} />
             ) : null}
@@ -63,23 +58,6 @@ export function IssueWorkers({
       </ul>
     </section>
   );
-}
-
-function WorkerSlotWait({ threadRef }: { threadRef: ScopedThreadRef }) {
-  const thread = useThreadShell(threadRef);
-  const { data: setup } = useEnvironmentQuery(
-    (thread?.source.activityRunStatus ?? thread?.source.status) === "preparing"
-      ? vcsEnvironment.worktreeSetup({
-          environmentId: threadRef.environmentId,
-          input: { threadId: threadRef.threadId },
-        })
-      : null,
-  );
-  const detail =
-    setup?.phase === "running"
-      ? setup.stages.find((stage) => stage.id === "checkout" && stage.status === "pending")?.detail
-      : null;
-  return detail ? <p className="wrap-anywhere text-muted-foreground">{detail}</p> : null;
 }
 
 function WorkerRequest({ threadRef }: { threadRef: ScopedThreadRef }) {
