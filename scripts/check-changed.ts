@@ -108,6 +108,11 @@ const CacheEntry = Schema.fromJsonString(
 );
 const decodeCacheEntry = Schema.decodeEffect(CacheEntry);
 const encodeCacheEntry = Schema.encodeEffect(CacheEntry);
+const decodeVitestReport = Schema.decodeEffect(
+  Schema.fromJsonString(
+    Schema.Struct({ testResults: Schema.Array(Schema.Struct({ name: Schema.String })) }),
+  ),
+);
 const decodeRootPackageJson = Schema.decodeEffect(
   Schema.fromJsonString(
     Schema.Struct({
@@ -256,43 +261,6 @@ export const docReaderTests = (files: ReadonlyArray<string>) =>
     ? ["apps/server/src/cloud/ConnectReachability.test.ts"]
     : [];
 
-const withValidationLock = Effect.fn("checkChanged.withValidationLock")(function* <A, E, R>(
-  validation: Effect.Effect<A, E, R>,
-) {
-  const platform = yield* HostProcess.Platform;
-  if (platform !== "linux") return yield* Effect.fail("Full validation requires Linux and flock.");
-  const path = yield* Path.Path;
-  const home = yield* HostProcess.HomeDirectory;
-  const lock = path.join(home, ".t3code-validation.lock");
-  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
-  yield* Console.log(`Waiting for branch validation lock: ${lock}`);
-  return yield* Effect.scoped(
-    Effect.gen(function* () {
-      // The child holds the lock until the scope closes or its parent closes stdin.
-      const handle = yield* spawner.spawn(
-        ChildProcess.make(
-          "flock",
-          [
-            "--no-fork",
-            lock,
-            process.execPath,
-            "-e",
-            'console.log("locked"); process.stdin.resume()',
-          ],
-          { stdin: "pipe", stderr: "inherit", forceKillAfter: "5 seconds" },
-        ),
-      );
-      const ready = yield* handle.stdout.pipe(Stream.decodeText, Stream.splitLines, Stream.runHead);
-      if (Option.getOrUndefined(ready) !== "locked")
-        return yield* Effect.fail("Could not acquire the branch validation lock.");
-      return yield* Effect.raceFirst(
-        validation,
-        handle.exitCode.pipe(Effect.andThen(Effect.fail("Lost the branch validation lock."))),
-      );
-    }),
-  );
-});
-
 const checkChanged = Effect.fn("checkChanged")(function* (input: {
   readonly ref: Option.Option<string>;
   readonly concurrency: Option.Option<number>;
@@ -308,16 +276,21 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
   // macOS counts its file cache as used, so available memory there would
   // starve a large Mac. Elsewhere availableMemory() honors a cgroup limit.
   const platform = yield* HostProcess.Platform;
-  const concurrency = input.fullValidation
-    ? 1
-    : Option.getOrElse(
-        yield* override("concurrency", input.concurrency, "CHECK_CHANGED_CONCURRENCY"),
-        () =>
-          defaultConcurrency(
-            NodeOS.availableParallelism(),
-            platform === "darwin" ? NodeOS.totalmem() : process.availableMemory(),
-          ),
-      );
+  if (input.fullValidation && platform !== "linux")
+    return yield* Effect.fail("Full validation requires Linux and flock.");
+  const home = yield* HostProcess.HomeDirectory;
+  const lock = path.join(home, ".t3code-validation.lock");
+  const concurrency =
+    platform === "linux"
+      ? 1
+      : Option.getOrElse(
+          yield* override("concurrency", input.concurrency, "CHECK_CHANGED_CONCURRENCY"),
+          () =>
+            defaultConcurrency(
+              NodeOS.availableParallelism(),
+              platform === "darwin" ? NodeOS.totalmem() : process.availableMemory(),
+            ),
+        );
   const timeoutSeconds = Option.getOrElse(
     yield* override("timeout", input.timeout, "CHECK_CHANGED_TIMEOUT"),
     () => (input.fullValidation ? 1_800 : 900),
@@ -425,9 +398,6 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
   // It reads files other than the ones beside it, so no changed file selects it.
   if (affected.includes("t3")) tests.add("apps/server/src/provider/AgentContextBudget.test.ts");
   const { vitestTests, nodeTests } = splitTests(tests);
-  const selectedVitestTests = vitestTests.filter(
-    (file) => !suites.some((pkg) => file.startsWith(`${pkg.dir}/`)),
-  );
 
   // React Compiler coverage compiles every client source file, so run only the
   // changed files' cases, in one extra step: a -t filter in the main test step
@@ -508,13 +478,17 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
       Effect.gen(function* () {
         const [command, commandArgs] = vitePlusCommand(args, platform);
         if (input.fullValidation) yield* Console.log(`\n> vp ${args.join(" ")}`);
+        const options = {
+          cwd,
+          env: { ...env, VITEST_MAX_WORKERS: String(testWorkers) },
+          extendEnv: true,
+          forceKillAfter: "5 seconds",
+        };
+        // The invocation owns the lock even if the validation coordinator is killed.
         const handle = yield* spawner.spawn(
-          ChildProcess.make(command, commandArgs, {
-            cwd,
-            env: { ...env, VITEST_MAX_WORKERS: String(testWorkers) },
-            extendEnv: true,
-            forceKillAfter: "5 seconds",
-          }),
+          platform === "linux"
+            ? ChildProcess.make("flock", [lock, command, ...commandArgs], options)
+            : ChildProcess.make(command, commandArgs, options),
         );
         const lines = Stream.decodeText(handle.all);
         const output = input.fullValidation
@@ -524,6 +498,34 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
         return { ok: exitCode === 0, output: text };
       }),
     ).pipe(Effect.catch((error) => Effect.succeed({ ok: false, output: error.message })));
+
+  const checkSelectedVitest = Effect.scoped(
+    Effect.gen(function* () {
+      const report = yield* fs.makeTempFileScoped({ prefix: "t3-selected-vitest-" });
+      const result = yield* vp(
+        [
+          "test",
+          "run",
+          "--reporter=default",
+          "--reporter=json",
+          `--outputFile.json=${report}`,
+          ...vitestTests,
+        ],
+        root,
+        1,
+      );
+      if (!result.ok) return result;
+      const { testResults } = yield* fs
+        .readFileString(report)
+        .pipe(Effect.flatMap(decodeVitestReport));
+      const ran = new Set(testResults.map(({ name }) => path.normalize(name)));
+      const missing = vitestTests.filter((file) => !ran.has(inRoot(file)));
+      return {
+        ok: missing.length === 0,
+        output: missing.map((file) => `No Vitest result for ${file}`).join("\n"),
+      };
+    }),
+  ).pipe(Effect.catch((error) => Effect.succeed({ ok: false, output: error.message })));
 
   // Resolve without the lockfile in a temp copy to preserve the working tree and lockfile.
   // Copy mobile modules too: they are file: dependencies, not workspace packages.
@@ -625,11 +627,13 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
         pkg.name === "@t3tools/web" || pkg.name === "t3" ? 1 : 2,
       ),
     })),
-    ...(selectedVitestTests.length > 0
+    ...(vitestTests.length > 0
       ? [
           {
-            name: `test (${selectedVitestTests.length} files)`,
-            run: vp(["test", "run", "--passWithNoTests", ...selectedVitestTests], root, 1),
+            name: `test (${vitestTests.length} files)`,
+            run: input.fullValidation
+              ? checkSelectedVitest
+              : vp(["test", "run", "--passWithNoTests", ...vitestTests], root, 1),
             serial: true,
           },
         ]
@@ -695,6 +699,8 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
       "The branch or target moved during validation. Validate the new head.",
     );
   if ((yield* inputKey) !== key) {
+    if (input.fullValidation)
+      return yield* Effect.fail("Validation inputs changed during the run. Validate again.");
     yield* Console.log("  pass not cached: files changed during the run");
     return true;
   }
@@ -717,7 +723,7 @@ export const checkChangedCommand = Command.make(
     ),
     concurrency: Flag.Int("concurrency").pipe(
       Flag.withDescription(
-        "Budget of parallel steps and typecheck workers; also CHECK_CHANGED_CONCURRENCY. Defaults to one per two cores and per 6 GiB of available memory.",
+        "Budget of parallel steps and typecheck workers; also CHECK_CHANGED_CONCURRENCY. Linux runs one step at a time under a shared lock.",
       ),
       Flag.optional,
     ),
@@ -735,10 +741,8 @@ export const checkChangedCommand = Command.make(
     ),
   },
   (input) =>
-    (input.fullValidation ? withValidationLock(checkChanged(input)) : checkChanged(input)).pipe(
-      Effect.catch((error) =>
-        Console.error(typeof error === "string" ? error : error.message).pipe(Effect.as(false)),
-      ),
+    checkChanged(input).pipe(
+      Effect.catch((message) => Console.error(message).pipe(Effect.as(false))),
       // exitCode, not a failed exit: runMain calls process.exit() on failure, and
       // piped stdout is asynchronous on macOS, so it would cut off step output.
       Effect.flatMap((ok) =>

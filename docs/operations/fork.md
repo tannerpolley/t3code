@@ -54,7 +54,7 @@ Delegating a Writer always uses the parent's checkout. An issue on a Writer is a
 - **Each task:**
   - Has a GitHub issue, and gets a short-lived branch, cut from `main`, in a worktree under the project's `.worktrees/` folder.
   - The worker gets a fresh review, commits the branch locally, and reports its worktree path, branch, exact commit SHA, targeted check results, and review verdict. The orchestrator validates that commit, pushes the branch to `origin`, and opens a pull request whose body says `Closes #<issue>`. Link it to the worker's thread and the orchestrator's (`link_pull_request`).
-  - After review, merge with `gh pr merge <n> --rebase --delete-branch` so `main` stays linear, then `git fetch` and `git merge --ff-only origin/main` locally. Run it from the main checkout: from a worktree it merges but then fails to switch to `main`, which is harmless. Close the issue if it is still open.
+  - After validation, merge with `gh pr merge <n> --rebase --match-head-commit <validated-sha>` or use `--squash` for a branch with merge commits. Then run `git fetch` and `git merge --ff-only origin/main` from the main checkout. Check that GitHub closed the issue.
   - Then delete the local branch and its worktree. A post-merge hook deletes merged local branches that aren't checked out.
 - **Upstream syncs** follow the same path: one issue per sync, and a pull request for the sync branch.
 - **Releases** are tags on `main`: `release/vX.Y.Z`.
@@ -76,7 +76,9 @@ For a managed handoff, the orchestrator checks that the worker worktree is clean
 vp run check:changed --full-validation origin/main
 ```
 
-On Linux, the command acquires `~/.t3code-validation.lock` across the user's worktrees. Keep the lock file in place. It runs full typecheck with one workspace task at a time, affected package suites, and any adjacent tests those suites miss. Vitest uses at most two workers, and the web and server suites use one worker each for Playwright. The branch gate also runs the usual changed-file checks and rejects focused tests. Require a zero exit status and confirm the worktree is still clean at the validated SHA. Before merging, fetch `origin/main` again. If the target tip advanced, incorporate it and repeat validation even when GitHub reports a clean merge. Revalidate after any branch head change. Send failures back to the issue owner for repair.
+On Linux, each subprocess in either `check:changed` mode holds `~/.t3code-validation.lock` for the duration of its command. Keep the lock file in place. Full validation runs full typecheck, affected package suites, and the selected Vitest files. Each selected file must be discoverable. Vitest rejects focused tests, uses at most two workers, and the web and server suites use one worker each for Playwright. Require a zero exit status and verify the worktree is still clean at the validated SHA. If generated inputs change during a run, repeat validation.
+
+Fetch `origin/main` immediately before GitHub merge. Incorporate any new target tip and repeat validation even when GitHub reports a clean merge. The GitHub merge request binds the head SHA. The target check is a separate operation and can race another writer after the fetch. Send validation failures back to the issue owner for repair.
 
 The commit hook launches repo-wide Knip. After their targeted checks, managed workers can use `git -c core.hooksPath=/dev/null commit` so the orchestrator runs Knip under the same lock.
 

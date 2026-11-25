@@ -385,7 +385,7 @@ function launcherFixture() {
   ]) {
     write(file, NodeFS.readFileSync(NodePath.join(import.meta.dirname, "..", file), "utf8"));
   }
-  write(".gitignore", "node_modules/\nrecords/\n");
+  write(".gitignore", "node_modules/\nrecords/\n.generated/\n");
   write("pnpm-workspace.yaml", "packages:\n  - packages/*\n");
   write(
     "package.json",
@@ -434,9 +434,18 @@ function launcherFixture() {
     fs.writeFileSync(path.join(process.env.RECORDS, process.pid + '.json'), JSON.stringify({ args, cwd: process.cwd(), maxWorkers: process.env.VITEST_MAX_WORKERS }));
     console.log('fixture stdout: ' + args[0]);
     console.error('fixture stderr: ' + args[0]);
+    if (args[0] === 'fmt' && process.env.FIXTURE_MUTATE_INPUT === '1')
+      fs.writeFileSync('.generated/fixture.d.ts', 'export type Value = 2;');
     if (args[0] === 'test' && process.env.FIXTURE_VITEST) {
       const child = spawnSync(process.execPath, [process.env.FIXTURE_VITEST, ...args.slice(1)], { stdio: 'inherit' });
       process.exit(child.status ?? 1);
+    }
+    const report = args.find(arg => arg.startsWith('--outputFile.json='));
+    if (report) {
+      const files = args.slice(args.indexOf(report) + 1);
+      fs.writeFileSync(report.slice('--outputFile.json='.length), JSON.stringify({
+        testResults: files.map(file => ({ name: path.resolve(file) })),
+      }));
     }
     process.exit(args[0] === process.env.FAIL_STEP ? 23 : 0);
   `,
@@ -483,7 +492,13 @@ function launcherFixture() {
     uncoveredTest,
     git,
     write,
-    run(failStep = "", flags: ReadonlyArray<string> = [], ref = "HEAD", vitest?: string) {
+    run(
+      failStep = "",
+      flags: ReadonlyArray<string> = [],
+      ref = "HEAD",
+      vitest?: string,
+      mutateInput = false,
+    ) {
       return NodeChildProcess.spawnSync(
         process.execPath,
         ["scripts/check-changed.ts", ref, ...flags],
@@ -496,6 +511,7 @@ function launcherFixture() {
             RECORDS: records,
             FAIL_STEP: failStep,
             FIXTURE_VITEST: vitest,
+            FIXTURE_MUTATE_INPUT: mutateInput ? "1" : undefined,
           },
         },
       );
@@ -566,6 +582,46 @@ it.skipIf(HostProcess.Platform.defaultValue() !== "linux")(
     const full = project.run("", ["--full-validation"], "HEAD", cli);
     expect(full.status, full.stdout + full.stderr).toBe(1);
     expect(full.stdout).toContain("Unexpected .only");
+  },
+);
+
+it.skipIf(HostProcess.Platform.defaultValue() !== "linux")(
+  "full validation rejects a selected test the affected package suite cannot discover",
+  () => {
+    using project = launcherFixture();
+    const test = "packages/example/src/undiscovered.test.tsx";
+    project.write(test, 'import { it } from "vitest";\nit("runs", () => {});\n');
+    project.write(
+      "packages/example/src/discovered.test.ts",
+      'import { it } from "vitest";\nit("runs", () => {});\n',
+    );
+    project.write("vitest.config.mjs", 'export default { test: { include: ["**/*.test.ts"] } };\n');
+    project.git("add", "vitest.config.mjs");
+    project.git("commit", "-m", "fixture Vitest config");
+    const requireFromVite = NodeModule.createRequire(import.meta.resolve("vite-plus/bin"));
+    const vitest = NodePath.dirname(requireFromVite.resolve("vitest/package.json"));
+    NodeFS.symlinkSync(vitest, NodePath.join(project.root, "node_modules", "vitest"), "junction");
+    const full = project.run(
+      "",
+      ["--full-validation"],
+      "HEAD",
+      NodePath.join(vitest, "vitest.mjs"),
+    );
+    expect(full.status, full.stdout + full.stderr).toBe(1);
+    expect(full.stdout).toContain("1 passed");
+    expect(full.stdout).toContain(`No Vitest result for ${test}`);
+  },
+);
+
+it.skipIf(HostProcess.Platform.defaultValue() !== "linux")(
+  "full validation refuses a pass when an ignored declaration changes",
+  () => {
+    using project = launcherFixture();
+    project.write(project.source, "export const value = 2;\n");
+    project.write(".generated/fixture.d.ts", "export type Value = 1;");
+    const full = project.run("", ["--full-validation"], "HEAD", undefined, true);
+    expect(full.status, full.stdout + full.stderr).toBe(1);
+    expect(full.stderr).toContain("Validation inputs changed during the run.");
   },
 );
 
