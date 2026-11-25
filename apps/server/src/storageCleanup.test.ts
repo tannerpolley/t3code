@@ -3885,6 +3885,9 @@ describe("storage cleanup reports and local file policies", () => {
   it.live.each([
     "finished with no PR",
     "is archived with a missing worktree",
+    "is visible with a missing worktree after a recorded merge",
+    "is visible with a missing worktree and a surviving branch",
+    "is visible with a missing worktree, a surviving branch and no forge answer",
     "is archived with unmerged commits",
     "was removed explicitly with unmerged commits",
     "received a merge update",
@@ -3927,7 +3930,17 @@ describe("storage cleanup reports and local file policies", () => {
         }
         const head = (yield* command(slot, ["rev-parse", "HEAD"])).stdout.trim();
         const settled = scenario === "is settled with a merged pull request";
-        const visible = settled || scenario === "is visible with a merged pull request";
+        const missingRecordedMerge =
+          scenario === "is visible with a missing worktree after a recorded merge";
+        const noForgeAnswer =
+          scenario === "is visible with a missing worktree, a surviving branch and no forge answer";
+        const missingWithBranch =
+          noForgeAnswer || scenario === "is visible with a missing worktree and a surviving branch";
+        const visible =
+          settled ||
+          missingRecordedMerge ||
+          missingWithBranch ||
+          scenario === "is visible with a merged pull request";
         if (settled) {
           yield* command(repo, ["merge", "--ff-only", "feature"]);
           yield* command(repo, ["push", "origin", "main"]);
@@ -3950,6 +3963,30 @@ describe("storage cleanup reports and local file policies", () => {
             archivedAt: unsettledStatus === null && !visible ? at(-DAY_MS) : null,
             settledAt: settled ? at(-DAY_MS) : null,
             status: unsettledStatus ?? (visible ? "completed" : "idle"),
+            ...(missingRecordedMerge || missingWithBranch
+              ? {
+                  pullRequests: [
+                    {
+                      host: "github.com",
+                      repository: "owner/project",
+                      number: merged.number,
+                      url: merged.url,
+                      source: "agent",
+                      linkedAt: DateTime.formatIso(at(-DAY_MS)),
+                      snapshot: {
+                        state: "merged",
+                        title: merged.title,
+                        headBranch: merged.headRef,
+                        baseBranch: merged.baseRef,
+                        isDraft: false,
+                        updatedAt: null,
+                        syncedAt: DateTime.formatIso(at(0)),
+                      },
+                      stack: null,
+                    },
+                  ],
+                }
+              : {}),
             linkedIssue: {
               host: "github.com",
               repository: "owner/project",
@@ -3962,6 +3999,36 @@ describe("storage cleanup reports and local file policies", () => {
             },
           }),
         ]);
+        if (missingRecordedMerge || missingWithBranch) {
+          if (missingWithBranch) {
+            yield* fs.writeFileString(`${slot}/tracked.txt`, "work after the merge\n");
+            yield* command(slot, ["commit", "-am", "more issue work"]);
+          }
+          yield* command(repo, ["worktree", "remove", slot]);
+          if (noForgeAnswer) {
+            yield* service.runNow;
+            expect(getThreads()[0]).toMatchObject({ worktreePath: slot, branch: "feature" });
+            return;
+          }
+          if (missingWithBranch) {
+            setBranchPullRequest(merged);
+            yield* service.runNow;
+            expect(getThreads()[0]).toMatchObject({ worktreePath: slot, branch: "feature" });
+            const latest = (yield* command(repo, [
+              "rev-parse",
+              "refs/heads/feature",
+            ])).stdout.trim();
+            setBranchPullRequest({ ...merged, headSha: latest });
+          } else {
+            yield* command(repo, ["branch", "-D", "feature"]);
+          }
+          expect((yield* service.runNow).entries[0]?.reason).toBe(
+            "Cleared a missing issue worktree binding",
+          );
+          expect(getThreads()[0]).toMatchObject({ worktreePath: null, branch: "feature" });
+          expect(archivedThreads).toEqual([]);
+          return;
+        }
         if (scenario === "is archived with a missing worktree") {
           yield* command(repo, ["worktree", "remove", slot]);
           expect((yield* service.runNow).entries[0]?.reason).toBe(

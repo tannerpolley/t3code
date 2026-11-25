@@ -39,6 +39,12 @@ it.effect.each([
   },
   { name: "worker waiting for a merged PR notification", merged: true, watch: true, count: 1 },
   {
+    name: "closed worker with a guest message awaiting the owner",
+    closed: true,
+    guest: true,
+    count: 1,
+  },
+  {
     name: "closed worker with a running command",
     closed: true,
     run: "completed",
@@ -59,58 +65,61 @@ it.effect.each([
     item: "dynamic_tool",
     count: 0,
   },
-])("counts slots for $name", ({ archived, run, merged, closed, roster, watch, item, count }) =>
-  Effect.gen(function* () {
-    const sql = yield* SqlClient.SqlClient;
-    const store = yield* IssueWorkStore.IssueWorkStore;
-    const root = ThreadId.make("root");
-    const issue = { host: "github.com", repositoryId: "repo", repository: "owner/repo", id: "1" };
-    const rootPayload = JSON.stringify({
-      repositoryOrchestration: { suspendedIssues: closed ? [{ id: "1", kind: "closed" }] : [] },
-    });
-    const workerPayload = JSON.stringify({
-      linkedIssue: issue,
-      branch: "feature",
-      worktreePath: "/repo/.worktrees/slot-1",
-      pullRequests: merged
-        ? [
-            {
-              host: issue.host,
-              repository: issue.repository,
-              source: "agent",
-              snapshot: { state: "merged", headBranch: "feature" },
-              ...(watch ? { watch: { passed: true, checksPending: false } } : {}),
-            },
-          ]
-        : [],
-    });
-    yield* sql`INSERT INTO orchestration_v2_projection_threads(thread_id, project_id, title, default_provider, runtime_mode, interaction_mode, created_at, updated_at, archived_at, payload_json)
+])(
+  "counts slots for $name",
+  ({ archived, run, merged, closed, roster, watch, item, guest, count }) =>
+    Effect.gen(function* () {
+      const sql = yield* SqlClient.SqlClient;
+      const store = yield* IssueWorkStore.IssueWorkStore;
+      const root = ThreadId.make("root");
+      const issue = { host: "github.com", repositoryId: "repo", repository: "owner/repo", id: "1" };
+      const rootPayload = JSON.stringify({
+        repositoryOrchestration: { suspendedIssues: closed ? [{ id: "1", kind: "closed" }] : [] },
+      });
+      const workerPayload = JSON.stringify({
+        linkedIssue: issue,
+        branch: "feature",
+        worktreePath: "/repo/.worktrees/slot-1",
+        ...(guest ? { guestShare: { messages: [{ status: "pending" }] } } : {}),
+        pullRequests: merged
+          ? [
+              {
+                host: issue.host,
+                repository: issue.repository,
+                source: "agent",
+                snapshot: { state: "merged", headBranch: "feature" },
+                ...(watch ? { watch: { passed: true, checksPending: false } } : {}),
+              },
+            ]
+          : [],
+      });
+      yield* sql`INSERT INTO orchestration_v2_projection_threads(thread_id, project_id, title, default_provider, runtime_mode, interaction_mode, created_at, updated_at, archived_at, payload_json)
       VALUES ('root', 'project', 'Root', 'codex', 'full-access', 'default', '2026-11-24', '2026-11-24', NULL, ${rootPayload}),
         ('worker', 'project', 'Worker', 'codex', 'full-access', 'default', '2026-11-24', '2026-11-24', ${archived ? "2026-11-24" : null}, ${workerPayload})`;
-    yield* sql`INSERT INTO orchestration_v2_projection_repository_orchestration(host, repository_id, repository, root_thread_id, project_id, workspace, launch_command_id, revision, paused, worker_limit, publish_status_comments, publish_closeout_comments, created_at, updated_at)
+      yield* sql`INSERT INTO orchestration_v2_projection_repository_orchestration(host, repository_id, repository, root_thread_id, project_id, workspace, launch_command_id, revision, paused, worker_limit, publish_status_comments, publish_closeout_comments, created_at, updated_at)
       VALUES ('github.com', 'repo', 'owner/repo', 'root', 'project', 'project', 'start', 1, 0, 1, 1, 1, '2026-11-24', '2026-11-24')`;
-    if (run !== undefined)
-      yield* sql`INSERT INTO orchestration_v2_projection_runs(run_id, thread_id, ordinal, provider, status, requested_at, payload_json)
+      if (run !== undefined)
+        yield* sql`INSERT INTO orchestration_v2_projection_runs(run_id, thread_id, ordinal, provider, status, requested_at, payload_json)
         VALUES ('run', 'worker', 1, 'codex', ${run}, '2026-11-24', '{}')`;
-    if (item !== undefined)
-      yield* sql`INSERT INTO orchestration_v2_projection_turn_items(turn_item_id, thread_id, run_id, ordinal, type, status, updated_at, payload_json)
+      if (item !== undefined)
+        yield* sql`INSERT INTO orchestration_v2_projection_turn_items(turn_item_id, thread_id, run_id, ordinal, type, status, updated_at, payload_json)
         VALUES ('item', 'worker', 'run', 1, ${item}, 'running', '2026-11-24',
           ${item === "dynamic_tool" ? '{"input":{"persistent":true}}' : "{}"})`;
-    if (roster !== undefined) {
-      const pending = JSON.stringify({ pendingBackgroundTasks: [{ taskId: "command" }] });
-      yield* sql`UPDATE orchestration_v2_projection_threads SET active_provider_thread_id = 'current'
+      if (roster !== undefined) {
+        const pending = JSON.stringify({ pendingBackgroundTasks: [{ taskId: "command" }] });
+        yield* sql`UPDATE orchestration_v2_projection_threads SET active_provider_thread_id = 'current'
         WHERE thread_id = 'worker'`;
-      yield* sql`INSERT INTO orchestration_v2_projection_provider_threads(provider_thread_id, thread_id, provider, status, updated_at, payload_json)
+        yield* sql`INSERT INTO orchestration_v2_projection_provider_threads(provider_thread_id, thread_id, provider, status, updated_at, payload_json)
         VALUES ('current', 'worker', 'codex', 'idle', '2026-11-24', ${roster === "current" ? pending : "{}"}),
           ('old', 'worker', 'codex', 'idle', '2026-11-24', ${roster === "old" ? pending : "{}"})`;
-    }
-    assert.equal(yield* store.slotsInUse(root), count);
-    if (merged || item !== undefined)
-      assert.equal(
-        yield* store.workerRetainsSlot(ThreadId.make("worker"), true),
-        merged ? watch === true : count === 1,
-      );
-  }).pipe(Effect.provide(dependencies)),
+      }
+      assert.equal(yield* store.slotsInUse(root), count);
+      if (merged || item !== undefined || guest)
+        assert.equal(
+          yield* store.workerRetainsSlot(ThreadId.make("worker"), true),
+          merged ? watch === true : count === 1,
+        );
+    }).pipe(Effect.provide(dependencies)),
 );
 
 it.effect(

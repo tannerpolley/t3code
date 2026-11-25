@@ -255,6 +255,8 @@ export const layer = Layer.effect(
       OR EXISTS (SELECT 1 FROM json_each(thread.payload_json, '$.pullRequests') pr
         WHERE json_type(pr.value, '$.watch') = 'object'
           AND json_extract(pr.value, '$.source') <> 'stack-dismissed')
+      OR EXISTS (SELECT 1 FROM json_each(thread.payload_json, '$.guestShare.messages') message
+        WHERE json_extract(message.value, '$.status') = 'pending')
       OR EXISTS (SELECT 1 FROM orchestration_v2_effect_outbox effect
         WHERE effect.thread_id = thread.thread_id AND effect.status IN ('pending', 'running')
           AND effect.effect_type = 'provider-runtime.continue')

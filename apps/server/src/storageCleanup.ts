@@ -1519,6 +1519,47 @@ const make = Effect.gen(function* () {
         )
           return keep("worktree is a symbolic link");
         if (!guardedPathExists) {
+          const { branch, linkedIssue } = thread;
+          if (
+            !explicit &&
+            !deleted &&
+            thread.archivedAt === null &&
+            branch !== null &&
+            linkedIssue !== undefined &&
+            (yield* workerRetainsSlot(thread))
+          ) {
+            // An absent checkout only needs its binding cleared. Preserve any surviving branch.
+            slotBranchMerged =
+              thread.pullRequests?.some(
+                (link) =>
+                  link.source !== "stack-dismissed" &&
+                  link.host.toLowerCase() === linkedIssue.host.toLowerCase() &&
+                  link.repository.toLowerCase() === linkedIssue.repository.toLowerCase() &&
+                  link.snapshot?.state === "merged" &&
+                  link.snapshot.headBranch === branch,
+              ) ?? false;
+            const pullRequest = yield* gitManager
+              .branchPullRequest(
+                { cwd: project.workspaceRoot, branch },
+                { refresh: true, includeHeadRepository: true, useLocalBranchName: true },
+              )
+              .pipe(Effect.orElseSucceed(() => null));
+            // Without the forge's answer, a surviving branch may hold newer commits, so keep the slot.
+            if (pullRequest === null && slotBranchMerged) {
+              const surviving = yield* git
+                .resolveCommit({ cwd: project.workspaceRoot, revision: `refs/heads/${branch}` })
+                .pipe(Effect.orElseSucceed(() => null));
+              if (surviving !== null) slotBranchMerged = false;
+            } else if (pullRequest !== null && pullRequest.headRef === branch) {
+              if (pullRequest.state !== "merged") slotBranchMerged = false;
+              else if (pullRequest.headSha !== null) {
+                const head = yield* git
+                  .resolveCommit({ cwd: project.workspaceRoot, revision: `refs/heads/${branch}` })
+                  .pipe(Effect.orElseSucceed(() => null));
+                slotBranchMerged = head === null || head.commitSha === pullRequest.headSha;
+              }
+            }
+          }
           return yield* withWorkspaceLease(
             worktreePath,
             Effect.gen(function* () {
