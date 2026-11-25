@@ -5,6 +5,7 @@ import {
   ThreadId,
   type RepositoryIssueSummary,
   type ScopedThreadRef,
+  type WorktreeSetupSnapshot,
 } from "@t3tools/contracts";
 import { AsyncResult, Atom } from "effect/reactivity";
 import { expect, it, vi } from "vite-plus/test";
@@ -17,6 +18,7 @@ const state = vi.hoisted(() => ({
   respond: vi.fn(),
   shells: new Map<string, ReturnType<typeof makeThreadFixture>>(),
   requests: null as Atom.Atom<PendingThreadRequests> | null,
+  setup: null as Atom.Atom<AsyncResult.AsyncResult<WorktreeSetupSnapshot | null, never>> | null,
 }));
 
 vi.mock("~/state/entities", () => ({
@@ -35,6 +37,37 @@ vi.mock("~/state/threads", () => ({
   environmentThreadDetails: { pendingRequestsAtom: () => state.requests },
   threadEnvironment: {},
 }));
+vi.mock("~/state/vcs", () => ({ vcsEnvironment: { worktreeSetup: () => state.setup } }));
+
+function issueWithWorker(
+  child: ReturnType<typeof makeThreadFixture>,
+  status: "question" | "working",
+) {
+  return {
+    number: 429,
+    title: "Issue",
+    url: "https://github.com/owner/repo/issues/429",
+    state: "open",
+    stateReason: null,
+    author: null,
+    assignees: [],
+    labels: [],
+    milestone: null,
+    createdAt: child.updatedAt,
+    updatedAt: child.updatedAt,
+    commentCount: 0,
+    liveWork: [
+      {
+        threadId: child.id,
+        title: child.title,
+        branch: "issue-429",
+        worktreePath: null,
+        pullRequests: [],
+        status,
+      },
+    ],
+  } satisfies RepositoryIssueSummary;
+}
 
 it("lets the owner answer in the issue after routing hands the request back to them", async () => {
   state.shells.clear();
@@ -75,30 +108,7 @@ it("lets the owner answer in the issue after routing hands the request back to t
       },
     ],
   });
-  const issue: RepositoryIssueSummary = {
-    number: 429,
-    title: "Issue",
-    url: "https://github.com/owner/repo/issues/429",
-    state: "open",
-    stateReason: null,
-    author: null,
-    assignees: [],
-    labels: [],
-    milestone: null,
-    createdAt: child.updatedAt,
-    updatedAt: child.updatedAt,
-    commentCount: 0,
-    liveWork: [
-      {
-        threadId: child.id,
-        title: child.title,
-        branch: "issue-429",
-        worktreePath: null,
-        pullRequests: [],
-        status: "question",
-      },
-    ],
-  };
+  const issue = issueWithWorker(child, "question");
   await using screen = await render(<IssueWorkers issue={issue} environmentId={environmentId} />);
   await expect.element(screen.getByText("Routed to Parent")).toBeVisible();
   await expect.element(screen.getByRole("button", { name: "Submit" })).not.toBeInTheDocument();
@@ -116,4 +126,59 @@ it("lets the owner answer in the issue after routing hands the request back to t
   state.shells.set(child.id, child);
   await screen.rerender(<IssueWorkers issue={issue} environmentId={environmentId} />);
   await expect.element(screen.getByRole("button", { name: "Submit" })).not.toBeInTheDocument();
+});
+
+it("shows the slot wait reason on the preparing worker's row", async () => {
+  state.shells.clear();
+  const worker = makeThreadFixture({ id: ThreadId.make("preparing-worker"), title: "Implementor" });
+  state.shells.set(worker.id, {
+    ...worker,
+    source: { ...worker.source, activityRunStatus: "preparing" },
+  });
+  const detail = "/repo/.worktrees/slot-1 is reserved by another thread or terminal";
+  state.setup = Atom.make<AsyncResult.AsyncResult<WorktreeSetupSnapshot | null, never>>(
+    AsyncResult.success({
+      threadId: worker.id,
+      phase: "running",
+      startedAt: worker.updatedAt,
+      endedAt: null,
+      branch: null,
+      baseRef: "main",
+      worktreePath: null,
+      setupScript: null,
+      stages: [
+        {
+          id: "checkout",
+          status: "pending",
+          startedAt: null,
+          endedAt: null,
+          percent: null,
+          detail,
+          tail: [],
+        },
+      ],
+      error: null,
+      sequence: 1,
+    }),
+  );
+  const issue = issueWithWorker(worker, "working");
+  await using screen = await render(
+    <IssueWorkers issue={issue} environmentId={worker.environmentId} />,
+  );
+  const row = screen.getByRole("listitem").filter({ hasText: worker.title });
+  await expect.element(row.getByText(detail)).toBeVisible();
+
+  await screen.rerender(
+    <IssueWorkers
+      issue={{
+        ...issue,
+        liveWork: issue.liveWork.map((entry) => ({
+          ...entry,
+          worktreePath: "/repo/.worktrees/slot-1",
+        })),
+      }}
+      environmentId={worker.environmentId}
+    />,
+  );
+  await expect.element(row.getByText(detail)).not.toBeInTheDocument();
 });

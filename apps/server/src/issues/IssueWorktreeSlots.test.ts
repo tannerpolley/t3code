@@ -30,8 +30,11 @@ it.live("reuses a prepared slot from the fetched default and preserves unsafe sl
     yield* run(temp, "init", "-b", "main", remote);
     yield* run(remote, "config", "user.name", "Test");
     yield* run(remote, "config", "user.email", "test@example.com");
-    yield* fs.writeFileString(path.join(remote, "t3.json"), '{"issueWorktreeKeepPaths":[".venv"]}');
-    yield* fs.writeFileString(path.join(remote, ".gitignore"), "generated/\n");
+    yield* fs.writeFileString(
+      path.join(remote, "t3.json"),
+      '{"issueWorktreeKeepPaths":[".venv",".T3/scenarios-mobile/file"]}',
+    );
+    yield* fs.writeFileString(path.join(remote, ".gitignore"), "generated/\n/.t3/\n");
     yield* fs.writeFileString(path.join(remote, "tracked"), "base");
     yield* run(remote, "add", ".");
     yield* run(remote, "commit", "-m", "base");
@@ -103,6 +106,8 @@ it.live("reuses a prepared slot from the fetched default and preserves unsafe sl
     yield* fs.writeFileString(path.join(slot, ".venv", "cache"), "keep this");
     yield* fs.makeDirectory(path.join(slot, "generated"));
     yield* fs.writeFileString(path.join(slot, "generated", "stale"), "remove this");
+    const generatedScenarioRepo = path.join(slot, ".t3", "scenarios", "fixture");
+    yield* run(slot, "init", generatedScenarioRepo);
     yield* fs.writeFileString(path.join(slot, "tracked"), "unsaved");
     const release = (target: string, branch: string) =>
       slots.release({
@@ -120,6 +125,19 @@ it.live("reuses a prepared slot from the fetched default and preserves unsafe sl
     assert.equal(yield* fs.readFileString(path.join(slot, "tracked")), "unsaved");
     yield* run(slot, "update-index", "--no-assume-unchanged", "tracked");
     yield* run(slot, "restore", "tracked");
+    const unknownArtifact = path.join(slot, ".t3", "setup-done");
+    yield* fs.writeFileString(unknownArtifact, "do not delete");
+    assert.equal(
+      yield* release(slot, slotBranch),
+      "has local files in .t3 outside the known artifact directories",
+    );
+    assert.equal(yield* fs.readFileString(unknownArtifact), "do not delete");
+    yield* fs.remove(unknownArtifact);
+    const keptArtifact = path.join(slot, ".t3", "scenarios-mobile");
+    yield* run(slot, "init", keptArtifact);
+    assert.equal(yield* release(slot, slotBranch), "has a .t3 artifact that overlaps a keep path");
+    assert.isTrue(yield* fs.exists(path.join(keptArtifact, ".git")));
+    yield* fs.rename(keptArtifact, path.join(slot, ".venv", "kept-artifact"));
     assert.isNull(yield* release(slot, slotBranch));
     yield* run(surplus, "switch", "--detach", "origin/main");
     assert.isNull(yield* release(surplus, surplusBranch));
@@ -127,6 +145,7 @@ it.live("reuses a prepared slot from the fetched default and preserves unsafe sl
     assert.notInclude(yield* git.listLocalBranchNames(local), slotBranch);
     assert.isFalse(yield* fs.exists(path.join(slot, "generated", "stale")));
     assert.equal(yield* fs.readFileString(path.join(slot, ".venv", "cache")), "keep this");
+    assert.isFalse(yield* fs.exists(generatedScenarioRepo));
     yield* fs.writeFileString(path.join(slot, "untracked"), "do not delete");
     assert.deepEqual(yield* claim("issue-3"), [
       { path: slot, reason: "has untracked files outside the keep paths" },
@@ -156,15 +175,21 @@ it.live("reuses a prepared slot from the fetched default and preserves unsafe sl
       detachedHead,
     );
     yield* run(slot, "switch", "--detach", "origin/main");
-    const nested = path.join(slot, "generated");
-    yield* run(slot, "init", nested);
-    const reason =
-      'Git could not clean "generated/". Move it out of the slot or add a keep path in t3.json.';
-    assert.deepEqual(yield* claim("issue-3"), [{ path: slot, reason }]);
-    yield* maintain();
-    assert.equal(reports.at(-1), reason);
-    assert.isTrue(yield* fs.exists(path.join(nested, ".git")));
-    yield* fs.rename(nested, path.join(slot, ".venv", "nested"));
+    for (const [relative, reason] of [
+      [
+        "generated",
+        'Git could not clean "generated/". Move it out of the slot or add a keep path in t3.json.',
+      ],
+      [".t3/scenarios-private", "has local files in .t3 outside the known artifact directories"],
+    ] as const) {
+      const nested = path.join(slot, relative);
+      yield* run(slot, "init", nested);
+      assert.deepEqual(yield* claim("issue-3"), [{ path: slot, reason }]);
+      yield* maintain();
+      assert.equal(reports.at(-1), reason);
+      assert.isTrue(yield* fs.exists(path.join(nested, ".git")));
+      yield* fs.rename(nested, path.join(slot, ".venv", path.basename(nested)));
+    }
     yield* fs.makeDirectory(path.join(slot, "generated"));
     yield* fs.writeFileString(path.join(slot, "generated", "stale"), "recreated during upkeep");
     yield* fs.writeFileString(path.join(remote, "tracked"), "current default");
@@ -174,5 +199,20 @@ it.live("reuses a prepared slot from the fetched default and preserves unsafe sl
     assert.equal((yield* git.resolveCommit({ cwd: slot, revision: "HEAD" })).commitSha, current);
     assert.equal(yield* fs.readFileString(path.join(slot, ".venv", "retained")), "do not delete");
     assert.isFalse(yield* fs.exists(path.join(slot, "generated", "stale")));
+    const writerPreview = path.join(slot, ".t3", "writer-preview");
+    yield* run(slot, "init", writerPreview);
+    assert.isNull(
+      yield* slots.release({
+        cwd: local,
+        path: slot,
+        branch: "issue-3",
+        head: current,
+        defaultRef: "origin/main",
+        preserveBranch: true,
+        unbind: Effect.void,
+      }),
+    );
+    assert.isFalse(yield* fs.exists(writerPreview));
+    assert.include(yield* git.listLocalBranchNames(local), "issue-3");
   }).pipe(Effect.scoped, Effect.provide(layer)),
 );

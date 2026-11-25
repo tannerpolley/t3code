@@ -24,6 +24,13 @@ import { withWorkspaceLease } from "../workspace/workspaceLease.ts";
 const slotName = /^slot-[1-9]\d*$/;
 const marker = "refs/worktree/t3-issue-slot";
 const isGitCommandError = Schema.is(GitCommandError);
+const slotArtifacts = new Set([
+  "scenarios",
+  "scenarios-github-issue-links",
+  "scenarios-mobile",
+  "scenarios-second-environment",
+  "writer-preview",
+]);
 
 export function isIssueWorktreeSlot(path: Path.Path, worktree: string): boolean {
   return (
@@ -169,6 +176,46 @@ const make = Effect.gen(function* () {
 
   const exclusions = (keep: ReadonlyArray<string>) =>
     keep.map((name) => `/${name.replaceAll(" ", "\\ ")}`);
+  const lstatIfPresent = (target: string) =>
+    fs
+      .lstat(target)
+      .pipe(Effect.catchReason("PlatformError", "NotFound", () => Effect.succeed(null)));
+  const disposableArtifacts = Effect.fn("IssueWorktreeSlots.disposableArtifacts")(function* (
+    target: string,
+    base: SlotBase,
+  ) {
+    const directory = path.join(target, ".t3");
+    const stat = yield* lstatIfPresent(directory);
+    const artifacts: string[] = [];
+    if (stat === null) return artifacts;
+    if (stat.type !== "Directory") return ".t3 is not a directory";
+    const keep = base.keep.map((entry) => entry.toLowerCase());
+    for (const entry of yield* fs.readDirectory(directory)) {
+      if (
+        !slotArtifacts.has(entry) ||
+        (yield* lstatIfPresent(path.join(directory, entry)))?.type !== "Directory"
+      )
+        return "has local files in .t3 outside the known artifact directories";
+      const name = `.t3/${entry}`;
+      // Git can remove a nested repository without checking keep paths inside it.
+      if (
+        keep.some(
+          (entry) => name === entry || name.startsWith(`${entry}/`) || entry.startsWith(`${name}/`),
+        )
+      )
+        return "has a .t3 artifact that overlaps a keep path";
+      artifacts.push(name);
+    }
+    return artifacts;
+  });
+  const localFiles = (cwd: string, keep: ReadonlyArray<string>, includeIgnored: boolean) =>
+    run(cwd, [
+      "ls-files",
+      "-z",
+      "--others",
+      ...(includeIgnored ? [] : ["--exclude-standard"]),
+      ...exclusions(keep).map((pattern) => `--exclude=${pattern}`),
+    ]);
   const localChanges = Effect.fn("IssueWorktreeSlots.localChanges")(function* (
     target: string,
     base: SlotBase,
@@ -182,32 +229,36 @@ const make = Effect.gen(function* () {
       "--ignore-submodules=none",
     ]);
     if (tracked.stdout || tracked.stdoutTruncated) return "has uncommitted changes";
-    const untracked = yield* run(target, [
-      "ls-files",
-      "-z",
-      "--others",
-      ...(includeIgnored ? [] : ["--exclude-standard"]),
-      ...exclusions(base.keep).map((pattern) => `--exclude=${pattern}`),
-    ]);
+    const untracked = yield* localFiles(target, base.keep, false);
     if (untracked.stdout || untracked.stdoutTruncated)
       return includeIgnored
         ? "has local files outside the keep paths"
         : "has untracked files outside the keep paths";
+    const artifacts = yield* disposableArtifacts(target, base);
+    if (typeof artifacts === "string") return artifacts;
+    if (includeIgnored) {
+      const ignored = yield* localFiles(target, [...base.keep, ...artifacts], true);
+      if (ignored.stdout || ignored.stdoutTruncated)
+        return "has local files outside the keep paths";
+    }
     return yield* hiddenTrackedChange(target);
   });
 
-  const clean = Effect.fn("IssueWorktreeSlots.clean")(function* (target: string, base: SlotBase) {
-    yield* run(target, [
-      "clean",
-      "-fdx",
-      ...exclusions(base.keep).flatMap((pattern) => ["-e", pattern]),
-    ]);
-    const remaining = yield* run(target, [
-      "ls-files",
-      "-z",
-      "--others",
-      ...exclusions(base.keep).map((pattern) => `--exclude=${pattern}`),
-    ]);
+  const clean = Effect.fn("IssueWorktreeSlots.clean")(function* (
+    target: string,
+    base: SlotBase,
+    preserveIgnored = false,
+  ) {
+    const artifacts = yield* disposableArtifacts(target, base);
+    if (typeof artifacts === "string") return yield* failure(target, artifacts);
+    const excludeArgs = exclusions(base.keep).flatMap((pattern) => ["-e", pattern]);
+    if (artifacts.length > 0)
+      yield* run(target, ["clean", "-qffdx", ...excludeArgs, "--", ...artifacts]);
+    if (!preserveIgnored) yield* run(target, ["clean", "-fdx", ...excludeArgs, "-e", "/.t3"]);
+    const leftovers = yield* disposableArtifacts(target, base);
+    if (typeof leftovers === "string") return yield* failure(target, leftovers);
+    if (leftovers.length > 0) return yield* failure(target, "could not clean the .t3 artifacts");
+    const remaining = yield* localFiles(target, base.keep, true);
     if (remaining.stdout || remaining.stdoutTruncated) {
       const [firstPath = ""] = remaining.stdout.split("\0", 1);
       return yield* failure(
@@ -445,8 +496,8 @@ const make = Effect.gen(function* () {
         return "detached slot has commits outside the default branch";
       const head = yield* git.resolveCommit({ cwd: input.path, revision: branchRef });
       if (head.commitSha !== input.head) return "commit changed since check";
-      if (input.preserveBranch) yield* detach(input.path, base);
-      else yield* reset(input.path, base);
+      yield* detach(input.path, base);
+      yield* clean(input.path, base, input.preserveBranch);
       yield* input.unbind;
       if (!input.preserveBranch)
         yield* git
