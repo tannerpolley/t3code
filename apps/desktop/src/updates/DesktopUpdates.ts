@@ -39,6 +39,7 @@ import * as IpcChannels from "../ipc/channels.ts";
 import * as DesktopAppSettings from "../settings/DesktopAppSettings.ts";
 import * as DesktopSshEnvironment from "../ssh/DesktopSshEnvironment.ts";
 import * as DesktopUpdatePolicy from "./DesktopUpdatePolicy.ts";
+import * as ForkStagedUpdates from "./ForkStagedUpdates.ts";
 import {
   normalizeDesktopUpdateReleaseNotes,
   releaseNotesOfOfferedVersion,
@@ -393,6 +394,7 @@ export const make = Effect.gen(function* () {
   const fileSystem = yield* FileSystem.FileSystem;
   const desktopSettings = yield* DesktopAppSettings.DesktopAppSettings;
   const policy = yield* DesktopUpdatePolicy.DesktopUpdatePolicy;
+  const forkUpdates = policy.feedUrl === undefined ? yield* ForkStagedUpdates.make : undefined;
   // Any user can set the mock flag, so it never replaces an administrator's update source.
   const mockUpdates = config.mockUpdates && policy.message === null;
 
@@ -482,7 +484,7 @@ export const make = Effect.gen(function* () {
   );
 
   const resolveDisabledReason = Effect.gen(function* () {
-    const hasFeedConfig = yield* hasUpdateFeedConfig;
+    const hasFeedConfig = forkUpdates !== undefined || (yield* hasUpdateFeedConfig);
     return Option.fromNullishOr(
       getAutoUpdateDisabledReason({
         policy,
@@ -494,6 +496,12 @@ export const make = Effect.gen(function* () {
         disabledByEnv: config.disableAutoUpdate,
         hasUpdateFeedConfig: hasFeedConfig,
       }),
+    ).pipe(
+      Option.orElse(() =>
+        forkUpdates === null
+          ? Option.some("Staged updates are unavailable for this build or launcher configuration.")
+          : Option.none(),
+      ),
     );
   });
 
@@ -621,13 +629,35 @@ export const make = Effect.gen(function* () {
     if (actionReservation === "acquire" && !(yield* tryStartUpdateAction("check"))) return false;
 
     const check = Effect.gen(function* () {
+      const checkedAt = yield* currentIsoTimestamp;
       // An offer stays on screen while re-checking, so finding it again changes nothing.
       if (!isOffered(state)) {
-        yield* setState(reduceDesktopUpdateStateOnCheckStart(state, yield* currentIsoTimestamp));
+        yield* setState(reduceDesktopUpdateStateOnCheckStart(state, checkedAt));
       }
       yield* logUpdaterInfo("checking for updates", { reason });
 
-      return yield* runUpdaterCheck(allowDowngrade).pipe(
+      const checkSource = forkUpdates
+        ? forkUpdates.detect().pipe(
+            Effect.mapError(
+              (cause) =>
+                new ElectronUpdater.ElectronUpdaterCheckForUpdatesError({
+                  channel: state.channel,
+                  cause,
+                }),
+            ),
+            Effect.flatMap(
+              Effect.fnUntraced(function* (version) {
+                const current = yield* Ref.get(updateStateRef);
+                const next =
+                  version && (yield* offerable(version, current))
+                    ? reduceDesktopUpdateStateOnDownloadComplete({ ...current, checkedAt }, version)
+                    : yield* noOfferState({ ...current, downloadedVersion: null }, checkedAt);
+                yield* setState(next);
+              }),
+            ),
+          )
+        : runUpdaterCheck(allowDowngrade);
+      return yield* checkSource.pipe(
         Effect.as(true),
         Effect.catchTags({
           ElectronUpdaterCheckForUpdatesError: Effect.fn(
@@ -938,6 +968,10 @@ export const make = Effect.gen(function* () {
           yield* writeUpdateInProgressMarker;
           const { downloadedVersion } = yield* Ref.get(updateStateRef);
           if (downloadedVersion !== null) yield* writeInstallRecord(downloadedVersion);
+          if (forkUpdates) {
+            yield* forkUpdates.install(downloadedVersion);
+            return { accepted: true, completed: false, failed: false };
+          }
           // Stop pooled backends and SSH tunnels before quitAndInstall can outrun their scope finalizers.
           const instances = yield* pool.list;
           // stop clears desiredRunning, so retain the recovery set beforehand.
@@ -964,6 +998,21 @@ export const make = Effect.gen(function* () {
           return { accepted: true, completed: false, failed: false };
         }).pipe(
           Effect.catchTags({
+            ForkStagedUpdateChangedError: () =>
+              resetInstallAction.pipe(
+                Effect.andThen(checkForUpdates("staged-build-changed")),
+                Effect.as({ accepted: false, completed: false, failed: false }),
+              ),
+            ForkStagedUpdatePreflightError: (error) =>
+              recoverFailedInstall(error.message).pipe(
+                Effect.andThen(
+                  logUpdaterError(error.message, {
+                    errorTag: error._tag,
+                    cause: describeUpdateErrorCause(error.cause),
+                  }),
+                ),
+                Effect.as({ accepted: true, completed: false, failed: true }),
+              ),
             ElectronUpdaterQuitAndInstallError: Effect.fn("desktop.updates.handleInstallFailure")(
               function* (error) {
                 yield* recoverFailedInstall(error.message);
@@ -1029,7 +1078,7 @@ export const make = Effect.gen(function* () {
       retainedVersion !== null &&
       (expectedVersion === undefined || retainedVersion === expectedVersion);
     // A cache cleaner can delete the archive; Squirrel.Mac would then fail every install attempt.
-    if (retainsExpectedDownload && (yield* downloadedFileMissing)) {
+    if (!forkUpdates && retainsExpectedDownload && (yield* downloadedFileMissing)) {
       yield* logUpdaterWarning("the downloaded update file is gone; downloading it again", {
         version: retainedVersion,
       });
@@ -1048,6 +1097,7 @@ export const make = Effect.gen(function* () {
       }
     } else if (
       // A download can be hours old: a release published since replaces it before restarting.
+      !forkUpdates &&
       retainsExpectedDownload &&
       (yield* checkForUpdates(
         "install",
@@ -1337,7 +1387,7 @@ export const make = Effect.gen(function* () {
         });
       }
 
-      if (mockUpdates) {
+      if (forkUpdates === undefined && mockUpdates) {
         yield* electronUpdater.setFeedURL({
           provider: "generic",
           url: `http://localhost:${config.mockUpdateServerPort}`,
@@ -1364,6 +1414,11 @@ export const make = Effect.gen(function* () {
         return;
       }
       yield* Ref.set(updaterConfiguredRef, true);
+
+      if (forkUpdates) {
+        yield* startUpdatePollers;
+        return;
+      }
 
       yield* electronUpdater.setAutoDownload(false);
       yield* electronUpdater.setAutoInstallOnAppQuit(false);
@@ -1460,7 +1515,7 @@ export const make = Effect.gen(function* () {
           return yield* Ref.get(updateStateRef);
         }
 
-        yield* applyAutoUpdaterChannel(nextChannel);
+        if (!forkUpdates) yield* applyAutoUpdaterChannel(nextChannel);
         // Only leaving the running build's track can need an older release.
         yield* checkForUpdates(
           "channel-change",
