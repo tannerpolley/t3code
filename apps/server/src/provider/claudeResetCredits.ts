@@ -66,6 +66,7 @@ const RESET_CREDIT_FAILURES = {
   malformedCredit: "Claude returned a malformed reset credit.",
   loginUnreadable: "Claude could not read its login.",
   accountUnreadable: "Claude could not read its account.",
+  missingLogin: "Sign in to Claude again to redeem resets.",
   signedOut: "Sign in to Claude again to redeem resets.",
   rateLimited: "Claude is rate limiting resets. Try again soon.",
   coolingDown: "Claude resets are cooling down. Try again later.",
@@ -93,8 +94,9 @@ const isClaudeResetCreditError = Schema.is(ClaudeResetCreditError);
 /** Retry unanswered or unconfirmed claims with the same request ID. */
 export const isSettledClaudeResetCreditFailure = (error: unknown) =>
   isClaudeResetCreditError(error) &&
-  error.reason !== "requestFailed" &&
-  error.reason !== "unconfirmed";
+  (error.reason === "signedOut" ||
+    error.reason === "rateLimited" ||
+    error.reason === "coolingDown");
 
 const isFutureTimestamp = (value: string, nowMs: number) => {
   if (!COMPLETE_TIMESTAMP.test(value)) return false;
@@ -287,7 +289,7 @@ export const consumeClaudeResetCredit = Effect.fn("consumeClaudeResetCredit")(fu
   );
   const organization = config.oauthAccount?.organizationUuid?.trim();
   if (!token || !organization) {
-    return yield* new ClaudeResetCreditError({ reason: "signedOut" });
+    return yield* new ClaudeResetCreditError({ reason: "missingLogin" });
   }
   const client = yield* HttpClient.HttpClient;
   if (input.automatic) {

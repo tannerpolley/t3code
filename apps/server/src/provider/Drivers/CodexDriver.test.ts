@@ -123,6 +123,7 @@ it.layer(layerTest)("CodexDriver", (it) => {
     Effect.gen(function* () {
       const requests: unknown[] = [];
       let nextCredit = "other";
+      let expiresAt: number | null = 1200;
       const spawner = ChildProcessSpawner.make(() =>
         Effect.gen(function* () {
           const stdout = yield* Queue.unbounded<Uint8Array>();
@@ -158,7 +159,7 @@ it.layer(layerTest)("CodexDriver", (it) => {
                           status: "available",
                           resetType: "codexRateLimits",
                           grantedAt: 100,
-                          expiresAt: 1200,
+                          expiresAt,
                         },
                       ],
                     },
@@ -208,6 +209,9 @@ it.layer(layerTest)("CodexDriver", (it) => {
       expect(requests).toEqual([expect.objectContaining({ creditId: "grant" })]);
       nextCredit = "other";
       expect(yield* instance.consumeResetCredit!(selection.creditId)).toBe("noCredit");
+      expiresAt = null;
+      nextCredit = "non-expiring-replacement";
+      expect(yield* instance.consumeResetCredit!("non-expiring-original")).toBe("noCredit");
       expect(requests).toHaveLength(1);
     }),
   );

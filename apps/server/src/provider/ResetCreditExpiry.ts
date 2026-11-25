@@ -26,6 +26,7 @@ type Owner =
 
 interface Candidate extends Omit<AutomaticResetCredit, "canRedeem"> {
   readonly key: string;
+  readonly ownerKey: string;
   readonly signature: string;
   readonly owner: Owner;
   readonly opens: number;
@@ -38,9 +39,9 @@ export const start = Effect.gen(function* () {
   const sources = yield* UsageLimitSources.UsageLimitSources;
   const settings = yield* Settings.ServerSettingsService;
   const changes = yield* Effect.acquireRelease(Queue.sliding<void>(1), Queue.shutdown);
-  const attempts = new Map<string, { signature: string; retryAt: number }>();
+  const attempts = new Map<string, { credit: Candidate; retryAt: number }>();
 
-  const candidates = Effect.gen(function* () {
+  const selections = Effect.gen(function* () {
     const hubs = yield* sources.current;
     const providers = yield* registry.getProviders;
     const redeemable = new Set(
@@ -75,6 +76,7 @@ export const start = Effect.gen(function* () {
     const accountKey = accountKeyResolver(reports);
     const owners = new Set<string>();
     const selected: Candidate[] = [];
+    const unknown = new Set<string>();
     for (const report of reports) {
       const account = accountKey(report);
       const email = report.email?.trim().toLowerCase();
@@ -82,16 +84,22 @@ export const start = Effect.gen(function* () {
       // Use the hub when it holds the same account, even when its credit list is unreadable.
       owners.add(account);
       const credits = report.usageLimits?.resetCredits;
-      const creditId = credits?.nextCreditId;
-      const expiresAt = credits?.nextExpiresAt;
-      if (report.usageLimits?.unavailable || !credits?.availableCount || !creditId || !expiresAt) {
+      const ownerKey = JSON.stringify([account, report.owner, email, report.workspaceId]);
+      if (report.usageLimits?.unavailable || !credits) {
+        unknown.add(ownerKey);
+        continue;
+      }
+      const creditId = credits.nextCreditId;
+      const expiresAt = credits.nextExpiresAt;
+      if (!credits.availableCount || !creditId || !expiresAt) {
         continue;
       }
       const expiry = Date.parse(expiresAt);
       if (!Number.isFinite(expiry)) continue;
       selected.push({
         key: JSON.stringify([account, creditId]),
-        signature: JSON.stringify([report.owner, email, report.workspaceId, expiresAt]),
+        ownerKey,
+        signature: JSON.stringify([ownerKey, expiresAt]),
         owner: report.owner,
         creditId,
         expiresAt,
@@ -101,7 +109,21 @@ export const start = Effect.gen(function* () {
         closes: expiry - MINUTE,
       });
     }
-    return selected;
+    return { selected, unknown };
+  });
+
+  const refreshOwner = Effect.fn("ResetCreditExpiry.refreshOwner")(
+    function* (owner: Owner) {
+      if ("sourceId" in owner) return yield* sources.refresh;
+      const instance = yield* instances.getInstance(owner.instanceId);
+      yield* instance?.invalidateCaches ?? Effect.void;
+      yield* registry.refreshInstance(owner.instanceId);
+    },
+    Effect.ignoreCause({ log: true }),
+  );
+
+  const retryAfter = Effect.fnUntraced(function* (credit: Candidate) {
+    attempts.set(credit.key, { credit, retryAt: (yield* Clock.currentTimeMillis) + MINUTE });
   });
 
   const readSettings = settings.getSettings.pipe(Effect.orElseSucceed(() => null));
@@ -116,21 +138,21 @@ export const start = Effect.gen(function* () {
     if (
       now < credit.opens ||
       now > credit.closes ||
-      (previous && (previous.signature !== credit.signature || previous.retryAt > now))
+      (previous && (previous.credit.signature !== credit.signature || previous.retryAt > now))
     )
       return;
 
     // Keep the same redemption path after an unanswered request, even if another report takes over.
-    attempts.set(credit.key, { signature: credit.signature, retryAt: Infinity });
+    attempts.set(credit.key, { credit, retryAt: Infinity });
     if ("instanceId" in owner && (!instance?.enabled || !instance.consumeResetCredit)) {
-      attempts.set(credit.key, { signature: credit.signature, retryAt: now + MINUTE });
+      yield* retryAfter(credit);
       return;
     }
     const automatic = {
       ...credit,
       canRedeem: Effect.gen(function* () {
         if (
-          !(yield* candidates).some(
+          !(yield* selections).selected.some(
             (current) => current.key === credit.key && current.signature === credit.signature,
           )
         )
@@ -189,17 +211,8 @@ export const start = Effect.gen(function* () {
       creditId: credit.creditId,
       status,
     });
-    const refresh =
-      "instanceId" in owner
-        ? (instance?.invalidateCaches ?? Effect.void).pipe(
-            Effect.andThen(registry.refreshInstance(owner.instanceId)),
-          )
-        : sources.refresh;
-    yield* refresh.pipe(Effect.ignoreCause({ log: true }));
-    attempts.set(credit.key, {
-      signature: credit.signature,
-      retryAt: (yield* Clock.currentTimeMillis) + MINUTE,
-    });
+    yield* refreshOwner(owner);
+    yield* retryAfter(credit);
   });
 
   const run = Effect.gen(function* () {
@@ -224,18 +237,27 @@ export const start = Effect.gen(function* () {
       Effect.gen(function* () {
         const enabled = (yield* readSettings)?.autoUseExpiringResetCredits;
         const now = yield* Clock.currentTimeMillis;
-        const due: Candidate[] = [];
+        const due: Effect.Effect<void>[] = [];
         let next = Infinity;
-        for (const credit of enabled ? yield* candidates : []) {
-          const previous = attempts.get(credit.key);
-          if (previous && previous.signature !== credit.signature) continue;
-          const at = Math.max(credit.opens, previous?.retryAt ?? 0);
-          if (Math.max(at, now) > credit.closes) continue;
-          if (at <= now) due.push(credit);
-          else next = Math.min(next, at);
+        if (enabled) {
+          const { selected, unknown } = yield* selections;
+          for (const credit of selected) {
+            const previous = attempts.get(credit.key);
+            if (previous && previous.credit.signature !== credit.signature) continue;
+            const at = Math.max(credit.opens, previous?.retryAt ?? 0);
+            if (Math.max(at, now) > credit.closes) continue;
+            if (at <= now) due.push(attempt(credit));
+            else next = Math.min(next, at);
+          }
+          for (const { credit, retryAt } of attempts.values()) {
+            if (!unknown.has(credit.ownerKey) || Math.max(retryAt, now) > credit.closes) continue;
+            if (retryAt <= now)
+              due.push(refreshOwner(credit.owner).pipe(Effect.andThen(retryAfter(credit))));
+            else next = Math.min(next, retryAt);
+          }
         }
         if (due.length > 0) {
-          yield* Effect.forEach(due, attempt, { concurrency: 4, discard: true });
+          yield* Effect.all(due, { concurrency: 4, discard: true });
         } else if (Number.isFinite(next)) {
           yield* Effect.raceFirst(Queue.take(changes), Effect.sleep(next - now));
         } else {

@@ -285,70 +285,74 @@ effectIt.layer(NodeServices.layer)("consumeClaudeResetCredit", (it) => {
     }),
   );
 
-  it.effect("reuses an unanswered claim ID after a login preparation failure", () =>
-    Effect.gen(function* () {
-      const login = yield* writeLogin();
-      const fs = yield* FileSystem.FileSystem;
-      const path = yield* Path.Path;
-      const credentialFile = path.join(login.configDir, ".credentials.json");
-      const { redeem } = yield* ResetCreditCoordinator.ResetCreditCoordinator;
-      const expiresAt = "2099-01-01T00:00:00.000Z";
-      const bodies: string[] = [];
-      const client = HttpClient.make((request) =>
-        Effect.sync(() => {
-          if (request.method === "POST" && request.body._tag === "Uint8Array") {
-            bodies.push(new TextDecoder().decode(request.body.body));
+  it.effect.each([false, true])(
+    "reuses an unanswered claim ID after a login failure (automatic: %s)",
+    (automatic) =>
+      Effect.gen(function* () {
+        const login = yield* writeLogin();
+        const fs = yield* FileSystem.FileSystem;
+        const path = yield* Path.Path;
+        const credentialFile = path.join(login.configDir, ".credentials.json");
+        const { redeem } = yield* ResetCreditCoordinator.ResetCreditCoordinator;
+        const expiresAt = "2099-01-01T00:00:00.000Z";
+        const bodies: string[] = [];
+        const client = HttpClient.make((request) =>
+          Effect.sync(() => {
+            if (request.method === "POST" && request.body._tag === "Uint8Array") {
+              bodies.push(new TextDecoder().decode(request.body.body));
+              return HttpClientResponse.fromWeb(
+                request,
+                bodies.length === 1
+                  ? Response.json({}, { status: 503 })
+                  : Response.json({ result: "already_used" }),
+              );
+            }
             return HttpClientResponse.fromWeb(
               request,
-              bodies.length === 1
-                ? Response.json({}, { status: 503 })
-                : Response.json({ result: "already_used" }),
+              Response.json({
+                cedar_ember: {
+                  eligible: true,
+                  next_grant_id: "grant_a",
+                  grants: [grant({ ends_at: expiresAt, resets_left: 2 })],
+                },
+              }),
             );
-          }
-          return HttpClientResponse.fromWeb(
-            request,
-            Response.json({
-              cedar_ember: {
-                eligible: true,
-                next_grant_id: "grant_a",
-                grants: [grant({ ends_at: expiresAt, resets_left: 2 })],
-              },
-            }),
-          );
-        }),
-      );
-      const attempt = redeem(
-        login.configDir,
-        (requestId) =>
-          ClaudeResetCredits.consumeClaudeResetCredit({
-            ...login,
-            grantId: "grant_a",
-            requestId,
-            version: "2.1.0",
-            automatic: {
-              creditId: "grant_a",
-              expiresAt,
-              email: loginIdentity.emailAddress,
-              workspaceId: loginIdentity.organizationUuid,
-              canRedeem: Effect.succeed(true),
-            },
           }),
-        ClaudeResetCredits.isSettledClaudeResetCreditFailure,
-        "grant_a",
-        true,
-      ).pipe(
-        Effect.provideService(HostProcess.Platform, "linux"),
-        Effect.provideService(HttpClient.HttpClient, client),
-        Effect.result,
-      );
-      expect((yield* attempt)._tag).toBe("Failure");
-      yield* fs.writeFileString(credentialFile, "invalid json");
-      expect((yield* attempt)._tag).toBe("Failure");
-      expect(bodies).toHaveLength(1);
-      yield* fs.writeFileString(credentialFile, loginCredentials);
-      expect(yield* attempt).toMatchObject({ success: "alreadyRedeemed" });
-      expect(bodies).toEqual([bodies[0], bodies[0]]);
-    }).pipe(Effect.provide(ResetCreditCoordinator.layerTest)),
+        );
+        const attempt = redeem(
+          login.configDir,
+          (requestId) =>
+            ClaudeResetCredits.consumeClaudeResetCredit({
+              ...login,
+              grantId: "grant_a",
+              requestId,
+              version: "2.1.0",
+              automatic: automatic
+                ? {
+                    creditId: "grant_a",
+                    expiresAt,
+                    email: loginIdentity.emailAddress,
+                    workspaceId: loginIdentity.organizationUuid,
+                    canRedeem: Effect.succeed(true),
+                  }
+                : undefined,
+            }),
+          ClaudeResetCredits.isSettledClaudeResetCreditFailure,
+          "grant_a",
+          automatic,
+        ).pipe(
+          Effect.provideService(HostProcess.Platform, "linux"),
+          Effect.provideService(HttpClient.HttpClient, client),
+          Effect.result,
+        );
+        expect((yield* attempt)._tag).toBe("Failure");
+        yield* fs.writeFileString(credentialFile, "invalid json");
+        expect((yield* attempt)._tag).toBe("Failure");
+        expect(bodies).toHaveLength(1);
+        yield* fs.writeFileString(credentialFile, loginCredentials);
+        expect(yield* attempt).toMatchObject({ success: "alreadyRedeemed" });
+        expect(bodies).toEqual([bodies[0], bodies[0]]);
+      }).pipe(Effect.provide(ResetCreditCoordinator.layerTest)),
   );
   it.effect("claims the grant for the organization", () =>
     Effect.gen(function* () {

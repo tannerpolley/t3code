@@ -80,6 +80,25 @@ describe("ResetCreditCoordinator", () => {
     }).pipe(Effect.provide(ResetCreditCoordinator.layerTest)),
   );
 
+  it.effect("keeps an automatic retry pinned and uses new IDs for intentional manual claims", () =>
+    Effect.gen(function* () {
+      const { redeem } = yield* ResetCreditCoordinator.ResetCreditCoordinator;
+      const attempts: string[] = [];
+      const consume = (key: string) =>
+        Effect.sync(() => {
+          attempts.push(key);
+          return "reset" as const;
+        });
+      yield* redeem("acct", consume, undefined, "grant", true);
+      yield* redeem("acct", () => Effect.void, undefined, "grant", true);
+      yield* redeem("acct", consume, undefined, "grant");
+      yield* redeem("acct", consume, undefined, "grant", true);
+      yield* redeem("acct", consume, undefined, "grant");
+      assert.strictEqual(attempts[0], attempts[2]);
+      assert.strictEqual(new Set(attempts).size, 3);
+    }).pipe(Effect.provide(ResetCreditCoordinator.layerTest)),
+  );
+
   it.effect("serialises concurrent redemptions on the same account, not per caller", () =>
     Effect.gen(function* () {
       const { redeem } = yield* ResetCreditCoordinator.ResetCreditCoordinator;

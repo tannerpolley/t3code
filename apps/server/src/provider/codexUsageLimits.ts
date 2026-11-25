@@ -104,14 +104,15 @@ export function codexResetCreditsToContract(
   if (!summary) return undefined;
   const next = (summary.credits ?? [])
     .filter((credit) => credit.status === "available")
-    .flatMap((credit) => {
-      const expiresAt = isoFromEpochSeconds(credit.expiresAt);
-      return expiresAt ? [{ expiresAt, id: credit.id?.trim() }] : [];
-    })
-    .sort((a, b) => a.expiresAt.localeCompare(b.expiresAt))[0];
+    .map((credit) => ({ expiresAt: isoFromEpochSeconds(credit.expiresAt), id: credit.id?.trim() }))
+    .sort(
+      (a, b) =>
+        (Date.parse(a.expiresAt ?? "") || Number.MAX_SAFE_INTEGER) -
+        (Date.parse(b.expiresAt ?? "") || Number.MAX_SAFE_INTEGER),
+    )[0];
   return {
     availableCount: Math.max(0, summary.availableCount),
-    ...(next ? { nextExpiresAt: next.expiresAt } : {}),
+    ...(next?.expiresAt ? { nextExpiresAt: next.expiresAt } : {}),
     ...(next?.id ? { nextCreditId: next.id } : {}),
   };
 }

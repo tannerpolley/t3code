@@ -373,7 +373,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
                   ? credits?.nextCreditId
                   : credits?.options?.find((option) => option.creditId === creditId)?.creditId;
               if (automatic && grantId !== creditId) return undefined;
-              if (!grantId || !current.version) return "noCredit" as const;
+              if (!grantId || !current.version) return undefined;
               return yield* ClaudeResetCredits.consumeClaudeResetCredit({
                 configDir,
                 accountConfigPath,
@@ -426,7 +426,11 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
                 ),
               ),
         ),
-      Effect.map((outcome) => outcome ?? ("nothingToReset" as const)),
+      (consume, selection) =>
+        Effect.map(
+          consume,
+          (outcome) => outcome ?? (typeof selection === "object" ? "nothingToReset" : "noCredit"),
+        ),
     );
 
     return {

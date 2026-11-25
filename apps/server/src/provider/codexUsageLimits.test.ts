@@ -36,6 +36,18 @@ describe("codexRateLimitsToLimits", () => {
       nextExpiresAt: "2026-07-14T03:33:20.000Z",
     });
   });
+
+  it("keeps the ID of an available non-expiring grant for manual confirmation", () => {
+    const limits = codexRateLimitsToLimits({
+      checkedAt,
+      snapshot: {},
+      resetCredits: {
+        availableCount: 1,
+        credits: [{ id: "never-expires", status: "available", expiresAt: null }],
+      },
+    });
+    expect(limits.resetCredits).toEqual({ availableCount: 1, nextCreditId: "never-expires" });
+  });
   it("shows an Enterprise monthly credit allowance in reads and notifications without a duration", () => {
     const snapshot = {
       limitId: "codex",

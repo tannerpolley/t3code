@@ -9,9 +9,14 @@ import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
 import * as Semaphore from "effect/Semaphore";
 
+interface GrantRedemptionState {
+  pending?: string | undefined;
+  automatic?: string | undefined;
+}
+
 interface AccountRedemptionState {
   readonly lock: Semaphore.Semaphore;
-  readonly pendingKeys: Map<string | undefined, { id: string; retained: boolean }>;
+  readonly keys: Map<string | undefined, GrantRedemptionState>;
 }
 
 export class ResetCreditCoordinator extends Context.Service<
@@ -23,7 +28,7 @@ export class ResetCreditCoordinator extends Context.Service<
       consume: (idempotencyKey: string) => Effect.Effect<A, E, R>,
       isSettled?: (error: E) => boolean,
       creditId?: string,
-      retainKey?: boolean,
+      automatic?: boolean,
     ) => Effect.Effect<A, E | PlatformError.PlatformError, R>;
   }
 >()("t3/provider/resetCreditCoordinator") {}
@@ -39,7 +44,7 @@ export const make = Effect.gen(function* () {
     if (existing) return existing;
     const candidate: AccountRedemptionState = {
       lock: yield* Semaphore.make(1),
-      pendingKeys: new Map(),
+      keys: new Map(),
     };
     return yield* Ref.modify(statesRef, (states) => {
       const current = states.get(accountKey);
@@ -52,23 +57,27 @@ export const make = Effect.gen(function* () {
 
   const redeem: ResetCreditCoordinator["Service"]["redeem"] = Effect.fn(
     "resetCreditCoordinator.redeem",
-  )(function* (accountKey, consume, isSettled, creditId, retainKey) {
+  )(function* (accountKey, consume, isSettled, creditId, automatic) {
     const state = yield* stateFor(accountKey);
     return yield* state.lock.withPermits(1)(
       Effect.gen(function* () {
-        const existing = state.pendingKeys.get(creditId);
-        const idempotencyKey = existing?.id ?? (yield* random.uuidV4());
-        const retained = retainKey === true || existing?.retained === true;
-        state.pendingKeys.set(creditId, { id: idempotencyKey, retained });
+        const keys = state.keys.get(creditId) ?? {};
+        const previous = keys.pending;
+        const idempotencyKey =
+          previous ?? (automatic ? keys.automatic : undefined) ?? (yield* random.uuidV4());
+        keys.pending = idempotencyKey;
+        // A confirmed automatic claim stays pinned while future manual claims get their own IDs.
+        if (automatic) keys.automatic ??= idempotencyKey;
+        state.keys.set(creditId, keys);
         const outcome = yield* consume(idempotencyKey).pipe(
           Effect.tapError((error) =>
             Effect.sync(() => {
-              if (!retained && isSettled?.(error)) state.pendingKeys.delete(creditId);
+              if (isSettled?.(error)) keys.pending = previous;
             }),
           ),
         );
-        // Automatic retries use the same request ID even while the provider still lists a claimed grant.
-        if (!retained && outcome !== undefined) state.pendingKeys.delete(creditId);
+        keys.pending = outcome === undefined ? previous : undefined;
+        if (keys.pending === undefined && keys.automatic === undefined) state.keys.delete(creditId);
         return outcome;
       }),
     );
