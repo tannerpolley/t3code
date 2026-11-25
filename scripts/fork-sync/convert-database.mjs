@@ -457,7 +457,7 @@ async function run(db, mode, settingsPath) {
   NodeAssert.equal(scalar(db, `SELECT max(sequence) FROM ${events}`), eventHead);
   NodeAssert.equal(scalar(db, "SELECT seq FROM sqlite_sequence WHERE name = ?", events), allocated);
   NodeAssert.deepEqual(fingerprints(db, sample), expected);
-  const { verifyCandidateThreads } = await import("./verify-candidate-threads.ts");
+  const { verifyCandidateThreads } = await import("./verify-candidate-threads.mjs");
   await verifyCandidateThreads(db, sample);
   return sample.length;
 }

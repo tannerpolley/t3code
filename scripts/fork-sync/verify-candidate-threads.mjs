@@ -1,4 +1,3 @@
-import type * as NodeSqlite from "node:sqlite";
 import { ThreadId } from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
@@ -6,35 +5,29 @@ import * as Logger from "effect/Logger";
 import * as Stream from "effect/Stream";
 import * as Reactivity from "effect/reactivity/Reactivity";
 import * as SqlClient from "effect/sql/SqlClient";
-import type * as SqlConnection from "effect/sql/SqlConnection";
 import * as SqlError from "effect/sql/SqlError";
 import * as Statement from "effect/sql/Statement";
 import * as ProjectionStore from "../../apps/server/src/orchestration-v2/ProjectionStore.ts";
 import * as Migrations from "../../apps/server/src/persistence/Migrations.ts";
 
-export async function verifyCandidateThreads(db: NodeSqlite.DatabaseSync, ids: readonly string[]) {
+export async function verifyCandidateThreads(db, ids) {
   // A second connection cannot see the uncommitted conversion. Run the actual startup
   // migrations and snapshot readers on this connection, then undo the migration preview.
-  const execute = (sql: string, params: ReadonlyArray<unknown>, values = false) =>
+  const execute = (sql, params, values = false) =>
     Effect.try({
       try: () => {
         const statement = db.prepare(sql);
-        const bindings = params as readonly NodeSqlite.SQLInputValue[];
         if (statement.columns().length) {
           statement.setReturnArrays(values);
-          return statement.all(...bindings);
+          return statement.all(...params);
         }
-        statement.run(...bindings);
+        statement.run(...params);
         return [];
       },
       catch: (cause) => new SqlError.SqlError({ reason: new SqlError.UnknownError({ cause }) }),
     });
-  const executeValues = (sql: string, params: ReadonlyArray<unknown>) =>
-    execute(sql, params, true) as Effect.Effect<
-      ReadonlyArray<ReadonlyArray<unknown>>,
-      SqlError.SqlError
-    >;
-  const connection: SqlConnection.Connection = {
+  const executeValues = (sql, params) => execute(sql, params, true);
+  const connection = {
     execute: (sql, params) => execute(sql, params),
     executeUnprepared: (sql, params) => execute(sql, params),
     executeRaw: (sql, params) => execute(sql, params),
