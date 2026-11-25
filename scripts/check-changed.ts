@@ -632,7 +632,7 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
   if (results.some((result) => result.outcome !== "pass")) return false;
   if ((yield* inputKey) !== key) {
     yield* Console.log("  pass not cached: files changed during the run");
-    return !input.fullValidation;
+    return true;
   }
   // Write then rename, so a concurrent run never reads half a file.
   const temp = `${cachePath}.${process.pid}`;
