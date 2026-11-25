@@ -84,13 +84,6 @@ describe("fresh-thread repository handoff", () => {
     title: `Issue ${number}`,
     url: `https://github.com/tannerpolley/t3code/issues/${number}`,
   });
-  const plan = {
-    number: 1,
-    modelRoleId: "implementor-complex",
-
-    status: "running" as const,
-    fingerprint: "",
-  };
   const config = {
     ...reference,
     repositoryId: "repo:handoff",
@@ -98,34 +91,12 @@ describe("fresh-thread repository handoff", () => {
 
     launchCommandId: CommandId.make("handoff-root-create"),
     revision: 1,
-    paused: false,
     workerLimit: 4,
     readOnlyLimit: 4,
     publishStatusComments: true,
     publishCloseoutComments: true,
-    milestones: [plan],
     suspendedIssues: [],
   };
-  const summary = (number: number) => ({
-    ...linked(number),
-    state: "open" as const,
-    stateReason: null,
-    author: null,
-    assignees: [],
-    labels: [],
-    milestone: {
-      number: 1,
-      title: "First milestone",
-      state: "open" as const,
-      dueAt: null,
-      url: "https://github.com/tannerpolley/t3code/milestone/1",
-      openCount: 3,
-      closedCount: 0,
-    },
-    createdAt: "2026-10-05T00:00:00Z",
-    updatedAt: "2026-10-05T00:00:00Z",
-    commentCount: 0,
-  });
   const provider: ServerProvider = {
     instanceId: modelSelection.instanceId,
     driver: ProviderDriverKind.make("codex"),
@@ -144,7 +115,6 @@ describe("fresh-thread repository handoff", () => {
     options: {
       git?: Partial<GitWorkflow.GitWorkflowService["Service"]>;
       recovery?: boolean;
-      inventoryComplete?: () => boolean;
       providerAvailable?: () => boolean;
       continuation?: boolean;
       handoffWake?: boolean;
@@ -186,7 +156,8 @@ describe("fresh-thread repository handoff", () => {
             repositoryId: options.repositoryId?.() ?? config.repositoryId,
           },
           state: options.issueState?.(input.number) ?? "open",
-          milestoneNumber: 1,
+          planningStatus: "Todo",
+          labels: [],
           parent: input.number === 2 ? linked(1) : null,
           subIssues: input.number === 1 ? [linked(2)] : [],
           blockedBy: [],
@@ -212,11 +183,7 @@ describe("fresh-thread repository handoff", () => {
           workRead({ ...input, number }).pipe(Effect.map((read) => [number, read] as const)),
         ).pipe(Effect.map((entries) => new Map(entries))),
       capabilities: () => Effect.succeed(ISSUE_HOSTS.github!.capabilities),
-      milestoneIssues: () =>
-        Effect.succeed({
-          issues: (options.inventoryIssues?.() ?? [1, 2, 9]).map(summary),
-          complete: options.inventoryComplete?.() ?? true,
-        }),
+      repositoryIssuesPage: () => Effect.succeed({ items: [], nextPage: null }),
     });
     const handoffAdapter = {
       ...adapter,
@@ -363,7 +330,7 @@ describe("fresh-thread repository handoff", () => {
           threadId: rootId,
           commandId: CommandId.make(`idle:${type}:pause`),
           expectedRevision: config.revision,
-          orchestration: { ...config, paused: true },
+          orchestration: { ...config },
         });
         const result = yield* threads.dispatch({
           type,
@@ -409,7 +376,7 @@ describe("fresh-thread repository handoff", () => {
           runtimeMode: "full-access",
           interactionMode: "default",
           workspaceStrategy: { type: "root" },
-          repositoryOrchestration: { ...config, launchCommandId: commandId, milestones: [] },
+          repositoryOrchestration: { ...config, launchCommandId: commandId },
           createdBy: "user",
           creationSource: "web",
         });
@@ -506,15 +473,12 @@ describe("fresh-thread repository handoff", () => {
         reason: "End orchestration",
         clientRequestId: CommandId.make("end:cancel-request"),
       });
-      yield* service.setPaused({
-        ...reference,
-        paused: true,
-        clientRequestId: CommandId.make("end:pause"),
-      });
-      yield* service.queueIssue({
-        ...reference,
-        number: 9,
-        clientRequestId: CommandId.make("end:queue"),
+      yield* threads.dispatch({
+        type: "issue.queue.change",
+        commandId: CommandId.make("end:queue"),
+        threadId: rootId,
+        issue: linked(9),
+        queued: true,
       });
       yield* refuse("end:queued", /queued issues/);
       yield* service.unqueueIssue({
@@ -540,7 +504,7 @@ describe("fresh-thread repository handoff", () => {
         threadId: rootId,
         commandId: CommandId.make("end:admit-worker"),
         expectedRevision: current.revision,
-        orchestration: { ...current, paused: false, milestones: [] },
+        orchestration: { ...current },
       });
       yield* service.start({ ...input, number: 10, clientRequestId: CommandId.make("end:worker") });
       yield* refuse("end:live-worker", /active issue workers/);
@@ -689,7 +653,6 @@ describe("fresh-thread repository handoff", () => {
         if (outcome === "verified") assert.isNotNull(source.archivedAt);
         else {
           assert.isNull(source.archivedAt);
-          assert.isFalse(result.orchestration!.paused);
         }
       }).pipe(Effect.provide(fixture())),
   );
@@ -730,11 +693,6 @@ describe("fresh-thread repository handoff", () => {
       });
       const watch = (yield* threads.getThreadShell(rootId))?.pullRequests?.[0]?.watch;
       assert.isDefined(watch);
-      yield* service.setPaused({
-        ...reference,
-        paused: true,
-        clientRequestId: CommandId.make("auto:pause-issue-admissions"),
-      });
       const send = (id: string) =>
         threads.dispatch({
           type: "message.dispatch",
@@ -989,11 +947,6 @@ describe("fresh-thread repository handoff", () => {
       });
       yield* service.reconcile(rootId);
       assert.lengthOf((yield* threads.getThreadRecords(nextId, ["runs"])).runs, 2);
-      yield* service.setPaused({
-        ...reference,
-        paused: false,
-        clientRequestId: CommandId.make("auto:resume-issue-admissions"),
-      });
       const start = yield* threads
         .dispatch({
           type: "issue.work.start",
@@ -1006,7 +959,7 @@ describe("fresh-thread repository handoff", () => {
         })
         .pipe(Effect.result);
       assert.equal(start._tag, "Failure");
-      if (start._tag === "Failure") assert.include(start.failure.message, "verifying a handoff");
+      if (start._tag === "Failure") assert.include(start.failure.message, "transferring ownership");
       const queue = yield* store.queue(config);
       assert.equal(queue[0]?.issue.number, 9);
       assert.isNull((yield* threads.getThreadShell(rootId))?.activeRunId);
@@ -1014,7 +967,6 @@ describe("fresh-thread repository handoff", () => {
       yield* service.reconcile(rootId);
 
       assert.equal((yield* store.repositoryOwnerByRef(reference))?.rootThreadId, nextId);
-      assert.isFalse((yield* store.configuration(nextId))?.paused);
       const old = yield* threads.getThreadShell(rootId);
       assert.isNotNull(old?.archivedAt);
       assert.equal(old?.handoffToThreadId, nextId);
@@ -1113,7 +1065,7 @@ describe("fresh-thread repository handoff", () => {
           threadId: rootId,
           commandId: CommandId.make("worktree-policy"),
           expectedRevision: 1,
-          orchestration: { ...config, milestones: [] },
+          orchestration: { ...config },
         });
         yield* threads.sendToThread({
           projectId,
@@ -1197,7 +1149,7 @@ describe("fresh-thread repository handoff", () => {
     },
   );
 
-  it.effect.each(["panel", "milestone"] as const)(
+  it.effect.each(["panel"] as const)(
     "%s creates a worktree child without queuing the idle root, then delivers completion to it",
     (path) => {
       const issueReads: string[] = [];
@@ -1215,7 +1167,7 @@ describe("fresh-thread repository handoff", () => {
           threadId: rootId,
           commandId: CommandId.make("shared-worktree-policy"),
           expectedRevision: 1,
-          orchestration: { ...config, milestones: [] },
+          orchestration: { ...config },
         });
         const input = {
           ...reference,
@@ -1227,7 +1179,7 @@ describe("fresh-thread repository handoff", () => {
         if (path === "panel") {
           yield* service.start({ ...input, number: 9 });
           assert.isTrue(issueReads.every((read) => read === "relationships:9"));
-        } else yield* service.workMilestone({ ...input, milestoneNumber: 1 });
+        }
         const childId = (yield* store.issueOwner(linked(9)))!;
         yield* tracker.stream(childId).pipe(
           Stream.filter((snapshot) => snapshot?.phase === "done"),
@@ -1244,8 +1196,6 @@ describe("fresh-thread repository handoff", () => {
         assert.lengthOf(root.messages, 0);
         assert.lengthOf(root.runs, 0);
         assert.lengthOf(root.subagents, 1);
-        if (path === "milestone")
-          assert.equal(root.thread.repositoryOrchestration!.milestones[0]!.status, "running");
         const sink = yield* EventSink.EventSinkV2;
         const beforeCompletion = yield* sink.latestSequence();
         yield* finish(childId, `shared-start:${path}:done`);
@@ -1334,7 +1284,10 @@ describe("fresh-thread repository handoff", () => {
           clientRequestId: CommandId.make("ancestor-refresh"),
         })
         .pipe(Effect.flip);
-      assert.equal(error.message, "Only open issues can start work.");
+      assert.equal(
+        error.message,
+        "Only unheld Todo issues with complete, unblocked relationships can start.",
+      );
       assert.isNotNull(yield* store.issueOwner(linked(1)));
       assert.isNull(yield* store.latestRequest(linked(2)));
       assert.deepEqual(
@@ -1423,84 +1376,6 @@ describe("fresh-thread repository handoff", () => {
       ),
     );
   });
-
-  it.effect(
-    "a permanently rejected sub-issue continuation still runs repository and milestone reconciliation",
-    () => {
-      let rejectNext = false;
-      return Effect.gen(function* () {
-        const service = yield* IssueWorkService.IssueWorkService;
-        const threads = yield* ThreadManagement.ThreadManagementService;
-        const store = yield* IssueWorkStore.IssueWorkStore;
-        const sink = yield* EventSink.EventSinkV2;
-        yield* createRoot;
-        const parent = (yield* service.start({
-          ...reference,
-          number: 1,
-          projectId,
-          modelRoleId: "implementor-complex",
-          clientRequestId: CommandId.make("continuation-failure:parent"),
-        })).issueThreadId!;
-        yield* (yield* WorktreeSetupTracker.WorktreeSetupTracker).stream(parent).pipe(
-          Stream.filter((snapshot) => snapshot?.phase === "done"),
-          Stream.runHead,
-        );
-        const now = yield* DateTime.now;
-        const requestId = CommandId.make("continuation-failure:request");
-        yield* sink.write({
-          events: [
-            {
-              id: EventId.make("continuation-failure:pending"),
-              type: "issue.work.requested",
-              threadId: rootId,
-              occurredAt: now,
-              payload: {
-                requestId,
-                issue: linked(2),
-                parent: linked(1),
-                rootThreadId: rootId,
-                issueThreadId: null,
-                attemptKey: "first",
-                modelSelection,
-              },
-            },
-          ],
-        });
-        rejectNext = true;
-        yield* service.reconcile(rootId);
-        assert.isNull(yield* store.currentIssueOwner(linked(2)));
-        assert.isNotNull(yield* store.currentIssueOwner(linked(9)));
-        assert.equal((yield* store.configuration(rootId))!.milestones[0]!.status, "running");
-        assert.isTrue(
-          yield* threads.hasReceipt(CommandId.make(`issue-child-start:${requestId}:${parent}`)),
-        );
-        // The rejected receipt repeats on the next pass without stalling the rest of it.
-        yield* service.reconcile(rootId);
-        assert.isNotNull(yield* store.currentIssueOwner(linked(9)));
-      }).pipe(
-        Effect.provide(
-          fixture({
-            recovery: true,
-            inventoryIssues: () => [9],
-            beforeCapabilities: () =>
-              rejectNext
-                ? Effect.sync(() => {
-                    rejectNext = false;
-                  }).pipe(
-                    Effect.andThen(
-                      Effect.fail(
-                        new ProviderAdapter.ProviderAdapterCapabilitiesError({
-                          driver: adapter.driver,
-                        }),
-                      ),
-                    ),
-                  )
-                : Effect.void,
-          }),
-        ),
-      );
-    },
-  );
 
   it.effect.each(["delegate_task", "t3_thread_send"] as const)(
     "resumes a finished retained worker through %s after repository handoff",
@@ -1764,73 +1639,6 @@ describe("fresh-thread repository handoff", () => {
   );
 
   it.effect(
-    "keeps invalid-request on rejected start replay so milestone reconciliation awaits the owner",
-    () => {
-      return Effect.gen(function* () {
-        const service = yield* IssueWorkService.IssueWorkService;
-        const store = yield* IssueWorkStore.IssueWorkStore;
-        const threads = yield* ThreadManagement.ThreadManagementService;
-        yield* createRoot;
-        const requestId = CommandId.make(`milestone-issue:${rootId}:1:issue:9:first`);
-        yield* threads.dispatch({
-          type: "repository.work.update",
-          threadId: rootId,
-          commandId: CommandId.make("reject-replay:pause"),
-          expectedRevision: 1,
-          orchestration: { ...config, paused: true },
-        });
-        const initial = yield* service
-          .startWorker({
-            type: "issue.work.start",
-            commandId: requestId,
-            threadId: rootId,
-            issue: linked(9),
-            workerModelSelection: modelSelection,
-            createdBy: "agent",
-            creationSource: "server",
-          })
-          .pipe(Effect.result);
-        assert.equal(initial._tag, "Failure");
-        if (initial._tag === "Failure")
-          assert.equal(
-            initial.failure._tag === "IssueWorkError" ? initial.failure.code : undefined,
-            "invalid-request",
-          );
-        yield* threads.dispatch({
-          type: "repository.work.update",
-          threadId: rootId,
-          commandId: CommandId.make("reject-replay:resume"),
-          expectedRevision: 2,
-          orchestration: { ...config, revision: 2, paused: false },
-        });
-        const replay = yield* service
-          .start({
-            ...reference,
-            number: 9,
-            projectId,
-            modelRoleId: "implementor-complex",
-            clientRequestId: requestId,
-          })
-          .pipe(Effect.result);
-        assert.equal(replay._tag, "Failure");
-        if (replay._tag === "Failure") assert.equal(replay.failure.code, "invalid-request");
-        yield* service.reconcile(rootId);
-        assert.equal(
-          (yield* store.configuration(rootId))!.milestones[0]!.status,
-          "awaiting_approval",
-        );
-      }).pipe(
-        Effect.provide(
-          fixture({
-            recovery: true,
-            inventoryIssues: () => [9],
-          }),
-        ),
-      );
-    },
-  );
-
-  it.effect(
     "recovers a committed runless completion after restart before its wake was sent",
     () => {
       let receiver:
@@ -2026,49 +1834,6 @@ describe("fresh-thread repository handoff", () => {
     },
   );
 
-  it.effect("keeps internal dispatch failures unreadable during milestone reconciliation", () =>
-    Effect.gen(function* () {
-      const service = yield* IssueWorkService.IssueWorkService;
-      yield* createRoot;
-      const failed = yield* service
-        .start({
-          ...reference,
-          number: 9,
-          projectId,
-          modelRoleId: "implementor-complex",
-          clientRequestId: CommandId.make("store-failure:start"),
-        })
-        .pipe(Effect.result);
-      assert.equal(failed._tag, "Failure");
-      if (failed._tag === "Failure") assert.equal(failed.failure.code, "orchestration-error");
-      yield* service.reconcile(rootId);
-      assert.equal(
-        (yield* service.repositoryStatus(reference)).orchestration!.milestones[0]!.status,
-        "unreadable",
-      );
-    }).pipe(
-      Effect.provide(
-        fixture({
-          recovery: true,
-          inventoryIssues: () => [9],
-          wrapThreads: (threads) => ({
-            ...threads,
-            dispatch: (command) =>
-              command.type === "issue.work.start"
-                ? Effect.fail(
-                    new Orchestrator.OrchestratorDispatchError({
-                      commandId: command.commandId,
-                      commandType: command.type,
-                      cause: new Error("Issue work store is unavailable"),
-                    }),
-                  )
-                : threads.dispatch(command),
-          }),
-        }),
-      ),
-    ),
-  );
-
   const createOriginalLead = Effect.gen(function* () {
     const threads = yield* ThreadManagement.ThreadManagementService;
     yield* threads.dispatch({
@@ -2121,7 +1886,7 @@ describe("fresh-thread repository handoff", () => {
       threadId: rootId,
       commandId: CommandId.make("recovery:no-plan"),
       expectedRevision: 1,
-      orchestration: { ...config, milestones: [] },
+      orchestration: { ...config },
     });
   });
   const cancelInput = {
@@ -2137,11 +1902,82 @@ describe("fresh-thread repository handoff", () => {
     repositoryId: config.repositoryId,
     projectId,
     expectedRootThreadId: rootId,
-    expectedRevision: 3,
+    expectedRevision: 2,
     targetThreadId: originalLeadId,
     reason: "Restore the explicitly selected original lead",
     clientRequestId: CommandId.make("original:restore"),
   };
+
+  it.effect("drains a busy repository root before restoring its owner", () =>
+    Effect.gen(function* () {
+      const service = yield* IssueWorkService.IssueWorkService;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const store = yield* IssueWorkStore.IssueWorkStore;
+      const targetId = ThreadId.make("restore-drain-target");
+      yield* createRoot;
+      yield* threads.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("restore-drain-target:create"),
+        threadId: targetId,
+        projectId,
+        title: "Existing orchestrator",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+        createdBy: "user",
+        creationSource: "web",
+      });
+      yield* threads.dispatch({
+        type: "message.dispatch",
+        commandId: CommandId.make("restore-drain:active-turn"),
+        messageId: MessageId.make("restore-drain:active-turn"),
+        threadId: rootId,
+        text: "Finish already admitted work",
+        attachments: [],
+        dispatchMode: { type: "start_immediately" },
+        createdBy: "user",
+        creationSource: "web",
+      });
+      const status = yield* service.restoreRoot({
+        ...reference,
+        repositoryId: config.repositoryId,
+        projectId,
+        expectedRootThreadId: rootId,
+        expectedRevision: 1,
+        targetThreadId: targetId,
+        reason: "Restore the selected orchestrator after admitted work drains",
+        clientRequestId: CommandId.make("restore-drain:request"),
+      });
+      assert.equal(status.rootThreadId, rootId);
+      assert.equal(status.phase, "draining");
+      assert.equal(status.orchestration?.restore?.targetThreadId, targetId);
+      assert.isNull((yield* threads.getThreadShell(rootId))!.archivedAt);
+      assert.isTrue((yield* (yield* ProjectionReplay.ProjectionReplay).rebuild).valid);
+      assert.equal((yield* service.repositoryStatus(reference)).phase, "draining");
+      assert.equal(
+        (yield* service
+          .start({
+            ...reference,
+            number: 9,
+            projectId,
+            modelRoleId: "implementor-complex",
+            clientRequestId: CommandId.make("restore-drain:no-new-issue-start"),
+          })
+          .pipe(Effect.result))._tag,
+        "Failure",
+      );
+      yield* finish(rootId, "restore-drain:source-finished");
+      const restored = yield* service
+        .reconcile(rootId)
+        .pipe(Effect.andThen(service.repositoryStatus(reference)));
+      assert.equal(restored.rootThreadId, targetId);
+      assert.equal(restored.orchestration?.revision, 3);
+      assert.equal((yield* store.configuration(rootId))?.retiredToThreadId, targetId);
+    }).pipe(Effect.provide(fixture({ recovery: true }))),
+  );
+
   const legacyRequest = (requestId: CommandId) =>
     Effect.gen(function* () {
       const sink = yield* EventSink.EventSinkV2;
@@ -2377,7 +2213,7 @@ describe("fresh-thread repository handoff", () => {
   );
 
   it.effect(
-    "cancels a stopped paused root request, restores the existing lead and child, archives normally, and starts through that lead",
+    "cancels a stopped root request, restores the existing lead and child, archives normally, and starts through that lead",
     () =>
       Effect.gen(function* () {
         const service = yield* IssueWorkService.IssueWorkService;
@@ -2406,11 +2242,6 @@ describe("fresh-thread repository handoff", () => {
         yield* createRecoveryRoot;
         yield* startWrongRoot;
         yield* legacyRequest(CommandId.make("wrong-root:duplicate-start"));
-        yield* service.setPaused({
-          ...reference,
-          paused: true,
-          clientRequestId: CommandId.make("wrong:pause"),
-        });
         yield* threads.dispatch({
           type: "run.interrupt",
           threadId: rootId,
@@ -2464,7 +2295,7 @@ describe("fresh-thread repository handoff", () => {
         assert.isFalse(yield* store.hasUnclaimedRequests(rootId));
         assert.isFalse(yield* store.hasAttempt(linked(9), "first"));
         assert.lengthOf(yield* store.pendingRequests(rootId), 0);
-        assert.notInclude(yield* store.activeRoots(), rootId);
+        assert.include(yield* store.activeRoots(), rootId);
         assert.notInclude(
           (yield* store.recoveryInventory(config)).map((row) => row.detail).join("\n"),
           "#9",
@@ -2485,7 +2316,6 @@ describe("fresh-thread repository handoff", () => {
         );
         const restored = yield* service.restoreRoot(restoreInput);
         assert.equal(restored.rootThreadId, originalLeadId);
-        assert.isTrue(restored.orchestration!.paused);
         assert.equal(restored.orchestration!.revision, 4);
         assert.equal((yield* service.restoreRoot(restoreInput)).rootThreadId, originalLeadId);
         assert.equal(
@@ -2504,11 +2334,6 @@ describe("fresh-thread repository handoff", () => {
         assert.equal(childAfter.thread.lineage.parentThreadId, originalLeadId);
         yield* archive("wrong:final-archive");
         assert.isNotNull((yield* threads.getThreadShell(rootId))!.archivedAt);
-        yield* service.setPaused({
-          ...reference,
-          paused: false,
-          clientRequestId: CommandId.make("original:resume"),
-        });
         const started = yield* service.start({
           ...reference,
           number: 9,
@@ -2961,11 +2786,6 @@ describe("fresh-thread repository handoff", () => {
       yield* createLead(adopted);
       yield* createLead(successor);
       yield* service.restoreRoot(registerInput(adopted, "adopted:register"));
-      yield* service.setPaused({
-        ...reference,
-        paused: true,
-        clientRequestId: CommandId.make("adopted:pause"),
-      });
       const owner = (yield* store.repositoryOwner(config))!;
       yield* service.restoreRoot({
         ...restoreInput,
@@ -2975,113 +2795,14 @@ describe("fresh-thread repository handoff", () => {
         clientRequestId: CommandId.make("adopted:transfer"),
       });
       yield* (yield* EffectWorker.OrchestrationEffectWorkerV2).drain();
+      const transferred = yield* store.repositoryOwner(config);
+      assert.equal(transferred?.rootThreadId, successor);
+      assert.equal(transferred?.revision, owner.revision + 2);
       // Compaction drops the adopted lead's registration snapshot and keeps its retired one.
       yield* maintenance.pruneEventStore();
       assert.isTrue((yield* (yield* ProjectionReplay.ProjectionReplay).rebuild).valid);
-      const rebuilt = yield* store.repositoryOwner(config);
-      assert.equal(rebuilt?.rootThreadId, successor);
-      assert.equal(rebuilt?.revision, owner.revision + 1);
+      assert.deepEqual(yield* store.repositoryOwner(config), transferred);
       assert.equal((yield* store.configuration(adopted))!.retiredToThreadId, successor);
-    }).pipe(Effect.provide(fixture({ recovery: true }))),
-  );
-
-  it.effect("moves a paused root to its project's new repository record", () =>
-    Effect.gen(function* () {
-      const service = yield* IssueWorkService.IssueWorkService;
-      const threads = yield* ThreadManagement.ThreadManagementService;
-      const store = yield* IssueWorkStore.IssueWorkStore;
-      const movingRoot = ThreadId.make("moving-root");
-      const previous = {
-        ...config,
-        host: "git.example.com",
-        repositoryId: "repo:previous",
-        launchCommandId: CommandId.make("moving-root:create"),
-        revision: 4,
-        workerLimit: 3,
-        readOnlyLimit: 2,
-        publishStatusComments: false,
-        suspendedIssues: [{ id: "issue:7", reason: "Blocked" }],
-        handoffHistory: [
-          { threadId: ThreadId.make("earlier-root"), transferredAt: "2026-10-01T00:00:00.000Z" },
-        ],
-        usageSprint: {
-          providerInstanceId: modelSelection.instanceId,
-          windowId: "weekly",
-          usedPercent: 40,
-          resetsAt: "2026-12-01T00:00:00.000Z",
-          startedAt: "2026-10-02T00:00:00.000Z",
-        },
-        usageSprintHistory: [
-          {
-            providerInstanceId: modelSelection.instanceId,
-            startedAt: "2026-09-01T00:00:00.000Z",
-            endedAt: "2026-09-08T00:00:00.000Z",
-            reason: "reset" as const,
-            children: [],
-          },
-        ],
-      };
-      yield* threads.dispatch({
-        type: "thread.create",
-        commandId: previous.launchCommandId,
-        threadId: movingRoot,
-        projectId,
-        title: "Repository orchestrator",
-        modelSelection,
-        runtimeMode: "full-access",
-        interactionMode: "default",
-        branch: null,
-        worktreePath: null,
-        repositoryOrchestration: previous,
-        createdBy: "user",
-        creationSource: "web",
-      });
-      const unpaused = yield* service
-        .restoreRoot(registerInput(movingRoot, "move:unpaused"))
-        .pipe(Effect.result);
-      assert.equal(unpaused._tag, "Failure");
-      yield* service.setPaused({
-        host: previous.host,
-        repository: previous.repository,
-        paused: true,
-        clientRequestId: CommandId.make("move:pause"),
-      });
-      // The root calls the move from its own turn.
-      yield* threads.dispatch({
-        type: "message.dispatch",
-        threadId: movingRoot,
-        commandId: CommandId.make("move:busy"),
-        messageId: MessageId.make("move:busy"),
-        text: "Move to the new host",
-        attachments: [],
-        dispatchMode: { type: "start_immediately" },
-        createdBy: "user",
-        creationSource: "web",
-      });
-      yield* (yield* EffectWorker.OrchestrationEffectWorkerV2).drain();
-
-      yield* service.restoreRoot(registerInput(movingRoot, "move:register"));
-      assert.isNull(yield* store.repositoryOwner(previous));
-      const owner = yield* store.repositoryOwner(config);
-      assert.equal(owner?.rootThreadId, movingRoot);
-      assert.equal(owner?.revision, 6);
-      const moved = (yield* store.configuration(movingRoot))!;
-      assert.deepInclude(moved, {
-        host: config.host,
-        repository: config.repository,
-        repositoryId: config.repositoryId,
-        revision: 6,
-        paused: true,
-        workerLimit: 3,
-        readOnlyLimit: 2,
-        publishStatusComments: false,
-        milestones: [],
-        suspendedIssues: [],
-        handoffHistory: previous.handoffHistory,
-        usageSprintHistory: previous.usageSprintHistory,
-      });
-      assert.isUndefined(moved.usageSprint);
-      yield* (yield* EffectWorker.OrchestrationEffectWorkerV2).drain();
     }).pipe(Effect.provide(fixture({ recovery: true }))),
   );
 
@@ -3096,7 +2817,6 @@ describe("fresh-thread repository handoff", () => {
         const createRoot = (
           name: string,
           work: {
-            readonly milestones?: ReadonlyArray<typeof plan>;
             readonly suspendedIssues?: ReadonlyArray<{
               readonly id: string;
               readonly reason: string;
@@ -3110,7 +2830,6 @@ describe("fresh-thread repository handoff", () => {
               host: `${name}.example.com`,
               repositoryId: `repo:previous-${name}`,
               launchCommandId: CommandId.make(`unpaused-${name}-root:create`),
-              milestones: [],
               ...work,
             };
             yield* threads.dispatch({
@@ -3143,12 +2862,10 @@ describe("fresh-thread repository handoff", () => {
             assert.deepInclude((yield* store.configuration(threadId))!, {
               host,
               revision: 1,
-              paused: false,
             });
           });
         const recordedWork = {
           suspension: { suspendedIssues: [{ id: "issue:7", reason: "Blocked" }] },
-          plan: { milestones: [plan] },
         };
         for (const [name, work] of Object.entries(recordedWork)) {
           const { threadId, previous } = yield* createRoot(name, work);
@@ -3174,7 +2891,7 @@ describe("fresh-thread repository handoff", () => {
 
         const assigned = yield* assign(root, "assign:idle");
         assert.equal(assigned.rootThreadId, root);
-        assert.deepInclude(assigned.orchestration!, { paused: false, revision: 2 });
+        assert.equal(assigned.orchestration!.revision, 2);
         assert.isNull(yield* store.repositoryOwner(previous));
         yield* worker.drain();
       }).pipe(Effect.provide(fixture({ recovery: true }))),
@@ -3287,7 +3004,7 @@ describe("fresh-thread repository handoff", () => {
   );
 
   it.effect(
-    "rejects stale restore revisions, mismatched identities and unsafe previous-root work",
+    "rejects stale restore revisions and mismatched identities, then drains before restoring",
     () =>
       Effect.gen(function* () {
         const threads = yield* ThreadManagement.ThreadManagementService;
@@ -3296,15 +3013,10 @@ describe("fresh-thread repository handoff", () => {
         yield* createOriginalLead;
         yield* createRecoveryRoot;
         yield* startWrongRoot;
-        yield* service.setPaused({
-          ...reference,
-          paused: true,
-          clientRequestId: CommandId.make("unsafe:pause"),
-        });
         for (const input of [
           {
             ...restoreInput,
-            expectedRevision: 2,
+            expectedRevision: restoreInput.expectedRevision - 1,
             clientRequestId: CommandId.make("restore:stale"),
           },
           {
@@ -3317,45 +3029,24 @@ describe("fresh-thread repository handoff", () => {
             projectId: otherProjectId,
             clientRequestId: CommandId.make("restore:wrong-project"),
           },
-          { ...restoreInput, clientRequestId: CommandId.make("restore:unfinished-root") },
         ])
           assert.equal((yield* service.restoreRoot(input).pipe(Effect.result))._tag, "Failure");
         yield* service.cancelRequest(cancelInput);
-        // Cancellation is only a request transition. It must not interrupt an active lead.
+        const pending = yield* service.restoreRoot({
+          ...restoreInput,
+          clientRequestId: CommandId.make("restore:busy-root"),
+        });
+        assert.equal(pending.rootThreadId, rootId);
+        assert.equal(pending.phase, "draining");
         assert.isNotNull((yield* threads.getThreadShell(rootId))!.activeRunId);
-        const run = (yield* threads.getThreadRecords(rootId, ["runs"])).runs.at(-1)!;
-        assert.equal(
-          (yield* threads
-            .dispatch({
-              type: "delegated_task.request",
-              commandId: CommandId.make("cancelled:late-claim"),
-              parentThreadId: rootId,
-              parentRunId: run.id,
-              parentNodeId: run.rootNodeId!,
-              issue: linked(9),
-              task: "Attempt to claim cancelled work",
-              modelSelection,
-              runtimeMode: "full-access",
-              interactionMode: "default",
-              createdBy: "agent",
-              creationSource: "mcp",
-            })
-            .pipe(Effect.result))._tag,
-          "Failure",
-        );
         assert.isNull(yield* store.issueOwner(linked(9)));
+        yield* finish(rootId, "restore:busy-root-finished");
+        yield* service.reconcile(rootId);
+        assert.equal((yield* store.repositoryOwner(config))!.rootThreadId, originalLeadId);
         assert.equal(
-          (yield* service
-            .restoreRoot({
-              ...restoreInput,
-              clientRequestId: CommandId.make("restore:active-root"),
-            })
-            .pipe(Effect.result))._tag,
-          "Failure",
-        );
-        assert.equal((yield* store.repositoryOwner(config))!.rootThreadId, rootId);
-        assert.isUndefined(
-          (yield* threads.getThreadRecords(originalLeadId, [])).thread.repositoryOrchestration,
+          (yield* threads.getThreadRecords(originalLeadId, [])).thread.repositoryOrchestration!
+            .revision,
+          4,
         );
       }).pipe(Effect.provide(fixture({ recovery: true }))),
   );
@@ -3394,8 +3085,7 @@ describe("fresh-thread repository handoff", () => {
         );
         const firstThread = yield* threads.getThreadRecords(first.rootThreadId!, ["messages"]);
         assert.include(firstThread.messages[0]!.text, "Server recovery inventory:");
-        assert.include(firstThread.messages[0]!.text, "Milestones:");
-        assert.include(firstThread.messages[0]!.text, "#9 Issue 9");
+        assert.include(firstThread.messages[0]!.text, "Remaining issues:");
         assert.include(firstThread.messages[0]!.text, "Pending changes:");
         assert.deepEqual(
           firstThread.messages
@@ -3431,11 +3121,6 @@ describe("fresh-thread repository handoff", () => {
           "second-root-verify",
         );
         yield* finish(second.rootThreadId!, "second-root-closeout");
-        const paused = yield* service.setPaused({
-          ...reference,
-          paused: true,
-          clientRequestId: CommandId.make("latest-root-pause"),
-        });
         // These later complete-state events supersede the transfer metadata during compaction.
         yield* threads.dispatch({
           type: "thread.archive",
@@ -3453,8 +3138,7 @@ describe("fresh-thread repository handoff", () => {
         assert.isNull(rebuilt.rootThreadId);
         const ended = (yield* store.configuration(second.rootThreadId!))!;
         assert.isNull(ended.retiredToThreadId);
-        assert.equal(ended.revision, paused.orchestration!.revision + 1);
-        assert.isTrue(ended.paused);
+        assert.equal(ended.revision, second.orchestration!.revision + 1);
         assert.deepEqual(
           ended.handoffHistory?.map((entry) => entry.threadId),
           [rootId, first.rootThreadId],
@@ -3472,7 +3156,7 @@ describe("fresh-thread repository handoff", () => {
   it.effect(
     "waits for nested workers and their final deliveries, keeps lineage, rejects retired MCP calls and guards archive/delete",
     () => {
-      let githubIssues: number[] = [];
+      let completedIssuesClosed = false;
       return Effect.gen(function* () {
         const service = yield* IssueWorkService.IssueWorkService;
         const threads = yield* ThreadManagement.ThreadManagementService;
@@ -3515,6 +3199,17 @@ describe("fresh-thread repository handoff", () => {
           });
         const parent = yield* delegate(rootId, 1);
         const child = yield* delegate(parent, 2);
+        const acknowledge = (parentThreadId: ThreadId, childThreadId: ThreadId) =>
+          Effect.gen(function* () {
+            const record = yield* threads.getThreadRecords(parentThreadId, ["runs", "subagents"]);
+            yield* threads.dispatch({
+              type: "delegated_task.completion-delivery.acknowledge",
+              commandId: CommandId.make(`handoff-observed:${childThreadId}`),
+              parentThreadId,
+              taskId: record.subagents.find((task) => task.childThreadId === childThreadId)!.id,
+              observedByRunId: record.runs.at(-1)!.id,
+            });
+          });
         yield* service.reconcile(rootId);
         const revision = (yield* service.repositoryStatus(reference)).orchestration!.revision;
         const pending = yield* service.handoff({
@@ -3524,7 +3219,6 @@ describe("fresh-thread repository handoff", () => {
           summary: "Retain nested issue outcomes and continue issue 9.",
           clientRequestId: CommandId.make("handoff:nested"),
         });
-        githubIssues = [1, 2, 9];
         assert.equal(pending.rootThreadId, rootId);
         assert.equal(pending.orchestration!.handoff?.status, "draining");
         const nextId = pending.orchestration!.handoff!.nextThreadId;
@@ -3542,12 +3236,14 @@ describe("fresh-thread repository handoff", () => {
         const beforeChild = yield* sink.latestSequence();
         yield* finish(child, "nested-child");
         yield* awaitFollowup(parent, beforeChild);
+        yield* acknowledge(parent, child);
         yield* service.reconcile(rootId);
         assert.equal((yield* service.repositoryStatus(reference)).rootThreadId, rootId);
         assert.isNull(yield* threads.getThreadShell(nextId));
         const beforeParent = yield* sink.latestSequence();
         yield* finish(parent, "parent-delivery");
         yield* awaitFollowup(rootId, beforeParent);
+        yield* acknowledge(rootId, parent);
         assert.equal((yield* service.repositoryStatus(reference)).rootThreadId, rootId);
         const beforeRoot = yield* sink.latestSequence();
         yield* finish(rootId, "root-delivery");
@@ -3558,6 +3254,7 @@ describe("fresh-thread repository handoff", () => {
         );
         assert.equal((yield* service.repositoryStatus(reference)).rootThreadId, rootId);
         assert.isNull((yield* threads.getThreadShell(rootId))!.archivedAt);
+        completedIssuesClosed = true;
         yield* finish(nextId, "nested-successor-verification", true);
         yield* sink.stream({ afterSequence: beforeRoot, eventType: "thread.archived" }).pipe(
           Stream.filter(({ event }) => event.threadId === rootId),
@@ -3584,19 +3281,6 @@ describe("fresh-thread repository handoff", () => {
         const inventory = (yield* threads.getThreadRecords(nextId, ["messages"])).messages[0]!.text;
         assert.include(inventory, "Completed attempts:");
         assert.notInclude(inventory, "Evidence retained.");
-        assert.include(inventory, "#9 Issue 9");
-        const milestone = yield* mcp
-          .workMilestone(scope(rootId), {
-            ...reference,
-            projectId,
-            modelRoleId: "implementor-complex",
-
-            milestoneNumber: 1,
-            clientRequestId: CommandId.make("retired:milestone"),
-          })
-          .pipe(Effect.result);
-        assert.equal(milestone._tag, "Failure");
-        if (milestone._tag === "Failure") assert.include(milestone.failure.message, "retired");
         const delegation = yield* mcp
           .delegateTask(scope(rootId), {
             issue: { ...reference, number: 9 },
@@ -3630,7 +3314,15 @@ describe("fresh-thread repository handoff", () => {
             if (scheduled._tag === "Failure") assert.include(scheduled.failure.message, "retired");
           }
         }
-      }).pipe(Effect.provide(fixture({ continuation: true, inventoryIssues: () => githubIssues })));
+      }).pipe(
+        Effect.provide(
+          fixture({
+            continuation: true,
+            issueState: (number) =>
+              completedIssuesClosed && (number === 1 || number === 2) ? "closed" : "open",
+          }),
+        ),
+      );
     },
   );
 
@@ -3766,15 +3458,12 @@ describe("fresh-thread repository handoff", () => {
           expectedRevision: 1,
           orchestration: {
             ...config,
-            paused: true,
-            milestones: [],
             handoff: {
               requestId: CommandId.make("saved-handoff:proposal"),
               nextThreadId: target,
               summary: "Carry over the saved decisions.",
               modelSelection,
               status: "awaiting_approval",
-              wasPaused: false,
             },
           },
         });
@@ -3796,11 +3485,9 @@ describe("fresh-thread repository handoff", () => {
             clientRequestId: CommandId.make("saved-handoff:cancel"),
           });
           assert.isUndefined(cancelled.orchestration!.handoff);
-          assert.isTrue(cancelled.orchestration!.paused);
           return;
         }
         assert.equal(result.rootThreadId, target);
-        assert.isTrue(result.orchestration!.paused);
         assert.isUndefined(result.orchestration!.handoff);
       }).pipe(
         Effect.provide(
@@ -3896,7 +3583,6 @@ describe("fresh-thread repository handoff", () => {
           clientRequestId: CommandId.make("cancel-draining:cancel"),
         });
         assert.isUndefined(cancelled.orchestration!.handoff);
-        assert.isFalse(cancelled.orchestration!.paused);
         assert.include(
           yield* refusal({ host: reference.host, expectedRevision: revision + 1 }, "none"),
           "has no pending handoff",
@@ -3948,7 +3634,6 @@ describe("fresh-thread repository handoff", () => {
       const pending = yield* mcp.requestRepositoryHandoff(scope(rootId), input);
       assert.equal(pending.rootThreadId, rootId);
       assert.equal(pending.phase, "draining");
-      assert.isTrue(pending.orchestration!.paused);
       assert.equal(pending.orchestration!.handoff?.requestedAt, requestedAt);
       const target = pending.orchestration!.handoff!.nextThreadId;
       assert.isNull(yield* threads.getThreadShell(target));
@@ -3958,56 +3643,46 @@ describe("fresh-thread repository handoff", () => {
       yield* worker.drain();
       const result = yield* verifyManualHandoff(rootId, target, "mcp-handoff:verify");
       assert.equal(result.rootThreadId, target);
-      assert.isFalse(result.orchestration!.paused);
       assert.isUndefined(result.orchestration!.handoff);
     }).pipe(Effect.provide(fixture({ recovery: true }))),
   );
 
-  it.effect(
-    "retries incomplete inventory and rejected transfer attempts until the first prompt is committed",
-    () => {
-      let complete = false;
-      let available = false;
-      return Effect.gen(function* () {
-        const service = yield* IssueWorkService.IssueWorkService;
-        const threads = yield* ThreadManagement.ThreadManagementService;
-        const store = yield* IssueWorkStore.IssueWorkStore;
-        yield* createRoot;
-        const failed = yield* service
-          .handoff({
-            ...reference,
-            action: "approve",
-            expectedRevision: 1,
-            summary: "Recover this handoff after access returns.",
-            clientRequestId: CommandId.make("handoff:recovery"),
-          })
-          .pipe(Effect.result);
-        assert.equal(failed._tag, "Failure");
-        const waiting = yield* service.repositoryStatus(reference);
-        const nextId = waiting.orchestration!.handoff!.nextThreadId;
-        assert.include(yield* store.activeRoots(), rootId);
-        assert.equal(waiting.rootThreadId, rootId);
-        assert.isNull(yield* threads.getThreadShell(nextId));
-        complete = true;
-        assert.equal((yield* service.reconcile(rootId).pipe(Effect.result))._tag, "Failure");
-        assert.equal((yield* service.repositoryStatus(reference)).rootThreadId, rootId);
-        assert.isNull(yield* threads.getThreadShell(nextId));
-        available = true;
-        yield* service.reconcile(rootId);
-        yield* service.reconcile(rootId);
-        assert.equal((yield* service.repositoryStatus(reference)).rootThreadId, rootId);
-        const messages = (yield* threads.getThreadRecords(nextId, ["messages"])).messages;
-        assert.equal(messages.length, 1);
-        assert.include(messages[0]!.text, "Recover this handoff after access returns.");
-        assert.include(messages[0]!.text, "Server recovery inventory:");
-        yield* verifyManualHandoff(rootId, nextId, "handoff:recovery-proof");
-      }).pipe(
-        Effect.provide(
-          fixture({ inventoryComplete: () => complete, providerAvailable: () => available }),
-        ),
-      );
-    },
-  );
+  it.effect("retries a rejected transfer until the first prompt is committed", () => {
+    let available = false;
+    return Effect.gen(function* () {
+      const service = yield* IssueWorkService.IssueWorkService;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const store = yield* IssueWorkStore.IssueWorkStore;
+      yield* createRoot;
+      const failed = yield* service
+        .handoff({
+          ...reference,
+          action: "approve",
+          expectedRevision: 1,
+          summary: "Recover this handoff after access returns.",
+          clientRequestId: CommandId.make("handoff:recovery"),
+        })
+        .pipe(Effect.result);
+      assert.equal(failed._tag, "Failure");
+      const waiting = yield* service.repositoryStatus(reference);
+      const nextId = waiting.orchestration!.handoff!.nextThreadId;
+      assert.include(yield* store.activeRoots(), rootId);
+      assert.equal(waiting.rootThreadId, rootId);
+      assert.isNull(yield* threads.getThreadShell(nextId));
+      assert.equal((yield* service.reconcile(rootId).pipe(Effect.result))._tag, "Failure");
+      assert.equal((yield* service.repositoryStatus(reference)).rootThreadId, rootId);
+      assert.isNull(yield* threads.getThreadShell(nextId));
+      available = true;
+      yield* service.reconcile(rootId);
+      yield* service.reconcile(rootId);
+      assert.equal((yield* service.repositoryStatus(reference)).rootThreadId, rootId);
+      const messages = (yield* threads.getThreadRecords(nextId, ["messages"])).messages;
+      assert.equal(messages.length, 1);
+      assert.include(messages[0]!.text, "Recover this handoff after access returns.");
+      assert.include(messages[0]!.text, "Server recovery inventory:");
+      yield* verifyManualHandoff(rootId, nextId, "handoff:recovery-proof");
+    }).pipe(Effect.provide(fixture({ providerAvailable: () => available })));
+  });
 
   it.effect(
     "transfers once when a reconcile arrives while the event loop drains the handoff",

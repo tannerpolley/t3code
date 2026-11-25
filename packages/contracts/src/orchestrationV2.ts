@@ -4173,6 +4173,8 @@ export const OrchestrationV2Command = Schema.Union([
     threadId: ThreadId,
     issue: ThreadLinkedIssue,
     workerModelSelection: ModelSelection,
+    workerRole: Schema.optional(ThreadRole),
+    automatic: Schema.optional(Schema.Boolean),
   }),
   Schema.Struct({
     type: Schema.Literal("delegated_task.request"),
@@ -4336,6 +4338,8 @@ const OrchestrationV2InternalCommand = Schema.Union([
     expectedRevision: Schema.NullOr(Schema.Int.check(Schema.isGreaterThanOrEqualTo(1))),
     reason: TrimmedNonEmptyString,
     moveUnpaused: Schema.optional(Schema.Boolean),
+    restorePhase: Schema.optional(Schema.Literals(["request", "complete"])),
+    restoreRequestId: Schema.optional(CommandId),
   }),
   Schema.Struct({
     type: Schema.Literal("repository.work.handoff"),

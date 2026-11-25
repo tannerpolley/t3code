@@ -420,7 +420,7 @@ it.effect.each(
         if (mailbox) {
           const delivered = yield* orchestrator.getThreadProjection(threadId);
           assert.equal(delivered.subagents[0]?.completionDelivery?.state, "delivered");
-          assert.equal(delivered.subagents[0]?.completionDelivery?.observedByRunId, null);
+          assert.equal(delivered.subagents[0]?.completionDelivery?.observedByRunId, first.runId);
           assert.equal(delivered.runs[0]?.delegatedCompletion?.delivery, null);
           assert.equal(
             delivered.turnItems.filter((item) => item.type === "notification").length,
@@ -733,10 +733,8 @@ const nextTurnSelectionHarness = Effect.fn("nextTurnSelectionHarness")(function*
               projectId,
               launchCommandId: CommandId.make("create"),
               revision: 1,
-              paused: false,
               publishStatusComments: false,
               publishCloseoutComments: false,
-              milestones: [],
               suspendedIssues: [],
               readOnlyLimit: 1,
             },

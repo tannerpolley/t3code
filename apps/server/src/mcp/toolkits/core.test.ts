@@ -1568,7 +1568,6 @@ it("keeps fork tools in their toolkits with presentation labels", () => {
     "request_repository_handoff",
     "restore_repository_root",
     "end_repository_orchestration",
-    "set_repository_work_paused",
     "set_repository_worker_limit",
     "t3_issue_inbox",
     "t3_issue_post",
@@ -1581,7 +1580,6 @@ it("keeps fork tools in their toolkits with presentation labels", () => {
     "t3_worktree_return_to_root",
     "unqueue_issue",
     "withdraw_owner_decision",
-    "work_through_milestone",
     ...Object.keys(NotebookToolkit.tools),
   ]) {
     expect(Object.hasOwn(tools, name), name).toBe(true);

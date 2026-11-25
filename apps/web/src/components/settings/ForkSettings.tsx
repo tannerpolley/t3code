@@ -173,7 +173,7 @@ const CUSTOMIZATION_SWITCHES: ReadonlyArray<{
     searchId: "version-control-issues",
     section: "versionControl",
     description: msg(
-      "List the repository's open issues in their own Issues section of thread details, grouped by collapsible milestones, and open them beside the thread.",
+      "List the repository's open issues in their own Issues section of thread details, grouped by work stage, and open them beside the thread.",
     ),
   },
   {

@@ -19,11 +19,11 @@ import * as EventSink from "../orchestration-v2/EventSink.ts";
 import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as IssueChangeService from "./IssueChangeService.ts";
-import { isAutomaticIssueSuspension } from "./IssueEligibility.ts";
+import { issueAutomationEnabled, isAutomaticIssueSuspension } from "./IssueEligibility.ts";
 import * as TrackerIssueService from "../issue/IssueService.ts";
 import { ensureCommentMarker } from "./IssueGitHubExtension.ts";
 import * as IssueService from "./IssueService.ts";
-import { fromTrackerError, trackerIssueRef } from "./trackerIssueRef.ts";
+import { fromTrackerError, setGitHubIssueStatus, trackerIssueRef } from "./trackerIssueRef.ts";
 import { readIssueCommentReceipt, readIssueWorkCommentState } from "./IssueWorkProjection.ts";
 
 const ISSUE_EFFECT_TYPES = [
@@ -32,6 +32,7 @@ const ISSUE_EFFECT_TYPES = [
   "issue.suspension.notify",
   "usage-sprint.notify",
   "issue.status.refresh",
+  "issue.board.sync",
   "issue.github.comment",
 ] as const;
 
@@ -101,6 +102,7 @@ const writeManagedComment = Effect.fn("IssueEffects.writeManagedComment")(functi
 
 export const make = Effect.gen(function* () {
   const threads = yield* ThreadManagementService.ThreadManagementService;
+  const automation = yield* issueAutomationEnabled;
   const projections = yield* ProjectionStore.ProjectionStoreV2;
   const sql = yield* Effect.serviceOption(SqlClient.SqlClient);
   const issues = yield* Effect.serviceOption(IssueService.IssueService);
@@ -281,6 +283,41 @@ export const make = Effect.gen(function* () {
         );
       case "usage-sprint.notify":
         return;
+      case "issue.board.sync":
+        if (!automation || Option.isNone(issues) || Option.isNone(tracker) || Option.isNone(sql))
+          return;
+        return yield* withIssueWriteLock(
+          request.issue,
+          Effect.gen(function* () {
+            const issue = request.issue;
+            const claim = yield* readIssueWorkCommentState(sql.value, {
+              host: issue.host,
+              repositoryId: issue.repositoryId,
+              issueId: issue.id,
+            });
+            if (claim?.ownerThreadId !== effect.threadId) return;
+            const expected = request.status === "In progress" ? "Todo" : "In progress";
+            if (request.status === "In review") {
+              const shell = yield* projections.getThreadShell(effect.threadId);
+              if (
+                !shell?.pullRequests?.some(
+                  (pr) =>
+                    pr.source !== "stack-dismissed" &&
+                    pr.snapshot?.state === "open" &&
+                    !pr.snapshot.isDraft,
+                )
+              )
+                return;
+            }
+            const read = yield* issues.value.workRead(issue);
+            if (
+              read.issue.id === issue.id &&
+              read.state === "open" &&
+              read.planningStatus === expected
+            )
+              yield* setGitHubIssueStatus(tracker.value, issue, request.status);
+          }),
+        );
       case "issue.status.refresh":
         if (Option.isNone(eventSink)) return yield* Effect.fail("Issue event sink is unavailable.");
         return yield* withIssueWriteLock(

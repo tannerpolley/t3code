@@ -1,4 +1,9 @@
-import { IssueReadError, type IssueError, type IssueRef } from "@t3tools/contracts";
+import {
+  IssueReadError,
+  type GitHubIssueStatus,
+  type IssueError,
+  type IssueRef,
+} from "@t3tools/contracts";
 import * as Effect from "effect/Effect";
 
 import type * as TrackerIssueService from "../issue/IssueService.ts";
@@ -66,4 +71,13 @@ export const trackerIssueRef = Effect.fn("trackerIssueRef")(function* (
     scope: ref.scope,
     key: ref.key,
   } satisfies IssueRef;
+});
+
+export const setGitHubIssueStatus = Effect.fn("setGitHubIssueStatus")(function* (
+  tracker: TrackerIssueService.IssueService["Service"],
+  issue: { readonly host: string; readonly repository: string; readonly number: number },
+  state: GitHubIssueStatus,
+) {
+  const ref = yield* trackerIssueRef(tracker, "detail", issue);
+  yield* tracker.setState({ ...ref, state }).pipe(Effect.mapError(fromTrackerError("detail")));
 });

@@ -5187,7 +5187,7 @@ it.effect.each(["events", "receipts"] as const)(
 );
 
 it.effect.each([true, false])(
-  "preserves repository pause (%s) and admission after visit, compaction and reboot rebuild",
+  "ignores legacy repository pause (%s) after visit, compaction and reboot rebuild",
   (pauseState) =>
     Effect.gen(function* () {
       const sink = yield* EventSink.EventSinkV2;
@@ -5216,12 +5216,10 @@ it.effect.each([true, false])(
           projectId: ProjectId.make(`project:${rootId}`),
           launchCommandId: CommandId.make("pause-replay-create"),
           revision: 1,
-          paused: false,
           workerLimit: 4,
           readOnlyLimit: 4,
           publishStatusComments: false,
           publishCloseoutComments: false,
-          milestones: [],
           suspendedIssues: [],
         },
       };
@@ -5270,7 +5268,7 @@ it.effect.each([true, false])(
           },
         ],
       });
-      assert.equal(yield* store.canAdmit(issue, workerId), !pauseState);
+      assert.isTrue(yield* store.canAdmit(issue, workerId));
       yield* maintenance.pruneEventStore();
       const events = yield* sql<{
         event_type: string;
@@ -5281,10 +5279,10 @@ it.effect.each([true, false])(
         paused: number;
         revision: number;
       }>`SELECT paused, revision FROM orchestration_v2_projection_repository_orchestration WHERE root_thread_id = ${rootId}`;
-      assert.deepEqual(owner, [{ paused: pauseState ? 1 : 0, revision: 2 }]);
-      assert.equal((yield* store.repositoryOwner(issue))!.paused, pauseState);
+      assert.deepEqual(owner, [{ paused: 0, revision: 2 }]);
+      assert.equal((yield* store.repositoryOwner(issue))!.revision, 2);
       assert.equal((yield* store.configuration(rootId))!.revision, 2);
-      assert.equal(yield* store.canAdmit(issue, workerId), !pauseState);
+      assert.isTrue(yield* store.canAdmit(issue, workerId));
     }).pipe(
       Effect.provide(
         Layer.mergeAll(layerTest, IssueWorkStore.layer.pipe(Layer.provide(layerDatabase))),

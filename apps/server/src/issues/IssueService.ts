@@ -36,8 +36,8 @@ const issueListEndpoint = (
   _scope: IssueRepositoryScope,
   state: RepositoryIssueListState,
   page: number,
-  milestoneNumber?: number,
-) => `${state}:${page}:${milestoneNumber ?? ""}`;
+  order?: "oldest",
+) => `${state}:${page}:${order ?? ""}`;
 const milestoneListEndpoint = (
   _scope: IssueRepositoryScope,
   state: RepositoryIssueListState,
@@ -122,20 +122,9 @@ export class IssueService extends Context.Service<
       input: IssueRepositoryRef & {
         readonly state: RepositoryIssueListState;
         readonly page: number;
+        readonly order?: "oldest" | undefined;
       },
     ) => Effect.Effect<IssuePageResult, IssueReadError>;
-    readonly milestoneIssues: (input: {
-      readonly host: string;
-      readonly repository: string;
-      readonly milestoneNumber: number;
-    }) => Effect.Effect<
-      {
-        readonly issues: ReadonlyArray<import("@t3tools/contracts").RepositoryIssueSummary>;
-        readonly complete: boolean;
-        readonly missing?: true;
-      },
-      IssueReadError
-    >;
     readonly statusBatch: (
       input: import("@t3tools/contracts").IssueStatusBatchInput,
     ) => ReturnType<IssueGitHubExtension["statuses"]>;
@@ -321,11 +310,10 @@ export const make = Effect.fn("IssueService.make")(function* () {
     pages: ReturnType<typeof makePageCaches>,
     state: RepositoryIssueListState,
     page: number,
-    milestoneNumber?: number,
-  ): Effect.fn.Return<IssuePageResult & { readonly missing?: true }, IssueReadError> {
-    const cached = pages.issues.get(issueListEndpoint(scope, state, page, milestoneNumber));
-    const response = yield* github.listIssuePage(scope, state, page, milestoneNumber, cached?.etag);
-    if (response.missing) return { items: [], nextPage: null, missing: true as const };
+    order?: "oldest",
+  ): Effect.fn.Return<IssuePageResult, IssueReadError> {
+    const cached = pages.issues.get(issueListEndpoint(scope, state, page, order));
+    const response = yield* github.listIssuePage(scope, state, page, order, cached?.etag);
     return yield* pageResult(response, cached);
   });
   const readMilestonePage = Effect.fn("IssueService.readMilestonePage")(function* (
@@ -349,41 +337,13 @@ export const make = Effect.fn("IssueService.make")(function* () {
     return yield* github.withIdentity(scope, "list", (identity) =>
       Effect.gen(function* () {
         const pages = yield* repositoryPages(scope, identity.credentialFingerprint);
-        const result = yield* readIssuePage(scope, pages, input.state, input.page);
-        pages.issues.set(issueListEndpoint(scope, input.state, input.page), result.etag, result);
+        const result = yield* readIssuePage(scope, pages, input.state, input.page, input.order);
+        pages.issues.set(
+          issueListEndpoint(scope, input.state, input.page, input.order),
+          result.etag,
+          result,
+        );
         return result;
-      }).pipe(Effect.scoped),
-    );
-  });
-  const milestoneIssues: IssueService["Service"]["milestoneIssues"] = Effect.fn(
-    "IssueService.milestoneIssues",
-  )(function* (input) {
-    const scope = yield* resolveScope("list", input);
-    return yield* github.withIdentity(scope, "list", (identity) =>
-      Effect.gen(function* () {
-        const pages = yield* repositoryPages(scope, identity.credentialFingerprint);
-        const generation = repositoryGeneration(scope);
-        const issues: Array<import("@t3tools/contracts").RepositoryIssueSummary> = [];
-        let page: number | null = 1;
-        for (let count = 0; count < 10 && page !== null; count++) {
-          const result: IssuePageResult & { readonly missing?: true } = yield* readIssuePage(
-            scope,
-            pages,
-            "all",
-            page,
-            input.milestoneNumber,
-          );
-          if (result.missing) return { issues: [], complete: true, missing: true as const };
-          if (generation === repositoryGeneration(scope))
-            pages.issues.set(
-              issueListEndpoint(scope, "all", page, input.milestoneNumber),
-              result.etag,
-              { ...result, generation },
-            );
-          issues.push(...result.items);
-          page = result.nextPage;
-        }
-        return { issues, complete: page === null };
       }).pipe(Effect.scoped),
     );
   });
@@ -576,7 +536,6 @@ export const make = Effect.fn("IssueService.make")(function* () {
     }),
     issueStatuses,
     repositoryIssuesPage,
-    milestoneIssues,
     repositoryIdentity: Effect.fn("IssueService.repositoryIdentity")((input) =>
       github.repositoryIdentity(input),
     ),

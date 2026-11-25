@@ -11,7 +11,6 @@ import {
   type RepositoryIssueRef,
   type OrchestrationV2RunAdmissionWait,
   type ThreadLinkedIssue,
-  LEGACY_AUTOMATIC_SUSPENSIONS,
   RepositoryOrchestration,
   isValidRepositoryPhase,
   repositoryPhase,
@@ -32,13 +31,11 @@ import * as SqlClient from "effect/sql/SqlClient";
 type RepositoryOwner = {
   readonly rootThreadId: ThreadId;
   readonly projectId: ProjectId;
-  readonly paused: boolean;
   readonly revision: number;
 };
 type RepositoryOwnerRow = {
   readonly root_thread_id: string;
   readonly project_id: string;
-  readonly paused: number;
   readonly revision: number;
 };
 const decodeRequest = Schema.decodeEffect(Schema.fromJsonString(IssueWorkRequested));
@@ -48,7 +45,6 @@ const ownerFromRows = (rows: ReadonlyArray<RepositoryOwnerRow>): RepositoryOwner
     : {
         rootThreadId: ThreadId.make(rows[0].root_thread_id),
         projectId: ProjectId.make(rows[0].project_id),
-        paused: rows[0].paused === 1,
         revision: rows[0].revision,
       };
 
@@ -62,7 +58,7 @@ interface RemoteChildTask {
   readonly completedAt: string | null;
 }
 
-// Workers started from the issue queue wait for a slot ahead of milestone workers.
+// Workers started from the issue queue take slots before automatic starts.
 const queuedIssueWorker = derive.delegatedTaskThread({
   commandId: CommandId.make(QUEUED_ISSUE_START_PREFIX),
 });
@@ -97,6 +93,9 @@ export class IssueWorkStore extends Context.Service<
       IssueWorkError
     >;
     readonly slotsInUse: (rootThreadId: ThreadId) => Effect.Effect<number, IssueWorkError>;
+    readonly hasPendingOpening: (
+      issue: ThreadLinkedIssue,
+    ) => Effect.Effect<boolean, IssueWorkError>;
     readonly readOnlySlotsInUse: (rootThreadId: ThreadId) => Effect.Effect<number, IssueWorkError>;
     readonly admissionThreads: (
       rootThreadId: ThreadId,
@@ -239,7 +238,8 @@ export const layer = Layer.effect(
       WHERE status IN ('pending', 'running') AND effect_type = 'provider-runtime.continue'
     `;
     const isReadOnly = sql`json_extract(thread.payload_json, '$.role') IN ${sql.in(readOnlyIssueRoles)}
-      AND json_extract(thread.payload_json, '$.lineage.relationshipToParent') = 'subagent'`;
+      AND json_extract(thread.payload_json, '$.lineage.relationshipToParent') = 'subagent'
+      AND json_type(thread.payload_json, '$.linkedIssue') IS NULL`;
     // Run rowids preserve committed request order even when timestamps tie (including restart continuations).
     const readOnlyQueue = (rootThreadId: ThreadId) => sql`
       SELECT run.thread_id, min(run.rowid) AS position FROM orchestration_v2_projection_runs run
@@ -289,6 +289,14 @@ export const layer = Layer.effect(
           ? "working"
           : "available";
       }),
+      hasPendingOpening: Effect.fn("IssueWorkStore.hasPendingOpening")((issue) =>
+        sql`SELECT 1 FROM issue_inbox_events WHERE host = ${issue.host}
+          AND repository_id = ${issue.repositoryId} AND issue_number = ${issue.number}
+          AND kind = 'issue_opened' AND read_at IS NULL LIMIT 1`.pipe(
+          Effect.map((rows) => rows.length > 0),
+          Effect.mapError(mapError),
+        ),
+      ),
       readOnlySlotsInUse: Effect.fn("IssueWorkStore.readOnlySlotsInUse")((rootThreadId) =>
         sql<{
           active: number;
@@ -655,39 +663,7 @@ export const layer = Layer.effect(
         SELECT root_thread_id FROM orchestration_v2_projection_repository_orchestration owner
         JOIN orchestration_v2_projection_threads thread ON thread.thread_id = owner.root_thread_id
         WHERE thread.deleted_at IS NULL AND thread.archived_at IS NULL
-          AND (${sql.unsafe(repositoryPhaseSql("thread.payload_json"))} IN ('draining', 'handoff_awaiting_approval')
-            OR (owner.paused = 0 AND EXISTS (
-              SELECT 1 FROM json_each(thread.payload_json, '$.repositoryOrchestration.suspendedIssues') suspension
-              WHERE coalesce(json_extract(suspension.value, '$.kind'), CASE WHEN json_extract(suspension.value, '$.reason') IN ${sql.in(LEGACY_AUTOMATIC_SUSPENSIONS.blocked)} THEN 'blocked' WHEN json_extract(suspension.value, '$.reason') IN ${sql.in(LEGACY_AUTOMATIC_SUSPENSIONS.unreadable)} THEN 'unreadable' END) IN ('blocked', 'unreadable')))
-            OR EXISTS (SELECT 1 FROM json_each(thread.payload_json, '$.repositoryOrchestration.milestones') plan
-            WHERE json_extract(plan.value, '$.status') <> 'complete')
-            OR EXISTS (SELECT 1 FROM orchestration_v2_projection_issue_work_requests request
-              WHERE request.host = owner.host AND request.repository_id = owner.repository_id AND request.queue_state = 'queued')
-            OR EXISTS (SELECT 1 FROM orchestration_v2_projection_issue_work_requests request
-              LEFT JOIN orchestration_v2_projection_issue_work work ON work.host = request.host AND work.repository_id = request.repository_id AND work.issue_id = request.issue_id
-              WHERE request.root_thread_id = owner.root_thread_id AND work.owner_thread_id IS NULL AND request.queue_state IS NULL AND json_type(request.payload_json, '$.cancellation') IS NULL)
-            OR EXISTS (SELECT 1 FROM orchestration_v2_projection_threads worker JOIN orchestration_v2_projection_runs run ON run.thread_id = worker.thread_id
-              WHERE CASE WHEN json_valid(worker.payload_json) THEN json_extract(worker.payload_json, '$.lineage.rootThreadId') END = owner.root_thread_id
-                AND json_type(worker.payload_json, '$.linkedIssue') = 'object' AND run.status IN ('queued', 'preparing', 'starting', 'running', 'waiting'))
-            OR EXISTS (
-              SELECT 1 FROM orchestration_v2_projection_issue_work work
-              JOIN orchestration_v2_projection_threads worker ON worker.thread_id = work.owner_thread_id
-              JOIN orchestration_v2_projection_subagents task ON task.child_thread_id = worker.thread_id
-              WHERE work.host = owner.host AND work.repository_id = owner.repository_id
-                AND worker.archived_at IS NULL AND worker.deleted_at IS NULL
-                AND json_extract(worker.payload_json, '$.lineage.rootThreadId') = owner.root_thread_id
-                AND json_extract(worker.payload_json, '$.createdBy') IS NOT 'user'
-                AND task.origin = 'app_owned' AND task.completed_at IS NOT NULL
-                AND (task.completion_delivery_state = 'acknowledged'
-                  OR json_extract(task.payload_json, '$.completionDelivery.observedByRunId') IS NOT NULL))
-            -- Restart cuts the readers ahead of a queued reader without a promotion event.
-            OR EXISTS (SELECT 1 FROM orchestration_v2_projection_threads reader JOIN orchestration_v2_projection_runs run ON run.thread_id = reader.thread_id
-              WHERE CASE WHEN json_valid(reader.payload_json) THEN json_extract(reader.payload_json, '$.lineage.rootThreadId') END = owner.root_thread_id
-                AND json_extract(reader.payload_json, '$.role') IN ${sql.in(readOnlyIssueRoles)}
-                AND json_extract(reader.payload_json, '$.lineage.relationshipToParent') = 'subagent'
-                AND reader.deleted_at IS NULL AND reader.archived_at IS NULL
-                AND run.status = 'queued' AND coalesce(json_extract(run.payload_json, '$.queueHeld'), 0) <> 1))
-
+          AND ${sql.unsafe(repositoryAdmissionSql("thread.payload_json"))}
       `.pipe(
           Effect.map((rows) => rows.map((row) => ThreadId.make(row.root_thread_id))),
           Effect.mapError(mapError),
@@ -760,7 +736,7 @@ export const layer = Layer.effect(
           suspended: number;
           lineage_valid: number;
         }>`
-          SELECT owner.root_thread_id, owner.worker_limit, ${sql.unsafe(repositoryAdmissionSql("root.payload_json", "owner.paused"))} AS allowed,
+          SELECT owner.root_thread_id, owner.worker_limit, ${sql.unsafe(repositoryAdmissionSql("root.payload_json"))} AS allowed,
             EXISTS (SELECT 1 FROM orchestration_v2_projection_threads candidate
               WHERE candidate.thread_id = ${threadId}
                 AND CASE WHEN json_valid(candidate.payload_json) THEN json_extract(candidate.payload_json, '$.lineage.rootThreadId') END = owner.root_thread_id) AS lineage_valid,
@@ -868,13 +844,13 @@ export const layer = Layer.effect(
       ),
       repositoryOwner: Effect.fn("IssueWorkStore.repositoryOwner")((issue) =>
         sql<RepositoryOwnerRow>`
-      SELECT root_thread_id, project_id, paused, revision FROM orchestration_v2_projection_repository_orchestration
+      SELECT root_thread_id, project_id, revision FROM orchestration_v2_projection_repository_orchestration
       WHERE host = ${issue.host} AND repository_id = ${issue.repositoryId}
     `.pipe(Effect.map(ownerFromRows), Effect.mapError(mapError)),
       ),
       repositoryOwnerByRef: Effect.fn("IssueWorkStore.repositoryOwnerByRef")((issue) =>
         sql<RepositoryOwnerRow>`
-      SELECT root_thread_id, project_id, paused, revision FROM orchestration_v2_projection_repository_orchestration owner
+      SELECT root_thread_id, project_id, revision FROM orchestration_v2_projection_repository_orchestration owner
       WHERE lower(owner.host) = lower(${issue.host})
         AND (lower(owner.repository) = lower(${issue.repository}) OR EXISTS (
           SELECT 1 FROM orchestration_v2_projection_issue_work_requests request

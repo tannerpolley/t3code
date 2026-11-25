@@ -387,11 +387,6 @@ it.effect(
             item.status === "waiting",
         ),
       );
-      yield* work.setPaused({
-        ...repository,
-        paused: false,
-        clientRequestId: CommandId.make("resume"),
-      });
       assert.isFalse(
         (yield* store.configuration(root))!.suspendedIssues.some(
           (entry) => entry.id === reviewIssue(2).id,
@@ -432,11 +427,15 @@ it.effect.each(["retained", "archived", "archived before handoff"] as const)(
       assert.include(active.message, "remaining work");
       yield* work.reconcile(root);
       assert.lengthOf((yield* store.configuration(root))!.suspendedIssues, 1);
+      yield* threads.dispatch({
+        type: "thread.stop",
+        commandId: CommandId.make("stop-closed-worker"),
+        threadId: childId,
+      });
       yield* worker.drain();
       const retained = (yield* threads.getThreadProjection(childId)).thread;
       assert.isNull(retained.archivedAt);
       assert.isNull(retained.deletedAt);
-      // Suspension stops the worker; close-out explicitly finishes that retained attempt.
       const config = (yield* store.configuration(root))!;
       const stale = yield* work
         .closeOut({ ...input, clientRequestId: CommandId.make("stale-close-out") })
@@ -552,96 +551,7 @@ it.effect.each(["retained", "archived", "archived before handoff"] as const)(
       if (closingRoot === root) assert.equal(task.status, "completed");
       else assert.deepEqual(task, previousTask);
       assert.deepEqual(yield* work.closeOut(accepted), closed);
-      yield* work.setPaused({
-        ...repository,
-        paused: false,
-        clientRequestId: CommandId.make("resume-closed"),
-      });
       assert.lengthOf((yield* store.configuration(closingRoot))!.suspendedIssues, 0);
-    }).pipe(Effect.provide(harness.layer));
-  },
-);
-
-it.effect(
-  "Resume does not re-suspend a finished implementor whose nested child was cancelled before its result was published",
-  () => {
-    const harness = setup();
-    return Effect.gen(function* () {
-      const threads = yield* ThreadManagement.ThreadManagementService;
-      const work = yield* IssueWorkService.IssueWorkService;
-      const store = yield* IssueWorkStore.IssueWorkStore;
-      const mcp = yield* OrchestratorMcpService.OrchestratorMcpService;
-      const sink = yield* EventSink.EventSinkV2;
-      const root = yield* createReviewRoot();
-      yield* delegateReviewIssue(root, reviewIssue(1), "nested-owner");
-      const owner = (yield* store.issueOwner(reviewIssue(1)))!;
-      const child = yield* mcp.delegateTask(scopeFor(owner), {
-        role: "checker",
-        task: "Check",
-        clientRequestId: "nested-checker",
-      });
-      const sequence = yield* sink.latestSequence();
-      yield* mcp.cancelTask(scopeFor(owner), {
-        taskId: child.taskId,
-        clientRequestId: "cancel-nested",
-      });
-      yield* sink.stream({ afterSequence: sequence, eventType: "subagent.updated" }).pipe(
-        Stream.filter(
-          (stored) =>
-            stored.event.type === "subagent.updated" &&
-            stored.event.payload.id === child.taskId &&
-            ["cancelled", "interrupted"].includes(stored.event.payload.status),
-        ),
-        Stream.take(1),
-        Stream.runDrain,
-      );
-      const run = (yield* threads.getThreadRecords(owner, ["runs"])).runs[0]!;
-      const now = yield* DateTime.now;
-      // Seed the committed terminal run before its asynchronous parent-result projection catches up.
-      yield* sink.write({
-        events: [
-          {
-            id: EventId.make("terminal-before-parent-result"),
-            type: "run.updated",
-            threadId: owner,
-            runId: run.id,
-            occurredAt: now,
-            payload: { ...run, status: "completed", completedAt: now },
-          },
-        ],
-      });
-      assert.isFalse(yield* store.resultAvailable(owner));
-      const beforeResume = yield* sink.latestSequence();
-      harness.close();
-      const result = yield* work.setPaused({
-        host: "github.com",
-        repository: "tannerpolley/t3code",
-        paused: false,
-        clientRequestId: CommandId.make("resume-finished-owner"),
-      });
-      assert.isEmpty(result.orchestration!.suspendedIssues);
-      const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
-      yield* worker.drain();
-      yield* sink.stream({ afterSequence: beforeResume, eventType: "subagent.updated" }).pipe(
-        Stream.filter(
-          (stored) =>
-            stored.event.type === "subagent.updated" &&
-            stored.event.payload.childThreadId === owner &&
-            ["completed", "failed", "interrupted", "cancelled"].includes(
-              stored.event.payload.status,
-            ),
-        ),
-        Stream.take(1),
-        Stream.runDrain,
-      );
-      assert.isTrue(yield* store.resultAvailable(owner));
-      yield* work.setPaused({
-        host: "github.com",
-        repository: "tannerpolley/t3code",
-        paused: false,
-        clientRequestId: CommandId.make("resume-closed-cancelled-child-owner"),
-      });
-      assert.isEmpty((yield* store.configuration(root))!.suspendedIssues);
     }).pipe(Effect.provide(harness.layer));
   },
 );
@@ -811,12 +721,6 @@ it.effect(
       yield* continueRun;
       yield* worker.drain();
       yield* work.reconcile(root);
-      yield* work.setPaused({
-        host: "github.com",
-        repository: "tannerpolley/t3code",
-        paused: false,
-        clientRequestId: CommandId.make("resume-after-restart-close"),
-      });
       const after = yield* threads.getThreadRecords(child, ["runs"]);
       assert.deepEqual(
         after.runs.map((row) => row.status),

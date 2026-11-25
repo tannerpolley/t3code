@@ -10,13 +10,7 @@ import {
 } from "@t3tools/contracts";
 import { useNavigate } from "@tanstack/react-router";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
-import {
-  ArrowRightLeftIcon,
-  MoreHorizontalIcon,
-  PauseIcon,
-  PlayIcon,
-  ReplaceIcon,
-} from "lucide-react";
+import { ArrowRightLeftIcon, MoreHorizontalIcon, ReplaceIcon } from "lucide-react";
 import { T, useGT } from "gt-react";
 import { useState } from "react";
 import { useServerConfigs, useThreadShell, useThreadShellsForProjectRefs } from "~/state/entities";
@@ -45,7 +39,6 @@ import {
 import { Textarea } from "../ui/textarea";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 import { toastManager } from "../ui/toast";
-import { Tooltip, TooltipPopup, TooltipTrigger } from "../ui/tooltip";
 import { IssueWorkerLimitControl } from "./IssueWorkerLimitControl";
 import { useRepositoryLeads } from "./IssueStartAction";
 import { projectIssueRepositories, repositoryWorkStatus } from "./issueWorkspace.logic";
@@ -97,7 +90,7 @@ export function ProjectRepositoryOrchestration({
   ));
 }
 
-/** Repository-wide orchestrator ownership, limits, pause and handoff. */
+/** Repository-wide orchestrator ownership, limits and handoff. */
 export function IssueRepositoryControls(props: {
   environmentId: EnvironmentId;
   reference: IssueRepositoryRef;
@@ -109,7 +102,7 @@ export function IssueRepositoryControls(props: {
   ) : null;
 }
 
-/** The Issues pane's one-line pointer to the settings section, shown only while it needs attention. */
+/** Admission and capacity for the board's repository. */
 export function IssueRepositoryStatusLine(props: {
   environmentId: EnvironmentId;
   reference: IssueRepositoryRef;
@@ -126,21 +119,29 @@ function RepositoryStatusLine({
   environmentId: EnvironmentId;
   reference: IssueRepositoryRef;
 }) {
-  const { data, config } = useRepositoryWork(environmentId, reference);
-  if (config == null) return null;
-  const status = repositoryWorkStatus(config, data?.idMismatch);
-  if (!status.needsAttention) return null;
+  const { data, config, statusAtom } = useRepositoryWork(environmentId, reference);
+  if (config == null || data == null) return null;
+  const status = repositoryWorkStatus(config, data.idMismatch);
   return (
-    <div className="flex items-center gap-2 px-2 pt-1 pb-2 text-xs text-muted-foreground">
+    <div className="flex flex-wrap items-center gap-2 px-3 pt-1 pb-2 text-xs text-muted-foreground">
       <span role="status" className="min-w-0 truncate">
         {status.label}
       </span>
+      {data.idMismatch === undefined ? (
+        <IssueWorkerLimitControl
+          key={config.revision}
+          environmentId={environmentId}
+          reference={reference}
+          config={config}
+          slotsInUse={data.slotsInUse}
+          onSettled={() => appAtomRegistry.refresh(statusAtom)}
+        />
+      ) : null}
       <SettingsLink environmentId={environmentId} projectId={config.projectId} />
     </div>
   );
 }
 
-/** Mounted only while the line shows, so an active repository does not build project groups. */
 function SettingsLink({
   environmentId,
   projectId,
@@ -193,12 +194,6 @@ function RepositoryControls({
   );
   const openRoot = (threadId: ThreadId) =>
     void navigate({ to: "/$environmentId/$threadId", params: { environmentId, threadId } });
-  const canResume =
-    (config != null &&
-      (repositoryPhase(config) === "paused" ||
-        (repositoryPhase(config) === "handoff_awaiting_approval" && config.paused) ||
-        repositoryPhase(config) === "draining")) ||
-    (config?.suspendedIssues.length ?? 0) > 0;
   const gt = useGT();
   const [busy, setBusy] = useState(false);
   const [handoffExpanded, setHandoffExpanded] = useState(false);
@@ -213,7 +208,6 @@ function RepositoryControls({
   const canEnd = useAtomValue(
     repositoryIssueEnvironment.endRepository.permissionAtom(environmentId),
   );
-  const pause = useAtomCommand(repositoryIssueEnvironment.setPaused, { reportFailure: false });
   const handoff = useAtomCommand(repositoryIssueEnvironment.handoff, { reportFailure: false });
   const restore = useAtomCommand(repositoryIssueEnvironment.restoreRoot, { reportFailure: false });
   const canRestore = useAtomValue(
@@ -243,7 +237,7 @@ function RepositoryControls({
     );
   const restoreTarget = restoreCandidates.find((lead) => lead.id === restoreTargetId);
   const replaceRoot = async () => {
-    if (busy || !config.paused || restoreTarget === undefined) return;
+    if (busy || restoreTarget === undefined) return;
     setBusy(true);
     const result = await restore({
       environmentId,
@@ -270,10 +264,10 @@ function RepositoryControls({
       setRestoreTargetId(null);
       toastManager.add({
         type: "success",
-        title: gt("Repository orchestrator changed"),
-        description: gt(
-          "Repository work remains paused. Choose Resume repository work to continue.",
-        ),
+        title:
+          result.value.rootThreadId === restoreTarget.id
+            ? gt("Repository orchestrator changed")
+            : gt("Restore requested"),
       });
     }
     appAtomRegistry.refresh(statusAtom);
@@ -347,25 +341,8 @@ function RepositoryControls({
       });
     appAtomRegistry.refresh(statusAtom);
   };
-  const togglePause = async () => {
-    if (busy) return;
-    setBusy(true);
-    const result = await pause({
-      environmentId,
-      input: { ...reference, paused: !canResume, clientRequestId: CommandId.make(randomUUID()) },
-    });
-    setBusy(false);
-    if (result._tag === "Failure")
-      toastManager.add({
-        type: "error",
-        title: gt("Could not update repository work"),
-        description: formatEnvironmentQueryError(result.cause),
-      });
-    else appAtomRegistry.refresh(statusAtom);
-  };
   const status = repositoryWorkStatus(config, data.idMismatch);
-  const pauseLabel = canResume ? gt("Resume repository work") : gt("Pause repository work");
-  const canHandOff = config.handoff === undefined;
+  const canHandOff = config.handoff === undefined && config.restore === undefined;
   return (
     <SettingsSection
       title={title ?? gt("Repository orchestration")}
@@ -426,13 +403,12 @@ function RepositoryControls({
           </span>
         }
       >
-        {restoreExpanded && config.handoff === undefined ? (
+        {restoreExpanded && canHandOff ? (
           <div className="flex w-full max-w-md flex-col gap-2 pt-1">
             <span className="text-xs text-muted-foreground">
               <T>
-                Pause the repository first. The current orchestrator must be stopped, with no active
-                issue workers or unclaimed start requests. Existing issue workers keep their
-                threads.
+                New workers wait while current work finishes. Cancel unclaimed start requests to
+                unblock the restore.
               </T>
             </span>
             <Select
@@ -469,7 +445,7 @@ function RepositoryControls({
               </Button>
               <Button
                 size="xs"
-                disabled={busy || !config.paused || restoreTarget === undefined}
+                disabled={busy || restoreTarget === undefined}
                 onClick={() => void replaceRoot()}
               >
                 <T>Make orchestrator</T>
@@ -477,7 +453,19 @@ function RepositoryControls({
             </div>
           </div>
         ) : null}
-        {config.handoff ? (
+        {config.restore ? (
+          <div className="flex items-center gap-2 py-1 text-xs text-muted-foreground">
+            {status.label}
+            <Button
+              size="xs"
+              variant="outline"
+              disabled={busy}
+              onClick={() => void transfer("cancel")}
+            >
+              <T>Cancel</T>
+            </Button>
+          </div>
+        ) : config.handoff ? (
           <PendingHandoffLine
             environmentId={environmentId}
             handoff={config.handoff}
@@ -550,28 +538,12 @@ function RepositoryControls({
       />
       <SettingsRow
         title={gt("Status")}
-        description={gt("Pause stops new issue work from starting; resume continues it.")}
+        description={gt("New work starts from Todo when a worker slot opens.")}
         control={
           <span className="flex min-w-0 items-center gap-1">
             <span className="truncate" role="status">
               {status.label}
             </span>
-            <Tooltip>
-              <TooltipTrigger
-                render={
-                  <Button
-                    variant="ghost"
-                    size="icon-xs"
-                    aria-label={pauseLabel}
-                    disabled={busy || repositoryPhase(config) === "draining"}
-                    onClick={() => void togglePause()}
-                  />
-                }
-              >
-                {canResume ? <PlayIcon /> : <PauseIcon />}
-              </TooltipTrigger>
-              <TooltipPopup side="bottom">{pauseLabel}</TooltipPopup>
-            </Tooltip>
           </span>
         }
       >

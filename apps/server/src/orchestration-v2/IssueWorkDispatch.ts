@@ -28,6 +28,15 @@ export class IssueReadSnapshots extends Context.Reference<ReadonlyArray<IssueWor
   },
 ) {}
 
+export class IssueQueueSnapshot extends Context.Reference<ReadonlySet<string>>(
+  "t3/issues/QueueSnapshot",
+  {
+    defaultValue: () => new Set(),
+  },
+) {}
+
+const issueKey = (issue: ThreadLinkedIssue) => `${issue.host}:${issue.repositoryId}:${issue.id}`;
+
 /** Dispatch lock keys the current fiber already holds. */
 class HeldDispatchLocks extends Context.Reference<ReadonlySet<ThreadId>>(
   "t3/issues/HeldDispatchLocks",
@@ -167,6 +176,12 @@ export const makeIssueWorkDispatch = Effect.gen(function* () {
       );
     if (includeQueues && Option.isSome(issueWorkStore)) {
       const rootId = shell?.lineage.rootThreadId ?? threadId;
+      const repository = (yield* issueWorkStore.value.configuration(rootId)) ?? explicit[0];
+      if (repository !== undefined) {
+        for (const entry of yield* issueWorkStore.value.queue(repository)) {
+          selected.set(issueKey(entry.issue), entry.issue);
+        }
+      }
       for (const workerId of yield* issueWorkStore.value.workerThreads(rootId)) {
         if (!(yield* projectionStore.canStartQueuedRun(workerId))) continue;
         const worker = yield* projectionStore.getThreadShell(workerId);
@@ -214,6 +229,20 @@ export const makeIssueWorkDispatch = Effect.gen(function* () {
     return reads;
   });
 
+  const readQueuedIssueSnapshot = Effect.fn("readQueuedIssueSnapshot")(function* (
+    threadId: ThreadId,
+    explicit: ReadonlyArray<ThreadLinkedIssue> = [],
+  ) {
+    if (Option.isNone(issueWorkStore)) return new Set<string>();
+    const shell = yield* projectionStore.getThreadShell(threadId);
+    const rootId = shell?.lineage.rootThreadId ?? threadId;
+    const repository = (yield* issueWorkStore.value.configuration(rootId)) ?? explicit[0];
+    if (repository === undefined) return new Set<string>();
+    return new Set(
+      (yield* issueWorkStore.value.queue(repository)).map(({ issue }) => issueKey(issue)),
+    );
+  });
+
   const promoteOtherIssueQueues = Effect.fn("Orchestrator.promoteOtherIssueQueues")(function* <
     E,
     R,
@@ -259,7 +288,19 @@ export const makeIssueWorkDispatch = Effect.gen(function* () {
     const receipt = needsReads
       ? yield* commandReceipts.getByCommandId(command.commandId).pipe(mapDispatchError(command))
       : Option.none();
-    const issueReads =
+    const includeQueues =
+      command.type === "repository.work.continue" ||
+      (command.type === "issue.work.start" && command.automatic === true);
+    const queueSnapshot =
+      needsReads &&
+      includeQueues &&
+      (Option.isNone(receipt) || command.type === "repository.work.continue")
+        ? yield* readQueuedIssueSnapshot(
+            commandThreadId(command),
+            "issue" in command && command.issue !== undefined ? [command.issue] : [],
+          ).pipe(mapDispatchError(command))
+        : new Set<string>();
+    const snapshots =
       needsReads &&
       (Option.isNone(receipt) ||
         command.type === "queue.resume" ||
@@ -267,14 +308,18 @@ export const makeIssueWorkDispatch = Effect.gen(function* () {
         ? yield* readIssueSnapshots(
             commandThreadId(command),
             "issue" in command && command.issue !== undefined ? [command.issue] : [],
-            command.type === "repository.work.continue",
+            command.type === "repository.work.continue" ||
+              (command.type === "issue.work.start" && command.automatic === true),
             command.type === "issue.work.start",
           ).pipe(mapDispatchError(command))
         : [];
     const dispatchCommand: OrchestrationV2ServerCommand = needsReads
-      ? { ...command, issueReads }
+      ? { ...command, issueReads: snapshots }
       : command;
-    return yield* dispatch(dispatchCommand);
+    return yield* dispatch(dispatchCommand).pipe(
+      Effect.provideService(IssueReadSnapshots, snapshots),
+      Effect.provideService(IssueQueueSnapshot, queueSnapshot),
+    );
   });
 
   const isClosedIssue = (issue: ThreadLinkedIssue) =>

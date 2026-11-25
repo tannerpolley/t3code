@@ -19,6 +19,9 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import {
   CommandId,
   EnvironmentId,
+  IssueReadError,
+  IssueOperationError,
+  IssueTrackerKind,
   RepositoryChildrenStatus,
   RuntimeRequestId,
   EventId,
@@ -58,6 +61,7 @@ import * as PullRequestService from "../pullRequest/PullRequestService.ts";
 import * as ProviderRuntimeRecovery from "../orchestration-v2/ProviderRuntimeRecoveryService.ts";
 import * as IdAllocator from "@t3tools/provider-core/server/IdAllocator";
 import * as IssueService from "./IssueService.ts";
+import * as TrackerIssueService from "../issue/IssueService.ts";
 import * as GitHubApi from "./IssueGitHubApi.ts";
 import * as GitHubPullRequestApi from "@t3tools/source-control-github/server/GitHubPullRequestApi";
 import * as IssueWorkService from "./IssueWorkService.ts";
@@ -86,7 +90,8 @@ const issue = (number: number) => ({
 const read = (number: number) => ({
   issue: issue(number),
   state: "open" as const,
-  milestoneNumber: null,
+  planningStatus: "Todo",
+  labels: [],
   parent: null,
   subIssues: [],
   blockedBy: [],
@@ -99,7 +104,21 @@ const reads = Layer.mock(IssueService.IssueService)({
   workRead: (input) =>
     Effect.succeed({ ...read(input.number), state: input.number === 99 ? "closed" : "open" }),
   repositoryIdentity: () => Effect.succeed({ ...reference, repositoryId: "queue-repo" }),
+  repositoryIssuesPage: () => Effect.succeed({ items: [], nextPage: null }),
 });
+const boardReads = (status: (number: number) => string) =>
+  Layer.effect(
+    IssueService.IssueService,
+    Effect.map(IssueService.IssueService, (service) => ({
+      ...service,
+      workRead: (input, options) =>
+        service
+          .workRead(input, options)
+          .pipe(Effect.map((row) => ({ ...row, planningStatus: status(input.number) }))),
+    })),
+  ).pipe(Layer.provide(reads));
+const backlogReads = boardReads(() => "Backlog");
+
 const projectRepositoryIdentity = {
   provider: SourceControlProviderKind.make("github"),
   canonicalKey: "github.com/owner/repo",
@@ -265,7 +284,7 @@ it.effect("hands SQLite connections to waiting queue calls before new borrows", 
             if (
               !arrived &&
               (connection === "reader" ||
-                query.includes("SELECT root_thread_id, project_id, paused, revision"))
+                query.includes("SELECT root_thread_id, project_id, revision"))
             ) {
               arrived = true;
               arrivals++;
@@ -296,7 +315,7 @@ it.effect("hands SQLite connections to waiting queue calls before new borrows", 
       }).pipe(
         Effect.provide(
           harness(
-            reads,
+            backlogReads,
             undefined,
             SqlitePersistence.layerFromPath(path.join(directory, `${connection}.sqlite`)).pipe(
               Layer.provide(NodeServices.layer),
@@ -339,12 +358,10 @@ it.effect("reads repository status while a write transaction holds the writer", 
           projectId,
           launchCommandId: CommandId.make("status-root-create"),
           revision: 1,
-          paused: true,
           workerLimit: 1,
           readOnlyLimit: 4,
           publishStatusComments: false,
           publishCloseoutComments: false,
-          milestones: [],
           suspendedIssues: [],
         },
       });
@@ -411,67 +428,135 @@ const finish = (
     });
   });
 
-it.effect("uses the Orchestrator and worker provider selections independently", () => {
-  const claude = {
-    ...adapter,
-    instanceId: ProviderInstanceId.make("claudeAgent"),
-    driver: ProviderDriverKind.make("claudeAgent"),
-  };
-  const adapters = [adapter, claude];
-  const base = makeHarness({
-    adapters,
-    providers: adapters.map((entry): ServerProvider => ({
-      instanceId: entry.instanceId,
-      driver: entry.driver,
-      enabled: true,
-      installed: true,
-      version: null,
-      status: "ready",
-      auth: { status: "authenticated" },
-      checkedAt: "2026-10-23T00:00:00Z",
-      availability: "available",
-      models: [],
-      slashCommands: [],
-      skills: [],
-    })),
-    issueServiceLayer: reads,
-    projectRepositoryIdentity,
-    localStatus: () => Effect.succeed({ isRepo: true, refName: "main" } as never),
-    serverSettings: {
-      modelRoles: {
-        orchestrator: { complex: { provider: "codex", effort: "default" } },
-        implementor: { complex: { provider: "claude", effort: "default" } },
+it.effect.each([{}, { modelRoleId: "orchestrator-complex" }])(
+  "starts an implementor from the board with Start options %j",
+  (roleOverride) => {
+    const claude = {
+      ...adapter,
+      instanceId: ProviderInstanceId.make("claudeAgent"),
+      driver: ProviderDriverKind.make("claudeAgent"),
+    };
+    const adapters = [adapter, claude];
+    const base = makeHarness({
+      adapters,
+      providers: adapters.map((entry): ServerProvider => ({
+        instanceId: entry.instanceId,
+        driver: entry.driver,
+        enabled: true,
+        installed: true,
+        version: null,
+        status: "ready",
+        auth: { status: "authenticated" },
+        checkedAt: "2026-10-23T00:00:00Z",
+        availability: "available",
+        models: [],
+        slashCommands: [],
+        skills: [],
+      })),
+      issueServiceLayer: reads,
+      projectRepositoryIdentity,
+      localStatus: () => Effect.succeed({ isRepo: true, refName: "main" } as never),
+      serverSettings: {
+        modelRoles: {
+          orchestrator: { complex: { provider: "codex", effort: "default" } },
+          implementor: { complex: { provider: "claude", effort: "default" } },
+        },
+        modelTiers: {
+          2: { codex: { model: modelSelection.model }, claude: { model: "claude-sonnet-4-6" } },
+        },
       },
-      modelTiers: {
-        2: { codex: { model: modelSelection.model }, claude: { model: "claude-sonnet-4-6" } },
-      },
-    },
+    });
+    const dependencies = Layer.mergeAll(
+      base.layer,
+      reads,
+      IssueWorkStore.layer.pipe(Layer.provide(base.layer)),
+      IdAllocator.layer,
+    );
+    return Effect.gen(function* () {
+      const service = yield* IssueWorkService.IssueWorkService;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const store = yield* IssueWorkStore.IssueWorkStore;
+      const started = yield* service.start({
+        ...input(1, "worker-provider:root"),
+        ...roleOverride,
+        projectId,
+        createOrchestrator: true,
+      });
+      assert.deepEqual(
+        (yield* threads.getThreadRecords(started.rootThreadId, [])).thread.modelSelection,
+        modelSelection,
+      );
+      assert.isNotNull(started.issueThreadId);
+      const worker = (yield* threads.getThreadRecords(started.issueThreadId!, [])).thread;
+      assert.equal(worker.role, "implementor");
+      assert.equal(worker.modelSelection.instanceId, claude.instanceId);
+      assert.equal(
+        (yield* store.latestRequest(issue(1)))!.modelSelection.instanceId,
+        claude.instanceId,
+      );
+    }).pipe(Effect.provide(IssueWorkService.layer.pipe(Layer.provideMerge(dependencies))));
+  },
+);
+
+it.effect("Start queues before writing Todo and keeps the owner's hold in place", () => {
+  let status = "Backlog";
+  let failStatusWrite = true;
+  const writes: string[] = [];
+  const issueReads = Layer.mock(IssueService.IssueService)({
+    resolveLinkedIssue: (input) => Effect.succeed(issue(input.number)),
+    workRead: (input) =>
+      Effect.sync(() => ({
+        ...read(input.number),
+        planningStatus: input.number === 2 ? status : "Backlog",
+        labels: input.number === 2 ? ["Needs you"] : [],
+      })),
+    repositoryIdentity: () => Effect.succeed({ ...reference, repositoryId: "queue-repo" }),
+    markChanged: () => Effect.void,
   });
-  const dependencies = Layer.mergeAll(
-    base.layer,
-    reads,
-    IssueWorkStore.layer.pipe(Layer.provide(base.layer)),
-    IdAllocator.layer,
-  );
+  const tracker = Layer.mock(TrackerIssueService.IssueService)({
+    resolveUrl: () =>
+      Effect.succeed({
+        projectId,
+        tracker: IssueTrackerKind.make("github"),
+        host: reference.host,
+        scope: reference.repository,
+        key: "2",
+        writable: true,
+      }),
+    setState: ({ state }) =>
+      Effect.gen(function* () {
+        if (failStatusWrite)
+          return yield* new IssueOperationError({
+            operation: "setState",
+            detail: "GitHub did not write Todo.",
+          });
+        writes.push(state);
+        status = state;
+      }),
+  });
   return Effect.gen(function* () {
     const service = yield* IssueWorkService.IssueWorkService;
-    const threads = yield* ThreadManagement.ThreadManagementService;
     const store = yield* IssueWorkStore.IssueWorkStore;
-    const started = yield* service.start({
-      ...input(1, "worker-provider:root"),
-      projectId,
-      modelRoleId: "implementor-complex",
-      createOrchestrator: true,
-    });
-    assert.deepEqual(
-      (yield* threads.getThreadRecords(started.rootThreadId, [])).thread.modelSelection,
-      modelSelection,
-    );
-    assert.equal(
-      (yield* store.latestRequest(issue(1)))!.modelSelection.instanceId,
-      claude.instanceId,
-    );
-  }).pipe(Effect.provide(IssueWorkService.layer.pipe(Layer.provideMerge(dependencies))));
+    const queue = store
+      .queue(reference)
+      .pipe(Effect.map((rows) => rows.map(({ issue }) => issue.number)));
+    const startInput = { ...input(2, "start-from-backlog"), projectId };
+    yield* createRoot();
+    yield* service.queueIssue(input(1));
+    const failure = yield* service.start(startInput).pipe(Effect.flip);
+    assert.include(failure.message, "GitHub did not write Todo");
+    assert.deepEqual(yield* queue, [1, 2]);
+    assert.equal(status, "Backlog");
+    failStatusWrite = false;
+    const queued = yield* service.start(startInput);
+    assert.equal(queued.status, "queued_preparing");
+    assert.equal(queued.rootThreadId, rootId);
+    assert.isNull(queued.issueThreadId);
+    yield* service.start(startInput);
+    assert.deepEqual(writes, ["Todo"]);
+    assert.deepEqual(yield* queue, [1, 2]);
+    assert.isNull(yield* store.issueOwner(issue(2)));
+  }).pipe(Effect.provide(harness(issueReads).pipe(Layer.provide(tracker))));
 });
 
 it.effect(
@@ -534,13 +619,7 @@ it.effect(
       const store = yield* IssueWorkStore.IssueWorkStore;
       const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
       yield* createRoot();
-      yield* service.queueIssue(input(3));
       closed.add(3);
-      yield* service.setPaused({
-        ...reference,
-        paused: false,
-        clientRequestId: CommandId.make("resume-queue"),
-      });
       assert.deepEqual(yield* store.queue(reference), []);
       yield* threads.dispatch({
         type: "message.dispatch",
@@ -567,120 +646,18 @@ it.effect(
       blocked.clear();
       yield* service.reconcile(rootId);
       yield* worker.drain();
-      assert.isNotNull(yield* store.issueOwner(issue(2)));
-      assert.deepEqual(yield* store.queue(reference), []);
-      // The single slot stays with issue 1; issue 2's worker waits for it.
+      assert.isNull(yield* store.issueOwner(issue(2)));
+      assert.deepEqual(
+        (yield* store.queue(reference)).map(({ issue }) => issue.number),
+        [2],
+      );
+      // The second issue stays in Todo until the first worker releases its slot.
       assert.equal(yield* store.slotsInUse(rootId), 1);
     }).pipe(Effect.provide(harness(relationships)));
   },
 );
 
-it.effect.each([false, true])(
-  "queued issue workers take a free slot ahead of earlier waiting workers (queued while paused: %s)",
-  (pausedWhileQueued) =>
-    Effect.gen(function* () {
-      const resumeStarted = yield* Deferred.make<void>();
-      const readingQueuedIssue = yield* Deferred.make<void>();
-      const releaseQueuedIssueRead = yield* Deferred.make<void>();
-      const issueReads = Layer.effect(
-        IssueService.IssueService,
-        Effect.map(IssueService.IssueService, (service) => ({
-          ...service,
-          workRead: (input, options) =>
-            Effect.gen(function* () {
-              if (input.number === 5 && (yield* Deferred.isDone(resumeStarted))) {
-                yield* Deferred.succeed(readingQueuedIssue, undefined);
-                yield* Deferred.await(releaseQueuedIssueRead);
-              }
-              return yield* service.workRead(input, options);
-            }),
-        })),
-      ).pipe(Layer.provide(reads));
-      yield* Effect.gen(function* () {
-        const service = yield* IssueWorkService.IssueWorkService;
-        const orchestrator = yield* Orchestrator.OrchestratorV2;
-        const threads = yield* ThreadManagement.ThreadManagementService;
-        const store = yield* IssueWorkStore.IssueWorkStore;
-        const sink = yield* EventSink.EventSinkV2;
-        const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
-        yield* createRoot(false);
-        const startIssue = (number: number, key: string) =>
-          service.start({
-            ...input(number, key),
-            projectId,
-            modelRoleId: "implementor-complex",
-          });
-        const setPaused = (paused: boolean) =>
-          service.setPaused({
-            ...reference,
-            paused,
-            clientRequestId: CommandId.make(`ordering-paused:${paused}`),
-          });
-        const runOf = (threadId: ThreadId) =>
-          threads.getThreadRecords(threadId, ["runs"]).pipe(Effect.map(({ runs }) => runs[0]!));
-        yield* startIssue(3, "a-running-worker");
-        yield* TestClock.adjust("1 second");
-        // Sorts before the queue's request ids, so only the admission order can put issue 5 first.
-        yield* startIssue(4, "a-waiting-worker");
-        yield* TestClock.adjust("1 second");
-        yield* worker.drain();
-        const running = (yield* store.issueOwner(issue(3)))!;
-        const earlier = (yield* store.issueOwner(issue(4)))!;
-        assert.equal(yield* store.slotsInUse(rootId), 1);
-        assert.equal((yield* runOf(earlier)).status, "queued");
-        const sequence = yield* sink.latestSequence();
-        if (pausedWhileQueued) {
-          // The slot frees while paused; resuming must offer it to the queue entry first.
-          yield* setPaused(true);
-          yield* service.queueIssue(input(5));
-          yield* finish(yield* runOf(running), "running-worker-finished");
-          // An in-flight promotion can record the pause before the completed run retries it.
-          yield* sink.stream({ afterSequence: sequence }).pipe(
-            Stream.filter(
-              (stored) =>
-                stored.event.type === "run.updated" &&
-                stored.event.threadId === earlier &&
-                stored.event.payload.admissionWait === "repository_paused",
-            ),
-            Stream.take(1),
-            Stream.runCollect,
-          );
-          yield* worker.drain();
-          assert.isNull(yield* store.issueOwner(issue(5)));
-          yield* Deferred.succeed(resumeStarted, undefined);
-          const resume = yield* setPaused(false).pipe(Effect.forkScoped);
-          yield* Deferred.await(readingQueuedIssue);
-          yield* orchestrator.resumeQueuedRuns;
-          yield* Deferred.succeed(releaseQueuedIssueRead, undefined);
-          yield* Fiber.join(resume);
-        } else {
-          yield* service.queueIssue(input(5));
-          const waiting = (yield* store.issueOwner(issue(5)))!;
-          assert.equal((yield* runOf(waiting)).status, "queued");
-          assert.deepEqual(yield* store.admissionThreads(rootId), [waiting, earlier]);
-          yield* finish(yield* runOf(running), "running-worker-finished");
-        }
-        const queued = (yield* store.issueOwner(issue(5)))!;
-        // Workspace preparation runs before admission; the first run to start took the freed slot.
-        const [admitted] = yield* sink.stream({ afterSequence: sequence }).pipe(
-          Stream.filter(
-            (stored) =>
-              (stored.event.type === "run.updated" || stored.event.type === "run.created") &&
-              (stored.event.threadId === queued || stored.event.threadId === earlier) &&
-              stored.event.payload.status === "starting",
-          ),
-          Stream.take(1),
-          Stream.runCollect,
-        );
-        assert.equal(admitted!.event.threadId, queued);
-        yield* worker.drain();
-        assert.equal((yield* runOf(earlier)).status, "queued");
-        assert.equal(yield* store.slotsInUse(rootId), 1);
-      }).pipe(Effect.provide(harness(issueReads)));
-    }),
-);
-
-const createRoot = (paused = true) =>
+const createRoot = () =>
   Effect.gen(function* () {
     const threads = yield* ThreadManagement.ThreadManagementService;
     yield* threads.dispatch({
@@ -702,21 +679,309 @@ const createRoot = (paused = true) =>
         projectId,
         launchCommandId: CommandId.make("create-root"),
         revision: 1,
-        paused,
         workerLimit: 1,
         readOnlyLimit: 4,
         publishStatusComments: false,
         publishCloseoutComments: false,
-        milestones: [],
         suspendedIssues: [],
       },
     });
   });
 
+it.effect("admits a legacy root's oldest unheld Todo and keeps its claim through replay", () => {
+  const issues = [1, 2, 3, 4, 5].map((number) => ({
+    ...issue(number),
+    state: "open" as const,
+    stateReason: null,
+    author: null,
+    assignees: [],
+    labels:
+      number === 2
+        ? [{ name: "Needs you", color: null }]
+        : number === 3
+          ? [{ name: "Needs orchestrator", color: null }]
+          : [],
+    milestone: null,
+    planningStatus: number === 1 ? "Backlog" : "Todo",
+    createdAt: `2026-01-0${number}T00:00:00Z`,
+    updatedAt: "2026-01-01T00:00:00Z",
+    commentCount: 0,
+  }));
+  const workRead = (number: number) => {
+    const row = issues.find((item) => item.number === number)!;
+    return {
+      ...read(number),
+      planningStatus: row.planningStatus,
+      labels: row.labels.map(({ name }) => name),
+    };
+  };
+  const issueReads = Layer.mock(IssueService.IssueService)({
+    resolveLinkedIssue: (input) => Effect.succeed(issue(input.number)),
+    workRead: (input) => Effect.succeed(workRead(input.number)),
+    workReads: (_input, numbers) =>
+      Effect.succeed(new Map(numbers.map((number) => [number, workRead(number)]))),
+    repositoryIssuesPage: ({ order }) =>
+      Effect.succeed({ items: order === "oldest" ? issues : issues.toReversed(), nextPage: null }),
+    repositoryIdentity: () => Effect.succeed({ ...reference, repositoryId: "queue-repo" }),
+  });
+  return Effect.gen(function* () {
+    const service = yield* IssueWorkService.IssueWorkService;
+    const store = yield* IssueWorkStore.IssueWorkStore;
+    const sql = yield* SqlClient.SqlClient;
+    yield* createRoot();
+    yield* sql`UPDATE orchestration_v2_projection_repository_orchestration SET paused = 1`;
+    yield* sql`UPDATE orchestration_v2_projection_threads
+      SET payload_json = json_set(payload_json, '$.repositoryOrchestration.paused', json('true'),
+        '$.repositoryOrchestration.milestones', json('[{"number":1,"modelRoleId":"worker","status":"complete","fingerprint":"old"}]'))
+      WHERE thread_id = ${rootId}`;
+    assert.deepEqual(yield* store.activeRoots(), [rootId]);
+    yield* service.reconcile(rootId);
+    const owner = yield* store.issueOwner(issue(4));
+    assert.isNotNull(owner);
+    for (const number of [1, 2, 3, 5]) assert.isNull(yield* store.issueOwner(issue(number)));
+    const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
+    yield* worker.drain();
+    assert.isTrue((yield* (yield* ProjectionReplay.ProjectionReplay).rebuild).valid);
+    yield* service.reconcile(rootId);
+    assert.equal(yield* store.issueOwner(issue(4)), owner);
+  }).pipe(Effect.provide(harness(issueReads)));
+});
+
+it.effect("a queue entry committed during a Todo scan gets the slot only once", () =>
+  Effect.gen(function* () {
+    const started = yield* Deferred.make<void>();
+    const release = yield* Deferred.make<void>();
+    const listing = [1, 2].map((number) => ({
+      ...issue(number),
+      state: "open" as const,
+      stateReason: null,
+      author: null,
+      assignees: [],
+      labels: [],
+      milestone: null,
+      planningStatus: "Todo",
+      createdAt: `2026-01-0${number}T00:00:00Z`,
+      updatedAt: "2026-01-01T00:00:00Z",
+      commentCount: 0,
+    }));
+    const issueReads = Layer.mock(IssueService.IssueService)({
+      resolveLinkedIssue: (input) => Effect.succeed(issue(input.number)),
+      workRead: (input) => Effect.succeed(read(input.number)),
+      workReads: (_input, numbers) =>
+        Effect.succeed(new Map(numbers.map((number) => [number, read(number)]))),
+      repositoryIssuesPage: () =>
+        Deferred.succeed(started, undefined).pipe(
+          Effect.andThen(Deferred.await(release)),
+          Effect.as({ items: listing, nextPage: null }),
+        ),
+      repositoryIdentity: () => Effect.succeed({ ...reference, repositoryId: "queue-repo" }),
+    });
+    yield* Effect.gen(function* () {
+      const service = yield* IssueWorkService.IssueWorkService;
+      const store = yield* IssueWorkStore.IssueWorkStore;
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      yield* createRoot();
+      const scan = yield* service.reconcile(rootId).pipe(Effect.forkScoped);
+      yield* Deferred.await(started);
+      yield* threads.dispatch({
+        type: "issue.queue.change",
+        commandId: CommandId.make("queue-during-scan"),
+        threadId: rootId,
+        issue: issue(2),
+        queued: true,
+      });
+      yield* Deferred.succeed(release, undefined);
+      yield* Fiber.join(scan);
+      yield* service.reconcile(rootId);
+      const owner = yield* store.issueOwner(issue(2));
+      assert.isNotNull(owner);
+      assert.isNull(yield* store.issueOwner(issue(1)));
+      yield* service.reconcile(rootId);
+      assert.deepEqual(yield* store.workerThreads(rootId), [owner]);
+    }).pipe(Effect.provide(harness(issueReads)));
+  }),
+);
+
+it.effect("a queue entry committed during the final GitHub read wins the slot", () => {
+  let scanCompleted = false;
+  let injected = false;
+  let queueEntry: Effect.Effect<void> | undefined;
+  let queueWriteError: unknown = null;
+  const listing = [1, 2].map((number) => ({
+    ...issue(number),
+    state: "open" as const,
+    stateReason: null,
+    author: null,
+    assignees: [],
+    labels: [],
+    milestone: null,
+    planningStatus: "Todo",
+    createdAt: `2026-01-0${number}T00:00:00Z`,
+    updatedAt: "2026-01-01T00:00:00Z",
+    commentCount: 0,
+  }));
+  const issueReads = Layer.mock(IssueService.IssueService)({
+    resolveLinkedIssue: (input) => Effect.succeed(issue(input.number)),
+    workRead: (input) =>
+      Effect.gen(function* () {
+        const result = read(input.number);
+        if (scanCompleted && !injected && input.number === 1 && queueEntry !== undefined) {
+          injected = true;
+          yield* queueEntry;
+        }
+        return result;
+      }),
+    workReads: (_input, numbers) =>
+      Effect.succeed(new Map(numbers.map((number) => [number, read(number)]))).pipe(
+        Effect.tap(() => Effect.sync(() => void (scanCompleted = true))),
+      ),
+    repositoryIssuesPage: () => Effect.succeed({ items: listing, nextPage: null }),
+    repositoryIdentity: () => Effect.succeed({ ...reference, repositoryId: "queue-repo" }),
+  });
+  return Effect.gen(function* () {
+    const service = yield* IssueWorkService.IssueWorkService;
+    const store = yield* IssueWorkStore.IssueWorkStore;
+    const threads = yield* ThreadManagement.ThreadManagementService;
+    yield* createRoot();
+    queueEntry = threads
+      .dispatch({
+        type: "issue.queue.change",
+        commandId: CommandId.make("queue-during-final-admission-read"),
+        threadId: rootId,
+        issue: issue(2),
+        queued: true,
+      })
+      .pipe(
+        Effect.catch((error) =>
+          Effect.sync(() => {
+            queueWriteError = error;
+          }),
+        ),
+      );
+    yield* service.reconcile(rootId);
+    assert.isNull(queueWriteError);
+    assert.deepEqual(
+      (yield* store.queue(reference)).map(({ issue }) => issue.number),
+      [2],
+    );
+    assert.isNull(yield* store.issueOwner(issue(1)));
+    yield* service.reconcile(rootId);
+    const queuedOwner = yield* store.issueOwner(issue(2));
+    assert.isNotNull(queuedOwner);
+    assert.isNull(yield* store.issueOwner(issue(1)));
+    yield* service.reconcile(rootId);
+    assert.deepEqual(yield* store.workerThreads(rootId), [queuedOwner]);
+  }).pipe(Effect.provide(harness(issueReads)));
+});
+
+it.effect(
+  "a rejected automatic admission receipt can recover after a transient read failure",
+  () => {
+    let failDetailRead = true;
+    const listing = {
+      ...issue(1),
+      state: "open" as const,
+      stateReason: null,
+      author: null,
+      assignees: [],
+      labels: [],
+      milestone: null,
+      planningStatus: "Todo",
+      createdAt: "2026-01-01T00:00:00Z",
+      updatedAt: "2026-01-01T00:00:00Z",
+      commentCount: 0,
+    };
+    const issueReads = Layer.mock(IssueService.IssueService)({
+      resolveLinkedIssue: (input) => Effect.succeed(issue(input.number)),
+      workRead: (input) =>
+        Effect.gen(function* () {
+          if (input.number === 1 && failDetailRead) {
+            failDetailRead = false;
+            return yield* new IssueReadError({
+              operation: "detail",
+              code: "inaccessible",
+              message: "The issue detail read failed once.",
+            });
+          }
+          return read(input.number);
+        }),
+      workReads: (_input, numbers) =>
+        Effect.succeed(new Map(numbers.map((number) => [number, read(number)]))),
+      repositoryIssuesPage: () => Effect.succeed({ items: [listing], nextPage: null }),
+      repositoryIdentity: () => Effect.succeed({ ...reference, repositoryId: "queue-repo" }),
+    });
+    return Effect.gen(function* () {
+      const service = yield* IssueWorkService.IssueWorkService;
+      const store = yield* IssueWorkStore.IssueWorkStore;
+      yield* createRoot();
+      yield* service.reconcile(rootId);
+      assert.isNull(yield* store.issueOwner(issue(1)));
+      yield* service.reconcile(rootId);
+      const owner = yield* store.issueOwner(issue(1));
+      assert.isNotNull(owner);
+      yield* service.reconcile(rootId);
+      assert.deepEqual(yield* store.workerThreads(rootId), [owner]);
+    }).pipe(Effect.provide(harness(issueReads)));
+  },
+);
+
+it.effect("an unreadable queued issue does not starve a readable Todo issue", () => {
+  const listing = [1, 2].map((number) => ({
+    ...issue(number),
+    state: "open" as const,
+    stateReason: null,
+    author: null,
+    assignees: [],
+    labels: [],
+    milestone: null,
+    planningStatus: "Todo",
+    createdAt: `2026-01-0${number}T00:00:00Z`,
+    updatedAt: "2026-01-01T00:00:00Z",
+    commentCount: 0,
+  }));
+  const issueReads = Layer.mock(IssueService.IssueService)({
+    resolveLinkedIssue: (input) => Effect.succeed(issue(input.number)),
+    workRead: (input) =>
+      input.number === 1
+        ? Effect.fail(
+            new IssueReadError({
+              operation: "detail",
+              code: "inaccessible",
+              message: "The queued issue is unreadable.",
+            }),
+          )
+        : Effect.succeed(read(input.number)),
+    workReads: (_input, numbers) =>
+      Effect.succeed(new Map(numbers.map((number) => [number, read(number)]))),
+    repositoryIssuesPage: () => Effect.succeed({ items: listing, nextPage: null }),
+    repositoryIdentity: () => Effect.succeed({ ...reference, repositoryId: "queue-repo" }),
+  });
+  return Effect.gen(function* () {
+    const service = yield* IssueWorkService.IssueWorkService;
+    const store = yield* IssueWorkStore.IssueWorkStore;
+    const threads = yield* ThreadManagement.ThreadManagementService;
+    yield* createRoot();
+    yield* threads.dispatch({
+      type: "issue.queue.change",
+      commandId: CommandId.make("queue-unreadable-issue-1"),
+      threadId: rootId,
+      issue: issue(1),
+      queued: true,
+    });
+    yield* service.reconcile(rootId);
+    assert.deepEqual(
+      (yield* store.queue(reference)).map(({ issue }) => issue.number),
+      [1],
+    );
+    assert.isNull(yield* store.issueOwner(issue(1)));
+    assert.isNotNull(yield* store.issueOwner(issue(2)));
+  }).pipe(Effect.provide(harness(issueReads)));
+});
+
 const startWatchTestWorker = Effect.fn("test.startWatchTestWorker")(function* () {
   const threads = yield* ThreadManagement.ThreadManagementService;
   const store = yield* IssueWorkStore.IssueWorkStore;
-  yield* createRoot(false);
+  yield* createRoot();
   yield* threads.dispatch({
     type: "message.dispatch",
     commandId: CommandId.make("pr-watch-root-start"),
@@ -745,6 +1010,99 @@ const startWatchTestWorker = Effect.fn("test.startWatchTestWorker")(function* ()
     creationSource: "mcp",
   });
   return (yield* store.issueOwner(issue(1)))!;
+});
+
+it.effect("retries a failed claim once and parks the same issue with Needs you", () => {
+  let planningStatus = "Todo";
+  let parkingWriteFailure: "label" | "comment" | null = null;
+  const labels: string[] = [];
+  const notes: string[] = [];
+  const managedComments = new Map<string, { readonly id: string; readonly body: string }>();
+  const issueReads = Layer.mock(IssueService.IssueService)({
+    resolveLinkedIssue: (input) => Effect.succeed(issue(input.number)),
+    workRead: (input) => Effect.sync(() => ({ ...read(input.number), planningStatus, labels })),
+    repositoryIdentity: () => Effect.succeed({ ...reference, repositoryId: "queue-repo" }),
+    repositoryIssuesPage: () => Effect.succeed({ items: [], nextPage: null }),
+    findManagedComment: ({ marker }) => Effect.sync(() => managedComments.get(marker) ?? null),
+    postComment: (_issue, body) =>
+      Effect.gen(function* () {
+        if (parkingWriteFailure === "comment")
+          return yield* new IssueReadError({
+            code: "upstream",
+            operation: "detail",
+            message: "Could not write the parking note.",
+          });
+        notes.push(body);
+        const marker = /<!-- t3-issue-retry-exhausted:[^>]+-->/u.exec(body)?.[0];
+        if (marker !== undefined) managedComments.set(marker, { id: "comment:1", body });
+        return { id: 1, html_url: "https://github.com/owner/repo/issues/1#issuecomment-1" };
+      }),
+    setLabels: (_issue, add, remove) =>
+      Effect.gen(function* () {
+        if (parkingWriteFailure === "label")
+          return yield* new IssueReadError({
+            code: "upstream",
+            operation: "detail",
+            message: "Could not write the parking label.",
+          });
+        const next = [...new Set([...labels.filter((label) => !remove.includes(label)), ...add])];
+        labels.splice(0, labels.length, ...next);
+      }),
+    markChanged: () => Effect.void,
+  });
+  return Effect.gen(function* () {
+    const service = yield* IssueWorkService.IssueWorkService;
+    const threads = yield* ThreadManagement.ThreadManagementService;
+    const worker = yield* startWatchTestWorker();
+    const runs = () => threads.getThreadRecords(worker, ["runs"]);
+    planningStatus = "In progress";
+    yield* finish((yield* runs()).runs[0]!, "first-failure", "failed");
+    yield* service.reconcile(rootId);
+    const retry = (yield* runs()).runs[1]!;
+    assert.equal(retry.userMessageId?.startsWith(`issue-retry:${worker}:`), true);
+    assert.deepEqual(labels, []);
+    yield* finish(retry, "retry-failure", "failed");
+    yield* service.reconcile(rootId);
+    yield* service.reconcile(rootId);
+    assert.lengthOf((yield* runs()).runs, 2);
+    assert.deepEqual(labels, ["Needs you"]);
+    assert.lengthOf(notes, 1);
+    assert.include(notes[0]!, "failed after one retry");
+    assert.equal(yield* (yield* IssueWorkStore.IssueWorkStore).issueOwner(issue(1)), worker);
+    labels.length = 0;
+    planningStatus = "Todo";
+    yield* service.reconcile(rootId);
+    const resumed = (yield* runs()).runs[2]!;
+    assert.equal(resumed.userMessageId?.startsWith(`issue-owner-resume:${worker}:`), true);
+    assert.deepEqual(labels, []);
+    // GitHub can still report Todo while the owner-resume run is executing. Its failure starts a
+    // fresh one-retry cycle instead of being mistaken for another owner approval.
+    planningStatus = "Todo";
+    yield* finish(resumed, "owner-resume-failure", "failed");
+    yield* service.reconcile(rootId);
+    const nextRetry = (yield* runs()).runs[3]!;
+    assert.equal(nextRetry.userMessageId?.startsWith(`issue-retry:${worker}:`), true);
+    yield* finish(nextRetry, "second-retry-failure", "failed");
+    parkingWriteFailure = "label";
+    yield* service.reconcile(rootId);
+    yield* service.reconcile(rootId);
+    assert.lengthOf((yield* runs()).runs, 4);
+    assert.deepEqual(labels, []);
+    assert.lengthOf(notes, 1);
+    parkingWriteFailure = "comment";
+    yield* service.reconcile(rootId);
+    assert.deepEqual(labels, ["Needs you"]);
+    assert.lengthOf(notes, 1);
+    parkingWriteFailure = null;
+    yield* service.reconcile(rootId);
+    assert.lengthOf((yield* runs()).runs, 4);
+    assert.deepEqual(labels, ["Needs you"]);
+    assert.lengthOf(notes, 2);
+  }).pipe(
+    Effect.provide(
+      harness(issueReads).pipe(Layer.provide(Layer.mock(TrackerIssueService.IssueService)({}))),
+    ),
+  );
 });
 
 it.effect(
@@ -1120,7 +1478,7 @@ const readChildStatus = Effect.gen(function* () {
 
 const startStatusRoot = Effect.gen(function* () {
   const threads = yield* ThreadManagement.ThreadManagementService;
-  yield* createRoot(false);
+  yield* createRoot();
   yield* threads.dispatch({
     type: "message.dispatch",
     commandId: CommandId.make("status-root-run"),
@@ -1289,7 +1647,7 @@ it.effect(
     });
     return Effect.gen(function* () {
       const service = yield* IssueWorkService.IssueWorkService;
-      yield* createRoot(false);
+      yield* createRoot();
       const status = yield* service.repositoryStatus(reference);
       assert.equal(status.phase, "active");
       assert.deepEqual(status.idMismatch, {
@@ -1314,7 +1672,7 @@ it.effect("replays the original mailbox receipt after an orchestrator is registe
       [1],
     );
     yield* (yield* EffectWorker.OrchestrationEffectWorkerV2).drain();
-  }).pipe(Effect.provide(harness())),
+  }).pipe(Effect.provide(harness(backlogReads))),
 );
 
 it.effect.each([true, false])(
@@ -1352,7 +1710,6 @@ it.effect.each([true, false])(
             summary: "Wait for current work",
             modelSelection,
             status: "draining",
-            wasPaused: false,
           },
         },
       });
@@ -1366,7 +1723,7 @@ it.effect.each([true, false])(
       yield* worker.drain();
       assert.lengthOf(result.storedEvents, 0);
       assert.equal(yield* sink.latestSequence(), sequence);
-    }).pipe(Effect.provide(harness())),
+    }).pipe(Effect.provide(harness(backlogReads))),
 );
 
 it.effect.each(["external", "bot", "listing"] as const)(
@@ -1431,7 +1788,7 @@ it.effect.each(["external", "bot", "listing"] as const)(
       const service = yield* IssueWorkService.IssueWorkService;
       const store = yield* IssueWorkStore.IssueWorkStore;
       const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
-      yield* createRoot(false);
+      yield* createRoot();
       for (const number of [1, 2, 3]) yield* service.queueIssue(input(number));
       const inbox = yield* IssueInbox.make;
       yield* inbox.pollDue;
@@ -1465,8 +1822,9 @@ it.effect.each(["external", "bot", "listing"] as const)(
   },
 );
 
-it.effect("rebuilds the same queue from queue, removal and worker claim events", () =>
-  Effect.gen(function* () {
+it.effect("rebuilds the same queue from queue, removal and worker claim events", () => {
+  let ready = false;
+  return Effect.gen(function* () {
     const service = yield* IssueWorkService.IssueWorkService;
     const store = yield* IssueWorkStore.IssueWorkStore;
     const worker = yield* EffectWorker.OrchestrationEffectWorkerV2;
@@ -1487,17 +1845,19 @@ it.effect("rebuilds the same queue from queue, removal and worker claim events",
       [1, 2],
     );
     yield* verify;
-    yield* service.setPaused({
-      ...reference,
-      paused: false,
-      clientRequestId: CommandId.make("rebuild-resume"),
-    });
+    ready = true;
+    yield* service.reconcile(rootId);
     yield* worker.drain();
-    assert.deepEqual(yield* store.queue(reference), []);
+    assert.deepEqual(
+      (yield* store.queue(reference)).map(({ issue }) => issue.number),
+      [2],
+    );
     assert.isNotNull(yield* store.issueOwner(issue(1)));
     yield* verify;
-  }).pipe(Effect.provide(harness())),
-);
+  }).pipe(
+    Effect.provide(harness(boardReads((number) => (ready && number === 1 ? "Todo" : "Backlog")))),
+  );
+});
 
 const createCandidate = (id: string, role?: ThreadRole) =>
   Effect.gen(function* () {
@@ -1712,3 +2072,35 @@ it.effect.each([false, true])(
     }).pipe(Effect.provide(harness(github)));
   },
 );
+
+it.effect("closing a card leaves its already admitted worker running", () => {
+  let closed = false;
+  const issueReads = Layer.mock(IssueService.IssueService)({
+    resolveLinkedIssue: (input) => Effect.succeed(issue(input.number)),
+    workRead: (input) =>
+      Effect.sync(() => ({
+        ...read(input.number),
+        state: closed ? ("closed" as const) : ("open" as const),
+        planningStatus: closed ? "Done" : "Todo",
+      })),
+    repositoryIdentity: () => Effect.succeed({ ...reference, repositoryId: "queue-repo" }),
+    repositoryIssuesPage: () => Effect.succeed({ items: [], nextPage: null }),
+  });
+  return Effect.gen(function* () {
+    const service = yield* IssueWorkService.IssueWorkService;
+    const threads = yield* ThreadManagement.ThreadManagementService;
+    const store = yield* IssueWorkStore.IssueWorkStore;
+    const sql = yield* SqlClient.SqlClient;
+    const worker = yield* startWatchTestWorker();
+    const run = (yield* threads.getThreadShell(worker))!.activeRunId;
+    assert.isNotNull(run);
+    closed = true;
+    yield* service.reconcile(rootId);
+    assert.equal((yield* store.configuration(rootId))?.suspendedIssues[0]?.kind, "closed");
+    assert.equal((yield* threads.getThreadShell(worker))?.activeRunId, run);
+    assert.deepEqual(
+      yield* sql`SELECT effect_id FROM orchestration_v2_effect_outbox WHERE thread_id = ${worker} AND effect_type = 'issue.suspension.interrupt'`,
+      [],
+    );
+  }).pipe(Effect.provide(harness(issueReads)));
+});

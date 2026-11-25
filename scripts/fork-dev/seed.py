@@ -298,7 +298,7 @@ THREADS = [
     example("cas-boundary", "sections", "long title truncates cleanly; hover reveals the full checklist: " + LONG_TITLE,
             branch=None, runs=FINISHED, visited=dict(minutes=29), settled=dict(minutes=28)),
 
-    coordinator("gh-orchestrator", "sandbox", "real issues #6/#7 Working/Input, #15 open PR #24; roadmap and dependency colors; repository work paused",
+    coordinator("gh-orchestrator", "sandbox", "real issues #6/#7 Working/Input, #15 open PR #24; roadmap and dependency colors; automatic issue work disabled",
                 provider=C, runs=[(dict(hours=2), dict(hours=1, minutes=50)),
                                   (dict(hours=1, minutes=42), dict(hours=1, minutes=8))],
                 visited=dict(hours=1, minutes=5), orchestrates=True),
@@ -455,14 +455,13 @@ def thread_row(spec):
 
 
 def repository_orchestration():
-    """Passive by construction: `paused` stops admission and the reconcile loop, an empty
-    milestone list keeps the root out of the scheduler, and both publish flags are off, so no
+    """The preview launcher disables automatic issue work, and both publish flags are off, so no
     comment effect is ever queued. worker_limit has a database minimum of 1."""
     repo = github(f"repos/{SANDBOX_REPO}")
     return {"host": "github.com", "repository": SANDBOX_REPO, "repositoryId": str(repo["id"]),
             "projectId": PID["sandbox"], "launchCommandId": "command:mock:sandbox-orchestrator",
-            "revision": 1, "paused": True, "workerLimit": 1, "publishStatusComments": False,
-            "publishCloseoutComments": False, "milestones": [], "suspendedIssues": []}
+            "revision": 1, "workerLimit": 1, "publishStatusComments": False,
+            "publishCloseoutComments": False, "suspendedIssues": []}
 
 
 def native_subagent_row(spec):
@@ -772,9 +771,9 @@ TIMELINES |= {
                 "as agreed on the issue. PR #24 closes #15.")),
     ],
     "gh-orchestrator": [
-        (1, user("Keep an eye on the t3code-sandbox issues. Repository work stays paused while we "
+        (1, user("Keep an eye on the t3code-sandbox issues. Automatic issue work stays disabled while we "
                  "test the Issues pane.")),
-        (1, say("Understood. Repository work is **paused** and comment publishing is off, so I "
+        (1, say("Understood. Automatic issue work is **disabled** and comment publishing is off, so I "
                 "won't start workers or post to GitHub until you resume it.")),
         (2, user("Except #15: that bug blocks the parse work, so run it now in a worktree.")),
         (2, {"type": "subagent", "child": "gh-issue-15", "status": "completed",

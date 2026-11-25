@@ -22,6 +22,7 @@ start_dev() {
     --setenv=PATH="$SANDBOX/node_modules/.bin:$PATH" --setenv=T3CODE_BUNDLED_DEV=1 \
     --setenv=T3CODE_AUTO_BOOTSTRAP_PROJECT_FROM_CWD=0 \
     --setenv=T3CODE_DEV_PROCESS_FIXTURE="$ROOT/.t3-dev-fixture/processes.json" \
+    --setenv=T3CODE_ISSUE_AUTOMATION=false \
     --setenv=T3CODE_PORT_OFFSET=860 \
     --setenv=VITE_APP_STAGE_LABEL=Alpha \
     node scripts/dev-runner.ts dev

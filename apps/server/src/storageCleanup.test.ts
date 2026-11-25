@@ -1591,6 +1591,7 @@ describe("subagent worktree ownership", () => {
         yield* command(repo, ["branch", "parent-branch", "main"]);
         yield* command(repo, ["checkout", "parent-branch"]);
         yield* command(repo, ["merge", "--no-ff", "-m", "merge subagent", "feature"]);
+        const parentHead = (yield* command(repo, ["rev-parse", "HEAD"])).stdout.trim();
         yield* command(repo, ["checkout", "main"]);
         if (strategy === "merge") {
           yield* command(repo, [
@@ -1605,7 +1606,6 @@ describe("subagent worktree ownership", () => {
           yield* command(repo, ["commit", "-m", "squash parent pull request"]);
         }
         yield* command(repo, ["push", "origin", "main"]);
-        const parentHead = (yield* command(repo, ["rev-parse", "parent-branch"])).stdout.trim();
         fixture.setBranchPullRequests({
           "parent-branch": {
             number: 7,
@@ -4144,12 +4144,10 @@ describe("storage cleanup reports and local file policies", () => {
             projectId,
             launchCommandId: CommandId.make("create-root"),
             revision: 1,
-            paused: false,
             workerLimit: 1,
             readOnlyLimit: 4,
             publishStatusComments: false,
             publishCloseoutComments: false,
-            milestones: [],
             suspendedIssues: [],
           },
         });

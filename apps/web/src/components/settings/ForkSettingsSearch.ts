@@ -321,14 +321,14 @@ export const FORK_SETTINGS_SEARCH_ITEMS = [
     title: msg("Ask before agents create, split or move issues"),
     to: "/settings/source-control",
     scope: "environment-defaults",
-    searchTerms: ["github issues orchestration upkeep approval policy create split milestone"],
+    searchTerms: ["github issues orchestration upkeep approval policy create split status"],
   },
   {
     id: "version-control-issues",
     title: msg("Issues in thread details"),
     to: "/settings/source-control",
     scope: null,
-    searchTerms: ["customization fork github issues thread details version control milestones"],
+    searchTerms: ["customization fork github issues thread details version control status"],
   },
   {
     id: "plugin-skills",

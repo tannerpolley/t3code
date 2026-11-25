@@ -150,6 +150,60 @@ export const makeIssueWorkRecovery = Effect.gen(function* () {
       )
     )
       return yield* Effect.fail(topLevelTargetError);
+    if (command.restorePhase === "request") {
+      if (command.expectedRootThreadId === null || command.expectedRevision === null)
+        return yield* Effect.fail("Only a registered repository root can begin a restore drain.");
+      const shell = yield* projectionStore.getThread(command.threadId);
+      const prior = shell.repositoryOrchestration;
+      if (
+        prior === undefined ||
+        shell.id !== command.expectedRootThreadId ||
+        shell.id === target.id ||
+        owner?.rootThreadId !== shell.id ||
+        owner.revision !== command.expectedRevision ||
+        prior.revision !== command.expectedRevision ||
+        prior.host !== command.host ||
+        prior.repositoryId !== command.repositoryId ||
+        prior.repository.toLowerCase() !== command.repository.toLowerCase() ||
+        prior.projectId !== command.projectId ||
+        shell.projectId !== command.projectId ||
+        owner.projectId !== command.projectId ||
+        prior.handoff !== undefined ||
+        prior.restore !== undefined ||
+        prior.automaticHandoff?.status === "verifying" ||
+        repositoryPhase(prior) === "retired"
+      )
+        return yield* Effect.fail(
+          "Repository ownership changed. Refresh the registered root and revision before restoring.",
+        );
+      const occurredAt = yield* DateTime.now;
+      const requestId = command.restoreRequestId ?? command.commandId;
+      return {
+        idleRoot: null,
+        events: [
+          {
+            type: "thread.metadata-updated" as const,
+            threadId: shell.id,
+            occurredAt,
+            payload: {
+              ...shell,
+              repositoryOrchestration: {
+                ...prior,
+                restore: {
+                  requestId,
+                  targetThreadId: target.id,
+                  expectedRevision: command.expectedRevision,
+                  reason: command.reason,
+                  requestedAt: DateTime.formatIso(occurredAt),
+                },
+                revision: prior.revision + 1,
+              },
+              updatedAt: occurredAt,
+            },
+          },
+        ],
+      };
+    }
     const occurredAt = yield* DateTime.now;
     let retiringRoot: OrchestrationV2AppThread | null = null;
     let config: RepositoryOrchestration;
@@ -176,7 +230,6 @@ export const makeIssueWorkRecovery = Effect.gen(function* () {
               repositoryId: command.repositoryId,
               launchCommandId: command.commandId,
               revision: moving.revision + 1,
-              milestones: [],
               suspendedIssues: [],
               // The sprint limited the old repository's work; its history stays.
               usageSprint: undefined,
@@ -188,22 +241,32 @@ export const makeIssueWorkRecovery = Effect.gen(function* () {
               projectId: command.projectId,
               launchCommandId: command.commandId,
               revision: 1,
-              paused: false,
               ...DEFAULT_REPOSITORY_WORK_SETTINGS,
-              milestones: [],
               suspendedIssues: [],
             };
     } else {
       const shell = yield* projectionStore.getThread(command.threadId);
       const prior = shell.repositoryOrchestration;
+      const completingRestore = command.restorePhase === "complete";
+      const pendingRestore = prior?.restore;
+      const restoreMatches =
+        completingRestore &&
+        pendingRestore !== undefined &&
+        pendingRestore.requestId === command.restoreRequestId &&
+        pendingRestore.targetThreadId === target.id &&
+        pendingRestore.expectedRevision === command.expectedRevision;
       if (
         prior === undefined ||
         repositoryPhase(prior) === "retired" ||
         command.expectedRootThreadId !== shell.id ||
         shell.id === target.id ||
         owner?.rootThreadId !== shell.id ||
-        owner.revision !== command.expectedRevision ||
-        prior.revision !== command.expectedRevision ||
+        owner.revision !== prior.revision ||
+        (restoreMatches
+          ? prior.restore!.expectedRevision !== command.expectedRevision
+          : owner.revision !== command.expectedRevision ||
+            prior.revision !== command.expectedRevision ||
+            prior.restore !== undefined) ||
         prior.host !== command.host ||
         prior.repositoryId !== command.repositoryId ||
         prior.repository.toLowerCase() !== command.repository.toLowerCase() ||
@@ -214,12 +277,11 @@ export const makeIssueWorkRecovery = Effect.gen(function* () {
         return yield* Effect.fail(
           "Repository ownership changed. Refresh the registered root and revision before restoring.",
         );
-      if (!prior.paused)
-        return yield* Effect.fail("Pause repository work before restoring its owner.");
       retiringRoot = shell;
       config = {
         ...prior,
         handoff: undefined,
+        restore: undefined,
         retiredToThreadId: undefined,
         launchCommandId: command.commandId,
         revision: prior.revision + 1,
@@ -254,6 +316,7 @@ export const makeIssueWorkRecovery = Effect.gen(function* () {
           repositoryOrchestration: {
             ...retiringRoot.repositoryOrchestration,
             handoff: undefined,
+            restore: undefined,
             retiredToThreadId: target.id,
           },
           updatedAt: occurredAt,
@@ -271,8 +334,6 @@ export const makeIssueWorkRecovery = Effect.gen(function* () {
     });
     return {
       idleRoot: moving === undefined ? retiringRoot : target,
-      // Only a deliberately paused root may move during its own turn; an unpaused one must be idle.
-      ownTurnsMayRun: moving?.paused === true,
       events,
     };
   });

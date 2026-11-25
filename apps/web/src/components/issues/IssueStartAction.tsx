@@ -1,9 +1,7 @@
-import { threadRoleLabel } from "../threadRoleDisplay";
 import { useAtomValue } from "@effect/atom-react";
 import {
   CommandId,
   isRepositoryOrchestratorEligible,
-  resolveModelRoles,
   type IssueRepositoryRef,
   type EnvironmentId,
   type RepositoryIssueRef,
@@ -11,16 +9,16 @@ import {
   type ThreadId,
   type ScopedThreadRef,
   type IssueWorkStartResult,
+  type IssueWorkStatus,
 } from "@t3tools/contracts";
 import { issueWorkPresentation } from "@t3tools/client-runtime/state/issue-work";
 import { useNavigate } from "@tanstack/react-router";
 import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
-import { T, useGT, useMessages } from "gt-react";
+import { T, useGT } from "gt-react";
 import { PlayIcon } from "lucide-react";
 import { useRef, useState } from "react";
 
 import { useEnvironmentProviders } from "~/state/environments";
-import { useEnvironmentSettings } from "~/hooks/useSettings";
 import {
   useProjects,
   useServerConfigs,
@@ -37,7 +35,17 @@ import { Button } from "../ui/button";
 import { Select, SelectContent, SelectItem, SelectTrigger, SelectValue } from "../ui/select";
 import { toastManager } from "../ui/toast";
 import { findIssueProject } from "./issueWorktree.logic";
+import { useIssueQueued } from "./IssueQueueAction";
 import { useOpenIssueTab } from "./issueTabs";
+
+const ACTIVE_START_STATUSES = new Set<IssueWorkStatus>([
+  "queued_preparing",
+  "working",
+  "waiting_on_you",
+  "waiting_on_sub_issues",
+  "failed",
+  "paused",
+]);
 
 interface IssueStartActionProps {
   readonly environmentId: EnvironmentId;
@@ -92,14 +100,11 @@ function IssueStartControls({
   const [startError, setStartError] = useState<string | null>(null);
   const projects = useProjects();
   const thread = useThreadShell(threadRef);
-  const settings = useEnvironmentSettings(environmentId);
   const gt = useGT();
-  const resolve = useMessages();
-  const levelLabels = { routine: gt("Routine"), complex: gt("Complex") };
-  const roles = resolveModelRoles(settings);
   const statusAtom = repositoryIssueEnvironment.workStatus({ environmentId, input: reference });
   const statusQuery = useEnvironmentQuery(statusAtom);
   const status = statusQuery.data;
+  const issueQueued = useIssueQueued(environmentId, reference);
   const matchingProjects = projects.filter(
     (project) =>
       (status?.projectId == null || project.id === status.projectId) &&
@@ -114,7 +119,6 @@ function IssueStartControls({
   const [selectedOrchestratorId, setSelectedOrchestratorId] = useState<ThreadId | "create" | null>(
     null,
   );
-  const [selectedRoleId, setSelectedRoleId] = useState<string | null>(null);
   const [expanded, setExpanded] = useState(false);
   const [starting, setStarting] = useState(false);
   const request = useRef<{ key: string; id: string } | null>(null);
@@ -128,7 +132,6 @@ function IssueStartControls({
       leads.find((candidate) => candidate.id === thread?.lineage.rootThreadId));
   const orchestratorThreadId = status?.rootThreadId ?? selectedLead?.id;
   const hasOrchestrator = orchestratorThreadId !== undefined || createOrchestrator;
-  const role = roles.find((entry) => entry.id === selectedRoleId) ?? roles[0];
   const startIssue = useAtomCommand(repositoryIssueEnvironment.start, { reportFailure: false });
   const cancelStartRequest = useAtomCommand(repositoryIssueEnvironment.cancelRequest, {
     reportFailure: false,
@@ -157,6 +160,17 @@ function IssueStartControls({
   };
 
   const pendingRequestId = awaitingAcceptedStatus ? null : (status?.pendingRequestId ?? null);
+  const acceptedWorkIsActive =
+    awaitingAcceptedStatus &&
+    accepted !== null &&
+    ACTIVE_START_STATUSES.has(accepted.result.status);
+  const retryingRejectedStart = startError !== null;
+  const existingStart =
+    !retryingRejectedStart &&
+    (statusQuery.data === null ||
+      pendingRequestId !== null ||
+      (status?.status != null && ACTIVE_START_STATUSES.has(status.status)) ||
+      acceptedWorkIsActive);
   const cancelPendingStart = async () => {
     if (cancelling || pendingRequestId === null || !status?.rootThreadId || !status.projectId)
       return;
@@ -186,11 +200,10 @@ function IssueStartControls({
   };
 
   const start = async () => {
-    if (starting || project === null || role === undefined || !hasOrchestrator) return;
+    if (starting || existingStart || project === null || !hasOrchestrator) return;
     const input = {
       ...reference,
       projectId: project.id,
-      modelRoleId: role.id,
       ...(orchestratorThreadId === undefined ? {} : { orchestratorThreadId }),
       ...(createOrchestrator ? { createOrchestrator: true } : {}),
     };
@@ -232,9 +245,9 @@ function IssueStartControls({
   return (
     <div className="flex flex-col items-end gap-1.5">
       <div className="flex flex-wrap items-center justify-end gap-2">
-        {work.label ? (
+        {work.label || (issueQueued ? gt("Queued") : null) ? (
           <span className="text-xs text-muted-foreground" role="status">
-            {work.label}
+            {work.label ?? gt("Queued")}
             {statusQuery.error ? gt(" (last known)") : null}
             {work.publishingLabel ? ` · ${work.publishingLabel}` : null}
           </span>
@@ -260,16 +273,18 @@ function IssueStartControls({
             {cancelling ? gt("Cancelling…") : gt("Cancel start request")}
           </Button>
         ) : null}
-        <Button
-          disabled={closed || starting}
-          onClick={() => setExpanded((value) => !value)}
-          size="xs"
-          variant="outline"
-          aria-expanded={expanded}
-        >
-          <PlayIcon aria-hidden />
-          <T>Start agent</T>
-        </Button>
+        {existingStart ? null : (
+          <Button
+            disabled={closed || starting}
+            onClick={() => setExpanded((value) => !value)}
+            size="xs"
+            variant="outline"
+            aria-expanded={expanded}
+          >
+            <PlayIcon aria-hidden />
+            <T>Start agent</T>
+          </Button>
+        )}
       </div>
       {statusQuery.error ? (
         <div className="flex items-center gap-1.5 text-xs text-muted-foreground" role="status">
@@ -292,41 +307,10 @@ function IssueStartControls({
         </p>
       ) : null}
       {expanded ? (
-        <form
-          className="flex w-72 flex-col gap-2 rounded-lg border border-border bg-background p-3"
-          onSubmit={(event) => {
-            event.preventDefault();
-            void start();
-          }}
-        >
+        <div className="flex w-72 flex-col gap-2 rounded-lg border border-border bg-background p-3">
           {matchingProjects.length === 0 ? (
             <p className="text-xs text-muted-foreground">
               <T>Add a project for this repository in this environment to start work.</T>
-            </p>
-          ) : null}
-          {roles.length === 0 ? (
-            <p className="text-xs text-muted-foreground">
-              <T>Configure a model role in Customizations to start work.</T>
-            </p>
-          ) : null}
-          <label className="flex flex-col gap-1 text-xs">
-            <T>Model role</T>
-            <Select value={role?.id ?? null} onValueChange={setSelectedRoleId}>
-              <SelectTrigger size="compact" aria-label={gt("Issue model role")}>
-                <SelectValue />
-              </SelectTrigger>
-              <SelectContent>
-                {roles.map((entry) => (
-                  <SelectItem key={entry.id} value={entry.id}>
-                    {`${threadRoleLabel(entry.role, resolve)} · ${levelLabels[entry.level]}`}
-                  </SelectItem>
-                ))}
-              </SelectContent>
-            </Select>
-          </label>
-          {role ? (
-            <p className="text-xs text-muted-foreground">
-              {role.targets.map((target) => target.model).join(" → ")}
             </p>
           ) : null}
           <label className="flex flex-col gap-1 text-xs">
@@ -411,7 +395,7 @@ function IssueStartControls({
           </p>
           <p className="text-xs text-muted-foreground">
             {gt(
-              'Creating, splitting, and moving issues between milestones require approval when "Ask before agents create, split or move issues" is on. Body edits, closing or reopening issues, and parent or blocker changes require approval when the agent thread is in Approval required mode.',
+              'Creating, splitting, and moving issues between GitHub statuses require approval when "Ask before agents create, split or move issues" is on. Body edits, closing or reopening issues, and parent or blocker changes require approval when the agent thread is in Approval required mode.',
             )}
           </p>
           {statusQuery.error ? (
@@ -430,14 +414,15 @@ function IssueStartControls({
               <T>Cancel</T>
             </Button>
             <Button
-              disabled={starting || project === null || role === undefined || !hasOrchestrator}
+              disabled={starting || existingStart || project === null || !hasOrchestrator || closed}
+              onClick={() => void start()}
               size="xs"
-              type="submit"
+              type="button"
             >
               {starting ? gt("Starting…") : gt("Start agent")}
             </Button>
           </div>
-        </form>
+        </div>
       ) : null}
     </div>
   );

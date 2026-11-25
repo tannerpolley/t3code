@@ -5,8 +5,10 @@ import {
   EventId,
   IssueOperationError,
   IssueTrackerKind,
+  MessageId,
   ProjectId,
   ProviderInstanceId,
+  RunId,
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
@@ -107,12 +109,10 @@ it.effect(
 
                 launchCommandId: CommandId.make("managed-status-root"),
                 revision: 1,
-                paused: false,
                 workerLimit: 4,
                 readOnlyLimit: 4,
                 publishStatusComments: true,
                 publishCloseoutComments: true,
-                milestones: [],
                 suspendedIssues: [],
               },
               lineage: { rootThreadId: threadId, parentThreadId: null, relationshipToParent: null },
@@ -181,6 +181,40 @@ it.effect(
       const writes =
         yield* sql`SELECT effect_id FROM orchestration_v2_effect_outbox WHERE effect_type = 'issue.github.comment'`;
       assert.equal(writes.length, 1);
+      const ownerResumeRunId = RunId.make("run:managed-owner-resume");
+      yield* sink.write({
+        events: [
+          {
+            id: EventId.make("managed-owner-resume-run-created"),
+            type: "run.created",
+            threadId,
+            runId: ownerResumeRunId,
+            occurredAt: now,
+            payload: {
+              id: ownerResumeRunId,
+              threadId,
+              ordinal: 1,
+              providerInstanceId: modelSelection.instanceId,
+              modelSelection,
+              providerThreadId: null,
+              userMessageId: MessageId.make(`issue-owner-resume:${threadId}:prior-failed-run`),
+              rootNodeId: null,
+              activeAttemptId: null,
+              status: "starting",
+              requestedAt: now,
+              startedAt: now,
+              completedAt: null,
+              checkpointId: null,
+              contextHandoffId: null,
+            },
+          },
+        ],
+      });
+      const boardWrite = yield* sql<{ readonly payload_json: string }>`
+        SELECT payload_json FROM orchestration_v2_effect_outbox
+        WHERE effect_id = 'effect:issue-board:managed-owner-resume-run-created'`;
+      assert.lengthOf(boardWrite, 1);
+      assert.equal(JSON.parse(boardWrite[0]!.payload_json).status, "In progress");
     }).pipe(Effect.provide(testLayer));
   },
 );

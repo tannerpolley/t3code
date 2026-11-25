@@ -15,7 +15,11 @@ export function issueSectionCollapsedSelector(scope: IssueSectionScope, section:
     state.issueMilestoneCollapsedById[key] ??
     (section.startsWith("milestone:")
       ? state.issueMilestoneCollapsedById[legacyKey]
-      : section === "roadmap:closed" || section === "roadmap:backlog") ??
+      : section === "roadmap:closed" ||
+        section === "roadmap:backlog" ||
+        section === "board:Done" ||
+        section === "board:Not planned" ||
+        section === "board:Duplicate") ??
     false;
 }
 

@@ -55,7 +55,8 @@ const reads = Layer.mock(IssueService.IssueService)({
     Effect.succeed({
       issue: issue(input.number),
       state: "open",
-      milestoneNumber: null,
+      planningStatus: "Todo",
+      labels: [],
       parent: null,
       subIssues: [],
       blockedBy: [],
@@ -122,10 +123,8 @@ const createRoot = Effect.fn("test.createReadOnlyRoot")(function* (registered = 
           projectId,
           launchCommandId: CommandId.make("read-only-root"),
           revision: 1,
-          paused: false,
           publishStatusComments: false,
           publishCloseoutComments: false,
-          milestones: [],
           suspendedIssues: [],
         }
       : undefined,
@@ -671,10 +670,8 @@ it.effect(
                   projectId,
                   launchCommandId: CommandId.make("initial-registration"),
                   revision: 1,
-                  paused: false,
                   publishStatusComments: false,
                   publishCloseoutComments: false,
-                  milestones: [],
                   suspendedIssues: [],
                 },
               }),
@@ -725,7 +722,7 @@ it.effect(
         threadId: rootId,
         commandId: CommandId.make("pause-before-restore"),
         expectedRevision: 1,
-        orchestration: { ...current, paused: true },
+        orchestration: { ...current },
       });
       yield* threads.dispatch({
         type: "repository.work.restore",
