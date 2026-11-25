@@ -159,7 +159,8 @@ export function offeredCodexServiceTier(
   if (tier === "default" || tier === "standard") return "default";
   return (
     options.find(({ id }) => id === tier)?.id ??
-    (tier === "fast" || tier === "priority"
+    // Ultra fast falls back to Fast on models that lack it.
+    (tier === "ultrafast" || tier === "fast" || tier === "priority"
       ? options.find(({ id }) => id === "fast" || id === "priority")?.id
       : undefined)
   );
@@ -209,6 +210,7 @@ export function resolveCodexSpeed(input: {
   roleTier?: string | undefined;
   defaultSpeed?: CodexDefaultSpeed | null | undefined;
   /** A completed or running turn keeps the tier already used, even if the catalog changes. */
+  // shortcut: a turn left at "Codex default" records no tier, so changing the T3 default shows the new speed mid-turn; record the start-time default if that label matters.
   recordedTier?: string | null | undefined;
 }): { tier: string | undefined; speed: "standard" | "fast" | "ultrafast" | undefined } {
   const options = input.descriptor?.options ?? [];

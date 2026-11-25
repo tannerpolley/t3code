@@ -79,6 +79,16 @@ it.each<{
     expected: { tier: "priority", speed: "fast" },
   },
   {
+    name: "an explicit Ultra fast choice falls back to Fast, not to lower settings",
+    input: {
+      descriptor: fastDescriptor,
+      threadTier: "ultrafast",
+      roleTier: "default",
+      defaultSpeed: "normal",
+    },
+    expected: { tier: "priority", speed: "fast" },
+  },
+  {
     name: "recorded usage remains Ultra fast across catalog and settings changes",
     input: { descriptor: fastDescriptor, defaultSpeed: "normal", recordedTier: "ultrafast" },
     expected: { tier: "ultrafast", speed: "ultrafast" },
