@@ -49,6 +49,8 @@ import {
 } from "@t3tools/client-runtime/state/runtime";
 import {
   AuthOrchestrationOperateScope,
+  AuthSettingsWriteScope,
+  CodexDefaultSpeed,
   AuthSourceControlWriteScope,
   AuthFilesystemReadScope,
   type DesktopWslState,
@@ -119,6 +121,8 @@ import {
   promptLinkRepositoryOf,
 } from "./promptLinks/copyPromptLink";
 import { useClientSettings } from "../hooks/useSettings";
+import { CODEX_DEFAULT_SPEED_LABEL, CODEX_SPEED_LABELS } from "./settings/codexSpeedCopy";
+import { settingsScopeEnvironmentLabel } from "./settings/settingsScopeAxis";
 import { useStableCallback } from "../hooks/useStableCallback";
 import { readLocalApi } from "../localApi";
 import { configuredHostedAppUrl } from "../hostedPairing";
@@ -128,7 +132,11 @@ import { projectEnvironment } from "../state/projects";
 import { useEnvironmentQuery } from "../state/query";
 import { serverEnvironment } from "../state/server";
 import { threadEnvironment } from "../state/threads";
-import { readEnvironmentScope, useEnvironmentScope } from "~/state/session";
+import {
+  readEnvironmentScope,
+  useEnvironmentsWithScope,
+  useEnvironmentScope,
+} from "~/state/session";
 import { sourceControlEnvironment } from "../state/sourceControl";
 import { useAtomCommand } from "../state/use-atom-command";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
@@ -764,6 +772,20 @@ function OpenCommandPaletteDialog(props: {
       ?.serverConfig?.threadFind === true;
   const currentProjectEnvironmentId =
     activeThread?.environmentId ?? activeDraftThread?.environmentId ?? null;
+  const writableSettingsEnvironments = useEnvironmentsWithScope(
+    environments,
+    AuthSettingsWriteScope,
+  );
+  const updateCodexSpeed = useAtomCommand(serverEnvironment.updateSettings);
+  const speedEnvironments = environments.filter(
+    (environment) =>
+      environment.connection.phase === "connected" &&
+      environment.serverConfig !== null &&
+      writableSettingsEnvironments.has(environment.environmentId) &&
+      (pathname.startsWith("/settings") ||
+        currentProjectEnvironmentId === null ||
+        environment.environmentId === currentProjectEnvironmentId),
+  );
   const currentProjectId = activeThread?.projectId ?? activeDraftThread?.projectId ?? null;
   const scratchTargetEnvironmentId = scratchEnvironmentId(currentProjectEnvironmentId);
   const supportsTriage = (environmentId: EnvironmentId | null) =>
@@ -1837,6 +1859,34 @@ function OpenCommandPaletteDialog(props: {
       await navigate({ to: "/settings" });
     },
   });
+
+  for (const environment of speedEnvironments) {
+    const environmentLabel = settingsScopeEnvironmentLabel(environment, environments);
+    for (const speed of [...CodexDefaultSpeed.literals, null]) {
+      const label = messages(
+        speed === null ? CODEX_DEFAULT_SPEED_LABEL : CODEX_SPEED_LABELS[speed],
+      );
+      actionItems.push({
+        kind: "action",
+        value: `action:codex-speed:${environment.environmentId}:${speed}`,
+        title:
+          environments.length > 1
+            ? gt("Codex speed: {speed} on {environment}", {
+                speed: label,
+                environment: environmentLabel,
+              })
+            : gt("Codex speed: {speed}", { speed: label }),
+        searchTerms: ["codex speed default", speed ?? "config", label, environmentLabel],
+        icon: <SettingsIcon className={ITEM_ICON_CLASS} />,
+        run: async () => {
+          await updateCodexSpeed({
+            environmentId: environment.environmentId,
+            input: { patch: { codexDefaultSpeed: speed } },
+          });
+        },
+      });
+    }
+  }
 
   // Every group, so an archived project's thread still opens its own settings.
   const currentProjectGroup =

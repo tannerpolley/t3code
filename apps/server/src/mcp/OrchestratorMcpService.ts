@@ -67,7 +67,12 @@ import {
   resolveProjectProviderInstanceEnabled,
   SECRET_REQUEST_UNSAVED_NOTE,
 } from "@t3tools/contracts";
-import { getProviderOptionCurrentValue, withLegacyUltracodeEffort } from "@t3tools/shared/model";
+import {
+  getCodexServiceTierDescriptor,
+  getProviderOptionCurrentValue,
+  offeredCodexServiceTier,
+  withLegacyUltracodeEffort,
+} from "@t3tools/shared/model";
 import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
@@ -534,9 +539,22 @@ export const validateModelOptions = (
   model: string,
   options: ReadonlyArray<ProviderOptionSelection> | undefined,
 ): Effect.Effect<ReadonlyArray<ProviderOptionSelection> | undefined, OrchestratorMcpFailure> => {
-  const descriptors = advertisedModel(provider, model)?.capabilities?.optionDescriptors;
-  const normalized = withLegacyUltracodeEffort(descriptors, options);
-  if (normalized === undefined) return Effect.undefined;
+  const capabilities = advertisedModel(provider, model)?.capabilities;
+  const descriptors = capabilities?.optionDescriptors;
+  const migrated = withLegacyUltracodeEffort(descriptors, options);
+  if (migrated === undefined) return Effect.undefined;
+  const tiers =
+    provider.driver === "codex" ? getCodexServiceTierDescriptor(capabilities) : undefined;
+  const normalized = tiers
+    ? migrated.map((option) =>
+        option.id === "serviceTier" && typeof option.value === "string"
+          ? {
+              ...option,
+              value: offeredCodexServiceTier(tiers.options, option.value) ?? option.value,
+            }
+          : option,
+      )
+    : migrated;
   const invalid = invalidOptionSelections(normalized, descriptors);
   return invalid.length > 0
     ? Effect.fail(

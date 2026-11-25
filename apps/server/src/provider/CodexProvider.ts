@@ -35,6 +35,7 @@ import { PREFERRED_DEFAULT_CODEX_MODELS, ServerSettingsError } from "@t3tools/co
 
 import {
   codexModelFamily,
+  offeredCodexServiceTier,
   createModelCapabilities,
   formatCodexModelName,
 } from "@t3tools/shared/model";
@@ -422,14 +423,8 @@ function applyConfiguredCodexServiceTier(
   serviceTier: string | undefined,
 ): ReadonlyArray<ServerProviderModel> {
   if (!serviceTier) return models;
-  return withConfiguredSelectDefault(
-    models,
-    "serviceTier",
-    (options) =>
-      options.find(
-        (option) =>
-          option.id === serviceTier || (serviceTier === "fast" && option.id === "priority"),
-      )?.id,
+  return withConfiguredSelectDefault(models, "serviceTier", (options) =>
+    offeredCodexServiceTier(options, serviceTier),
   );
 }
 
@@ -475,8 +470,14 @@ function appendCustomCodexModels(
   models: ReadonlyArray<ServerProviderModel>,
   customModels: ReadonlyArray<CustomModelSetting>,
 ): ReadonlyArray<ServerProviderModel> {
-  const fallbackCapabilities = models.find((model) => model.capabilities)?.capabilities ?? null;
-  return providerModelsFromSettings(models, customModels, fallbackCapabilities);
+  const fallback = models.find((model) => model.capabilities)?.capabilities;
+  return providerModelsFromSettings(
+    models,
+    customModels,
+    fallback?.optionDescriptors
+      ? { optionDescriptors: fallback.optionDescriptors.filter(({ id }) => id !== "serviceTier") }
+      : null,
+  );
 }
 
 function parseCodexSkillsListResponse(

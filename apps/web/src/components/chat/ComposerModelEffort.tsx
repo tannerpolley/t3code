@@ -6,7 +6,11 @@ import {
 } from "@t3tools/client-runtime/model-traits";
 import type { ProviderOptionDescriptor, RuntimeMode } from "@t3tools/contracts";
 import type { EffortDisplay } from "@t3tools/contracts/settings";
-import { getProviderOptionCurrentLabel } from "@t3tools/shared/model";
+import {
+  getCodexServiceTierOptionValue,
+  getProviderOptionCurrentLabel,
+  resolveCodexServiceTier,
+} from "@t3tools/shared/model";
 import { msg, T, useGT, useMessages } from "gt-react";
 import { CheckIcon, ChevronRightIcon, ChevronUpIcon, WorkflowIcon } from "lucide-react";
 import { type KeyboardEvent, type ReactNode, use, useRef, useState } from "react";
@@ -97,9 +101,24 @@ export function describeComposerEffort(
       ? { instanceId: traits.instanceId, model: traits.model, options: traits.modelOptions ?? [] }
       : null;
   const primary = visibility.primarySelectDescriptor;
+  const descriptors = visibility.descriptors.map((descriptor) => {
+    if (
+      traits.codexDefaultSpeed === undefined ||
+      descriptor.id !== "serviceTier" ||
+      descriptor.type !== "select"
+    ) {
+      return descriptor;
+    }
+    const tier = resolveCodexServiceTier(
+      descriptor,
+      getCodexServiceTierOptionValue(modelSelection),
+      traits.codexDefaultSpeed,
+    );
+    return tier === undefined ? descriptor : { ...descriptor, currentValue: tier };
+  });
   const display = buildTraitsTriggerDisplay(
     {
-      descriptors: visibility.descriptors,
+      descriptors,
       primarySelectDescriptorId: primary?.id ?? null,
       ultrathinkPromptControlled: visibility.ultrathinkPromptControlled,
       modelSelection,
@@ -626,11 +645,22 @@ function SpeedControl(props: { traits: TraitsSelectionInput }) {
       aria-label={speedSelect?.label ?? fastToggle?.label}
       className="flex rounded-lg bg-input/40 p-0.5"
     >
+      {speedSelect && traits.codexDefaultSpeed !== undefined ? (
+        <SpeedSegment
+          checked={traits.selectedSpeed === undefined}
+          label={gt("Default", { $context: "marks the default option" })}
+          onPick={traits.clearSpeed}
+        />
+      ) : null}
       {speedSelect
         ? selectableProviderOptionChoices(speedSelect).map((option) => (
             <SpeedSegment
               key={option.id}
-              checked={option.id === traits.selectValue(speedSelect)}
+              checked={
+                traits.codexDefaultSpeed !== undefined && traits.selectedSpeed === undefined
+                  ? false
+                  : option.id === traits.selectValue(speedSelect)
+              }
               label={option.label}
               description={option.description}
               onPick={() => traits.changeSelect(speedSelect, option.id)}

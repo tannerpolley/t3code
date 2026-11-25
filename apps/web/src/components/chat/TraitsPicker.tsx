@@ -7,6 +7,7 @@ import {
   isReasoningSelect,
 } from "@t3tools/client-runtime/model-traits";
 import {
+  type CodexDefaultSpeed,
   type ModelSelection,
   type ProviderDriverKind,
   type ProviderInstanceId,
@@ -17,6 +18,7 @@ import {
 } from "@t3tools/contracts";
 import {
   buildProviderOptionSelectionsFromDescriptors,
+  getCodexServiceTierOptionValue,
   getProviderOptionCurrentLabel,
   getProviderOptionDescriptors,
   isClaudeUltrathinkPrompt,
@@ -44,6 +46,18 @@ import { useComposerMenuState } from "./useComposerMenuState";
 import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 type ProviderOptions = ReadonlyArray<ProviderOptionSelection>;
+
+function keepExplicitSpeed(
+  provider: ProviderDriverKind,
+  next: ProviderOptions | undefined,
+  original: ProviderOptions | null | undefined,
+) {
+  if (provider !== "codex") return next;
+  return [
+    ...(next ?? []).filter(({ id }) => id !== "serviceTier" && id !== "fastMode"),
+    ...(original ?? []).filter(({ id }) => id === "serviceTier" || id === "fastMode"),
+  ];
+}
 
 /**
  * All the picker reads from the prompt while rendering. Passing this instead of
@@ -288,7 +302,13 @@ export function getReasoningTraitStep(input: {
     (option) => choices.includes(option),
   );
   const change = next && getTraitSelectChange(selected, descriptor, input.prompt, next.id);
-  return change?.modelOptions ? { prompt: change.prompt, modelOptions: change.modelOptions } : null;
+  return change?.modelOptions
+    ? {
+        prompt: change.prompt,
+        modelOptions:
+          keepExplicitSpeed(input.provider, change.modelOptions, input.modelOptions) ?? [],
+      }
+    : null;
 }
 
 export interface TraitsMenuContentProps {
@@ -301,6 +321,7 @@ export interface TraitsMenuContentProps {
   onPromptEdit?: (edit: (prompt: string) => string) => void;
   modelOptions?: ProviderOptions | null | undefined;
   reportedModelSelection?: ModelSelection | null | undefined;
+  codexDefaultSpeed?: CodexDefaultSpeed | null | undefined;
   allowPromptInjectedEffort?: boolean;
   includePlanAgent?: boolean | undefined;
   triggerClassName?: string;
@@ -318,6 +339,7 @@ export function useTraitsSelection({
   onPromptEdit,
   modelOptions,
   reportedModelSelection,
+  codexDefaultSpeed,
   allowPromptInjectedEffort = true,
   includePlanAgent,
   triggerClassName: _triggerClassName,
@@ -355,6 +377,10 @@ export function useTraitsSelection({
   });
   return {
     ...selected,
+    codexDefaultSpeed,
+    selectedSpeed: getCodexServiceTierOptionValue(modelSelection),
+    clearSpeed: () =>
+      updateModelOptions(keepExplicitSpeed(provider, modelOptions ?? undefined, undefined)),
     /** The option a select shows, where an Ultrathink prompt owns the primary select. */
     selectValue: (descriptor: Extract<ProviderOptionDescriptor, { type: "select" }>) =>
       selected.ultrathinkPromptControlled && descriptor.id === selected.primarySelectDescriptor?.id
@@ -372,12 +398,20 @@ export function useTraitsSelection({
       onPromptEdit?.(
         (prompt) => getTraitSelectChange(selected, descriptor, prompt, value)?.prompt ?? prompt,
       );
-      updateModelOptions(change.modelOptions);
+      updateModelOptions(
+        provider === "codex" && descriptor.id === "serviceTier"
+          ? keepExplicitSpeed(provider, modelOptions ?? undefined, [{ id: descriptor.id, value }])
+          : keepExplicitSpeed(provider, change.modelOptions, modelOptions),
+      );
     },
     changeBoolean: (descriptorId: string, value: boolean) => {
       updateModelOptions(
-        buildProviderOptionSelectionsFromDescriptors(
-          replaceDescriptorCurrentValue(selected.descriptors, descriptorId, value),
+        keepExplicitSpeed(
+          provider,
+          buildProviderOptionSelectionsFromDescriptors(
+            replaceDescriptorCurrentValue(selected.descriptors, descriptorId, value),
+          ),
+          modelOptions,
         ),
       );
     },

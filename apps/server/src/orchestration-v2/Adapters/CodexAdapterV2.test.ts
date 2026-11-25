@@ -10,6 +10,7 @@ import {
   CommandId,
   CheckpointId,
   CodexSettings,
+  type CodexDefaultSpeed,
   EnvironmentId,
   MessageId,
   type ModelSelection,
@@ -702,7 +703,7 @@ function codexReplayPreamble(input: {
   readonly interactionMode?: "plan" | "default";
   readonly turnPolicy?: Pick<
     typeof CodexClient.V2TurnStartParams.Type,
-    "approvalPolicy" | "sandboxPolicy"
+    "approvalPolicy" | "sandboxPolicy" | "serviceTier"
   >;
 }): Array<CodexReplay.CodexAppServerReplayEntry> {
   return [
@@ -1736,6 +1737,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     promptSuggestions: Effect.Effect<boolean> = Effect.succeed(false),
     onNotification: (method: string) => Effect.Effect<void> = () => Effect.void,
     models?: CodexAdapterV2.CodexAdapterV2Options["models"],
+    speedOptions?: Pick<CodexAdapterV2.CodexAdapterV2Options, "defaultSpeed" | "resolveRuntime">,
   ) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -1800,6 +1802,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         clientFactory,
         ...(onUsageLimits ? { onUsageLimits } : {}),
         ...(models ? { models } : {}),
+        ...speedOptions,
         digest: yield* Digest.Digest,
         fileSystem,
         idAllocator,
@@ -4424,6 +4427,135 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         ),
       ),
     ),
+  );
+
+  it.effect.each([false, true])(
+    "applies live Codex defaults between turns (managed: %s)",
+    (managed) =>
+      Effect.gen(function* () {
+        const nativeThreadId = "codex-default-speed";
+        const cases = [
+          { speed: "ultrafast", tier: "priority", options: [] },
+          { speed: "normal", tier: "default", options: [] },
+          { speed: "fast", tier: "default", options: [{ id: "serviceTier", value: "default" }] },
+          { speed: "normal", tier: "priority", options: [{ id: "serviceTier", value: "fast" }] },
+          { speed: null, tier: "default", options: [] },
+        ] as const;
+        const entries = cases.flatMap(
+          ({ tier }, index): Array<CodexReplay.CodexAppServerReplayEntry> => {
+            const nativeTurnId = `speed-${index}`;
+            const preamble = codexReplayPreamble({
+              nativeThreadId,
+              nativeTurnId,
+              prompt: "work",
+              ...(managed ? {} : { turnPolicy: { serviceTier: tier } }),
+            });
+            const start = preamble.findIndex(
+              (entry) => entry.type === "expect_outbound" && entry.label === "turn/start",
+            );
+            return [
+              ...(index === 0
+                ? preamble
+                : preamble
+                    .slice(start)
+                    .map((entry) =>
+                      entry.type !== "runtime_exit" &&
+                      Predicate.isObject(entry.frame) &&
+                      typeof entry.frame.id === "number"
+                        ? withReplayRequestId(entry, 3 + index)
+                        : entry,
+                    )),
+              {
+                type: "emit_inbound",
+                label: "turn/completed",
+                frame: {
+                  method: "turn/completed",
+                  params: {
+                    threadId: nativeThreadId,
+                    turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+                  },
+                },
+              },
+            ];
+          },
+        );
+        const defaultSpeed = yield* Ref.make<CodexDefaultSpeed | null>(null);
+        const harness = yield* makeCodexReplayHarness(
+          makeCodexReplayTranscript({ scenario: `default-speed-${managed}`, entries }),
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          Effect.succeed([
+            {
+              slug: CODEX_TEST_MODEL_SELECTION.model,
+              name: "Test model",
+              isCustom: false,
+              capabilities: {
+                optionDescriptors: [
+                  {
+                    id: "serviceTier",
+                    type: "select",
+                    label: "Speed",
+                    options: [
+                      { id: "default", label: "Standard" },
+                      { id: "priority", label: "Fast" },
+                    ],
+                  },
+                ],
+              },
+            },
+          ]),
+          {
+            defaultSpeed: Ref.get(defaultSpeed),
+            ...(managed
+              ? {
+                  resolveRuntime: Effect.succeed({
+                    config: DEFAULT_CODEX_SETTINGS,
+                    environment: {},
+                    revision: "test",
+                  }),
+                }
+              : {}),
+          },
+        );
+        for (const [index, testCase] of cases.entries()) {
+          yield* Ref.set(defaultSpeed, testCase.speed);
+          yield* harness.runtime.startTurn({
+            ...makeCodexTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make(`speed-attempt-${index}`),
+              text: "work",
+            }),
+            runOrdinal: index + 1,
+            providerTurnOrdinal: index + 1,
+            modelSelection: { ...CODEX_TEST_MODEL_SELECTION, options: testCase.options },
+          });
+          yield* harness.awaitTerminal(index + 1);
+        }
+        assert.deepEqual(
+          harness.events.flatMap((event) =>
+            event.type === "provider_turn.updated" && event.providerTurn.status === "completed"
+              ? [event.providerTurn.serviceTier]
+              : [],
+          ),
+          cases.map(({ tier }) => (managed ? undefined : tier)),
+        );
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
   );
 
   it.effect("stops asking for commands the user allowed for the session", () =>

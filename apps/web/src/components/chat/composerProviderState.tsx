@@ -1,4 +1,5 @@
 import {
+  type CodexDefaultSpeed,
   type ModelCapabilities,
   type ModelSelection,
   type ProviderDriverKind,
@@ -11,6 +12,7 @@ import {
   buildExplicitProviderOptionSelectionsFromDescriptors,
   getProviderOptionCurrentValue,
   getProviderOptionDescriptors,
+  getCodexServiceTierOptionValue,
   isClaudeUltrathinkPrompt,
   normalizeModelSlug,
   withImplicitFastModeDefault,
@@ -54,6 +56,7 @@ type ComposerTraitsTarget = {
   models: ReadonlyArray<ServerProviderModel>;
   modelOptions: ReadonlyArray<ProviderOptionSelection> | undefined;
   reportedModelSelection?: ModelSelection | null | undefined;
+  codexDefaultSpeed?: CodexDefaultSpeed | null | undefined;
   promptUltrathink: PromptUltrathink;
   onPromptEdit: (edit: (prompt: string) => string) => void;
   includePlanAgent?: boolean | undefined;
@@ -74,7 +77,18 @@ function resolveComposerOptionSelections(
   selections: ReadonlyArray<ProviderOptionSelection> | undefined;
 } {
   const caps = getProviderModelCapabilities(models, model, provider, includePlanAgent);
-  return { caps, selections: withImplicitFastModeDefault(caps, modelOptions) };
+  const tier =
+    provider === "codex"
+      ? getCodexServiceTierOptionValue({ options: modelOptions ?? [] })
+      : undefined;
+  const selections =
+    tier === undefined
+      ? modelOptions
+      : [
+          ...(modelOptions ?? []).filter(({ id }) => id !== "fastMode" && id !== "serviceTier"),
+          { id: "serviceTier", value: tier },
+        ];
+  return { caps, selections: withImplicitFastModeDefault(caps, selections) };
 }
 
 export function getComposerProviderState(input: ComposerProviderStateInput): ComposerProviderState {

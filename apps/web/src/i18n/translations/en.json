@@ -12995,5 +12995,12 @@
   "99451a5d2d40440f": "Withdrawn by {by}.",
   "3ee30a50b70fffab": "Withdrawn by {by}: {reason}",
   "92e129bf413a1220": "withdrawn",
-  "800966eb58181745": "Checking which languages the model supports…"
+  "800966eb58181745": "Checking which languages the model supports…",
+  "1becfb4db7ffe135": "Codex default",
+  "3c8f3dd37881c169": "Codex speed normal fast ultra fast service tier",
+  "72dc8979fc87df5c": "Codex speed: {speed}",
+  "7aa202a739c5f90d": "Applies on the next turn to Codex threads and workers using the default. Models use the fastest supported speed up to your choice.",
+  "afecbf6b765a2fb0": "Ultra fast",
+  "e2a5cf66eeec090e": "Default speed",
+  "e351e22d0be49f2b": "Codex speed: {speed} on {environment}"
 }

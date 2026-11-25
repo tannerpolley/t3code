@@ -1,4 +1,5 @@
 import {
+  type CodexDefaultSpeed,
   type CustomModelSetting,
   MODEL_SLUG_ALIASES_BY_PROVIDER,
   ModelCapabilities,
@@ -7,6 +8,7 @@ import {
   ProviderInstanceId,
   type ProviderOptionDescriptor,
   type ProviderOptionSelection,
+  type SelectProviderOptionDescriptor,
 } from "@t3tools/contracts";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
@@ -148,6 +150,59 @@ export function withImplicitFastModeDefault(
   return [...(modelOptions ?? []), { id: "fastMode", value: false }];
 }
 
+export function getCodexServiceTierOptionValue(
+  selection: Pick<ModelSelection, "options"> | null | undefined,
+): string | undefined {
+  return (
+    getProviderOptionStringSelectionValue(selection?.options, "serviceTier") ??
+    (getProviderOptionBooleanSelectionValue(selection?.options, "fastMode") === true
+      ? "fast"
+      : undefined)
+  );
+}
+
+export function codexSpeedForTier(tier: unknown): "standard" | "fast" | "ultrafast" {
+  if (tier === "fast" || tier === "priority") return "fast";
+  return tier === "ultrafast" ? "ultrafast" : "standard";
+}
+
+export function offeredCodexServiceTier(
+  options: ReadonlyArray<{ readonly id: string }>,
+  tier: string,
+): string | undefined {
+  const equivalent = tier === "fast" ? "priority" : tier === "priority" ? "fast" : undefined;
+  return (
+    options.find(({ id }) => id === tier)?.id ??
+    options.find(({ id }) => id === equivalent || (tier === "standard" && id === "default"))?.id
+  );
+}
+
+export function getCodexServiceTierDescriptor(caps: ModelCapabilities | null | undefined) {
+  return caps?.optionDescriptors?.find(
+    (descriptor): descriptor is SelectProviderOptionDescriptor =>
+      descriptor.id === "serviceTier" && descriptor.type === "select",
+  );
+}
+
+export function resolveCodexServiceTier(
+  descriptor: ReturnType<typeof getCodexServiceTierDescriptor>,
+  explicitTier: string | undefined,
+  defaultSpeed: CodexDefaultSpeed | null | undefined,
+): string | undefined {
+  const options = descriptor?.options ?? [];
+  if (explicitTier === "default" || explicitTier === "standard") return "default";
+  const explicit =
+    explicitTier === undefined ? undefined : offeredCodexServiceTier(options, explicitTier);
+  if (explicit !== undefined) return explicit;
+  const speed = explicitTier === "ultrafast" ? "ultrafast" : defaultSpeed;
+  if (speed == null) return undefined;
+  return (
+    (speed === "ultrafast" ? offeredCodexServiceTier(options, "ultrafast") : undefined) ??
+    (speed === "normal" ? undefined : offeredCodexServiceTier(options, "fast")) ??
+    "default"
+  );
+}
+
 function resolveDescriptorChoiceValue(
   descriptor: Extract<ProviderOptionDescriptor, { type: "select" }>,
   raw: string | null | undefined,
@@ -167,6 +222,9 @@ function resolveDescriptorChoiceValue(
   }
   if (descriptor.options.some((option) => option.id === trimmed)) {
     return trimmed;
+  }
+  if (descriptor.id === "serviceTier") {
+    return resolveCodexServiceTier(descriptor, trimmed, null);
   }
   return descriptor.currentValue ?? descriptor.options.find((option) => option.isDefault)?.id;
 }

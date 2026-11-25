@@ -4877,6 +4877,12 @@ describe("OrchestratorMcpService provider resolution", () => {
             expected: { ...inherited, options: [...override, inherited.options[1]] },
           },
           {
+            name: "explicit fast alias wins over the environment default",
+            parent: { ...inherited, options: [inherited.options[0]] },
+            target: { options: { serviceTier: "fast" } },
+            expected: inherited,
+          },
+          {
             name: "clear with array",
             target: { options: [] },
             expected: { ...inherited, options: [] },
@@ -4983,7 +4989,7 @@ describe("OrchestratorMcpService provider resolution", () => {
                   } as never;
                 }),
             }),
-            ServerSettings.layerTest(),
+            ServerSettings.layerTest({ codexDefaultSpeed: "normal" }),
             providerRegistryLayer([
               {
                 ...providerSnapshot({
@@ -4996,7 +5002,31 @@ describe("OrchestratorMcpService provider resolution", () => {
                     slug: model,
                     name: model,
                     isCustom: false,
-                    capabilities: null,
+                    capabilities:
+                      model === inherited.model
+                        ? {
+                            optionDescriptors: [
+                              {
+                                id: "reasoningEffort",
+                                type: "select" as const,
+                                label: "Reasoning",
+                                options: [
+                                  { id: "high", label: "High" },
+                                  { id: "max", label: "Max" },
+                                ],
+                              },
+                              {
+                                id: "serviceTier",
+                                type: "select" as const,
+                                label: "Speed",
+                                options: [
+                                  { id: "default", label: "Standard" },
+                                  { id: "priority", label: "Fast" },
+                                ],
+                              },
+                            ],
+                          }
+                        : null,
                     ...(model === inherited.model ? { aliases: ["gpt"] } : {}),
                   })),
                   {
@@ -5058,7 +5088,18 @@ describe("OrchestratorMcpService provider resolution", () => {
           yield* Effect.gen(function* () {
             const service = yield* OrchestratorMcpService.OrchestratorMcpService;
             const capabilities = yield* service.capabilities(scope);
-            assert.deepEqual(capabilities.inheritedOptions, inherited.options);
+            assert.deepEqual(
+              capabilities.inheritedOptions,
+              "parent" in testCase ? testCase.parent.options : inherited.options,
+            );
+            const rejected = yield* service
+              .delegateTask(scope, {
+                task: "Review the change.",
+                target: yield* decodeTarget({ options: { serviceTier: "unsupported" } }),
+                mode: "async",
+              })
+              .pipe(Effect.flip);
+            assert.include(rejected.message, "serviceTier must be one of");
             yield* service.delegateTask(scope, {
               task: "Review the change.",
               target: yield* decodeTarget(testCase.target),

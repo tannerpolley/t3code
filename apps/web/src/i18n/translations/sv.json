@@ -12993,5 +12993,12 @@
   "99451a5d2d40440f": "Återkallad av {by}.",
   "3ee30a50b70fffab": "Återkallad av {by}: {reason}",
   "92e129bf413a1220": "återkallad",
-  "800966eb58181745": "Kontrollerar vilka språk modellen stöder…"
+  "800966eb58181745": "Kontrollerar vilka språk modellen stöder…",
+  "1becfb4db7ffe135": "Codex standard",
+  "3c8f3dd37881c169": "Codex hastighet normal snabb ultrasnabb tjänstenivå",
+  "72dc8979fc87df5c": "Codex hastighet: {speed}",
+  "7aa202a739c5f90d": "Gäller från nästa tur för Codex-trådar och agenter som använder standarden. Modellerna använder den snabbaste hastighet de har stöd för, upp till ditt val.",
+  "afecbf6b765a2fb0": "Ultrasnabb",
+  "e2a5cf66eeec090e": "Standardhastighet",
+  "e351e22d0be49f2b": "Codex hastighet: {speed} på {environment}"
 }

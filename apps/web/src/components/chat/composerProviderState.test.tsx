@@ -264,6 +264,20 @@ describe("getComposerReasoningStep", () => {
     });
   }
 
+  it("keeps Codex speed inherited when changing reasoning", () => {
+    const models = modelWith([
+      selectDescriptor("reasoningEffort", LEVELS),
+      selectDescriptor("serviceTier", [
+        { id: "default", label: "Standard" },
+        { id: "priority", label: "Fast", isDefault: true },
+      ]),
+    ]);
+    expect(step({ models })?.modelOptions).toEqual(selections(["reasoningEffort", "high"]));
+    expect(
+      step({ models, modelOptions: selections(["serviceTier", "default"]) })?.modelOptions,
+    ).toEqual(selections(["reasoningEffort", "high"], ["serviceTier", "default"]));
+  });
+
   it("walks the catalog order, wrapping at both ends and keeping the other traits", () => {
     const models = modelWith([
       selectDescriptor("contextWindow", [
