@@ -10,8 +10,9 @@ import * as Schedule from "effect/Schedule";
 import * as Semaphore from "effect/Semaphore";
 
 interface GrantRedemptionState {
-  pending?: string | undefined;
-  automatic?: string | undefined;
+  readonly pending: { automatic?: string | undefined; manual?: string | undefined };
+  automaticKey?: string | undefined;
+  automaticSettled?: boolean;
 }
 
 interface AccountRedemptionState {
@@ -61,23 +62,34 @@ export const make = Effect.gen(function* () {
     const state = yield* stateFor(accountKey);
     return yield* state.lock.withPermits(1)(
       Effect.gen(function* () {
-        const keys = state.keys.get(creditId) ?? {};
-        const previous = keys.pending;
+        const keys: GrantRedemptionState = state.keys.get(creditId) ?? { pending: {} };
+        const lane = automatic ? "automatic" : "manual";
+        const previous = keys.pending[lane];
         const idempotencyKey =
-          previous ?? (automatic ? keys.automatic : undefined) ?? (yield* random.uuidV4());
-        keys.pending = idempotencyKey;
+          (automatic
+            ? (keys.automaticKey ?? keys.pending.manual)
+            : (keys.pending.manual ?? keys.pending.automatic)) ?? (yield* random.uuidV4());
+        if (!automatic || !keys.automaticSettled) keys.pending[lane] = idempotencyKey;
         // A confirmed automatic claim stays pinned while future manual claims get their own IDs.
-        if (automatic) keys.automatic ??= idempotencyKey;
+        if (automatic) keys.automaticKey ??= idempotencyKey;
         state.keys.set(creditId, keys);
         const outcome = yield* consume(idempotencyKey).pipe(
           Effect.tapError((error) =>
             Effect.sync(() => {
-              if (isSettled?.(error)) keys.pending = previous;
+              if (isSettled?.(error)) keys.pending[lane] = previous;
             }),
           ),
         );
-        keys.pending = outcome === undefined ? previous : undefined;
-        if (keys.pending === undefined && keys.automatic === undefined) state.keys.delete(creditId);
+        if (outcome === undefined) {
+          keys.pending[lane] = previous;
+        } else {
+          if (keys.automaticKey === idempotencyKey) keys.automaticSettled = true;
+          if (keys.pending.manual === idempotencyKey) keys.pending.manual = undefined;
+          if (keys.pending.automatic === idempotencyKey) keys.pending.automatic = undefined;
+        }
+        if (!keys.pending.manual && !keys.pending.automatic && !keys.automaticKey) {
+          state.keys.delete(creditId);
+        }
         return outcome;
       }),
     );

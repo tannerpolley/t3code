@@ -361,6 +361,7 @@ export const CodexDriver: ProviderDriver<
     const consumeResetCredit: NonNullable<ProviderInstance["consumeResetCredit"]> = (selection) => {
       const automatic = typeof selection === "object" ? selection : undefined;
       const creditId = typeof selection === "string" ? selection : automatic?.creditId;
+      if (!creditId) return Effect.succeed("noCredit" as const);
       return resetCreditCoordinator
         .redeem(
           accountKey,
@@ -376,25 +377,22 @@ export const CodexDriver: ProviderDriver<
               const account = automatic
                 ? (yield* client.request("account/read", {})).account
                 : undefined;
-              const limits = creditId
-                ? yield* client.request("account/rateLimits/read", null)
-                : undefined;
-              const credits = codexResetCreditsToContract(limits?.rateLimitResetCredits);
-              if (creditId && (!credits?.availableCount || credits.nextCreditId !== creditId))
-                return undefined;
+              const limits = yield* client.request("account/rateLimits/read", null);
+              const credits = codexResetCreditsToContract(limits.rateLimitResetCredits);
+              if (!credits?.availableCount || credits.nextCreditId !== creditId) return undefined;
               if (automatic) {
                 if (
                   account?.type !== "chatgpt" ||
                   account.email.trim().toLowerCase() !== automatic.email ||
-                  (limits?.accountId?.trim() || undefined) !== automatic.workspaceId ||
-                  credits?.nextExpiresAt !== automatic.expiresAt ||
+                  (limits.accountId?.trim() || undefined) !== automatic.workspaceId ||
+                  credits.nextExpiresAt !== automatic.expiresAt ||
                   !(yield* automatic.canRedeem)
                 )
                   return undefined;
               }
               const response = yield* client.request("account/rateLimitResetCredit/consume", {
                 idempotencyKey,
-                ...(creditId ? { creditId } : {}),
+                creditId,
               });
               return response.outcome;
             }).pipe(Effect.scoped, Effect.timeout("20 seconds")),

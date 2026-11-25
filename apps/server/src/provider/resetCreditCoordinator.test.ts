@@ -90,12 +90,51 @@ describe("ResetCreditCoordinator", () => {
           return "reset" as const;
         });
       yield* redeem("acct", consume, undefined, "grant", true);
+      yield* redeem("acct", () => Effect.fail("unanswered replay"), undefined, "grant", true).pipe(
+        Effect.ignore,
+      );
       yield* redeem("acct", () => Effect.void, undefined, "grant", true);
       yield* redeem("acct", consume, undefined, "grant");
       yield* redeem("acct", consume, undefined, "grant", true);
       yield* redeem("acct", consume, undefined, "grant");
       assert.strictEqual(attempts[0], attempts[2]);
       assert.strictEqual(new Set(attempts).size, 3);
+    }).pipe(Effect.provide(ResetCreditCoordinator.layerTest)),
+  );
+
+  it.effect("keeps a failed manual preparation out of the automatic retry", () =>
+    Effect.gen(function* () {
+      const { redeem } = yield* ResetCreditCoordinator.ResetCreditCoordinator;
+      const spends = new Set<string>();
+      const consume = (key: string) =>
+        Effect.sync(() => {
+          spends.add(key);
+          return "reset" as const;
+        });
+      yield* redeem("acct", consume, undefined, "grant", true);
+      let manualKey: string | undefined;
+      yield* redeem(
+        "acct",
+        (key) =>
+          Effect.sync(() => {
+            manualKey = key;
+          }).pipe(Effect.andThen(Effect.fail("login read failed"))),
+        undefined,
+        "grant",
+      ).pipe(Effect.ignore);
+      yield* redeem("acct", consume, undefined, "grant", true);
+      assert.strictEqual(spends.size, 1);
+      assert.isDefined(manualKey);
+      yield* redeem(
+        "acct",
+        (key) => {
+          assert.strictEqual(key, manualKey);
+          return consume(key);
+        },
+        undefined,
+        "grant",
+      );
+      assert.strictEqual(spends.size, 2);
     }).pipe(Effect.provide(ResetCreditCoordinator.layerTest)),
   );
 

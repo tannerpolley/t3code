@@ -85,7 +85,11 @@ export const start = Effect.gen(function* () {
       owners.add(account);
       const credits = report.usageLimits?.resetCredits;
       const ownerKey = JSON.stringify([account, report.owner, email, report.workspaceId]);
-      if (report.usageLimits?.unavailable || !credits) {
+      if (
+        report.usageLimits?.unavailable ||
+        !credits ||
+        (credits.availableCount > 0 && !credits.nextCreditId)
+      ) {
         unknown.add(ownerKey);
         continue;
       }

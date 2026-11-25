@@ -168,43 +168,46 @@ it.effect("allows the same grant ID on two distinct accounts", () =>
   }),
 );
 
-it.effect("refreshes an unreadable credit list without spending until the same grant returns", () =>
-  Effect.gen(function* () {
-    const source = hub("hub");
-    const unreadable = {
-      ...source,
-      accounts: source.accounts.map(({ usageLimits, ...account }) => ({
-        ...account,
-        usageLimits: { ...usageLimits, resetCredits: undefined },
-      })),
-    };
-    const current = yield* Ref.make<readonly UsageLimitSourceSnapshot[]>([source]);
-    const calls = yield* Ref.make<string[]>([]);
-    const refreshes = yield* Ref.make(0);
-    yield* start({
-      current: Ref.get(current),
-      streamChanges: Stream.empty,
-      refresh: Effect.gen(function* () {
-        const reads = yield* Ref.updateAndGet(refreshes, (count) => count + 1);
-        yield* Ref.set(current, reads < 3 ? [unreadable] : reads === 3 ? [source] : []);
-      }),
-      consumeResetCredit: ({ creditId }, automatic) =>
-        Effect.gen(function* () {
-          expect(yield* automatic!.canRedeem).toBe(true);
-          const seen = yield* Ref.updateAndGet(calls, (credits) => [...credits, creditId]);
-          if (seen.length === 1) return yield* new UsageLimitSourceError({ detail: "Unconfirmed" });
-          return { outcome: "reset" } as const;
+it.effect.each([undefined, { availableCount: 1 }])(
+  "refreshes an unreadable credit list (%s) without spending until the same grant returns",
+  (resetCredits) =>
+    Effect.gen(function* () {
+      const source = hub("hub");
+      const unreadable = {
+        ...source,
+        accounts: source.accounts.map(({ usageLimits, ...account }) => ({
+          ...account,
+          usageLimits: { ...usageLimits, resetCredits },
+        })),
+      };
+      const current = yield* Ref.make<readonly UsageLimitSourceSnapshot[]>([source]);
+      const calls = yield* Ref.make<string[]>([]);
+      const refreshes = yield* Ref.make(0);
+      yield* start({
+        current: Ref.get(current),
+        streamChanges: Stream.empty,
+        refresh: Effect.gen(function* () {
+          const reads = yield* Ref.updateAndGet(refreshes, (count) => count + 1);
+          yield* Ref.set(current, reads < 3 ? [unreadable] : reads === 3 ? [source] : []);
         }),
-    });
-    yield* TestClock.adjust("2 minutes");
-    expect(yield* Ref.get(refreshes)).toBe(2);
-    expect(yield* Ref.get(calls)).toEqual(["grant"]);
-    yield* TestClock.adjust("1 minute");
-    expect(yield* Ref.get(refreshes)).toBe(3);
-    expect(yield* Ref.get(calls)).toEqual(["grant"]);
-    yield* TestClock.adjust("1 minute");
-    expect(yield* Ref.get(calls)).toEqual(["grant", "grant"]);
-  }),
+        consumeResetCredit: ({ creditId }, automatic) =>
+          Effect.gen(function* () {
+            expect(yield* automatic!.canRedeem).toBe(true);
+            const seen = yield* Ref.updateAndGet(calls, (credits) => [...credits, creditId]);
+            if (seen.length === 1)
+              return yield* new UsageLimitSourceError({ detail: "Unconfirmed" });
+            return { outcome: "reset" } as const;
+          }),
+      });
+      yield* TestClock.adjust("2 minutes");
+      expect(yield* Ref.get(refreshes)).toBe(2);
+      expect(yield* Ref.get(calls)).toEqual(["grant"]);
+      yield* TestClock.adjust("1 minute");
+      expect(yield* Ref.get(refreshes)).toBe(3);
+      expect(yield* Ref.get(calls)).toEqual(["grant"]);
+      yield* TestClock.adjust("1 minute");
+      expect(yield* Ref.get(calls)).toEqual(["grant", "grant"]);
+    }),
 );
 
 it.effect.each([0, 1])(

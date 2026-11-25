@@ -39,6 +39,16 @@ it("pins a confirmation to the displayed reset credit even when the selection ch
   expect(newChoice?.input).toEqual({ instanceId, creditId: "new" });
 });
 
+it("shows a count-only reset balance without offering a manual claim", () => {
+  const [choice] = resetCreditChoices(
+    { availableCount: 2 },
+    { instanceId: ProviderInstanceId.make("codex") },
+    now,
+  );
+  expect(choice).toMatchObject({ availableCount: 2, input: null });
+  expect(choice?.summary).toContain("2 reset credits banked");
+});
+
 const window = {
   id: "five_hour",
   kind: "session",

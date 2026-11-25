@@ -803,14 +803,14 @@ function paceOfShares(usedPercent: number, elapsed: number): LimitPace {
   return "on";
 }
 
-/** One redeemable reset as clients offer it; `input` already names the chosen credit. */
+/** A displayed reset balance whose input, when available, names the exact credit. */
 export interface ResetCreditChoice {
   readonly key: string;
   readonly summary: string;
   readonly actionLabel: string;
   readonly confirmDescription: string;
   readonly availableCount: number;
-  readonly input: ProviderConsumeResetCreditInput;
+  readonly input: ProviderConsumeResetCreditInput | null;
 }
 
 export type ResetCountdown =

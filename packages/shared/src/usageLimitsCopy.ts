@@ -204,7 +204,11 @@ export function resetCreditChoices(
         ),
       ),
       availableCount: count,
-      input: credits.nextCreditId ? { ...input, creditId: credits.nextCreditId } : input,
+      input: credits.nextCreditId
+        ? { ...input, creditId: credits.nextCreditId }
+        : "sourceId" in input
+          ? input
+          : null,
     },
   ];
 }

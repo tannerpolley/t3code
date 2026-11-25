@@ -263,7 +263,7 @@ export function ResetCredits(props: {
   if (dense && credits.availableCount === 0 && status === null) return null;
 
   const redeem = async (choice: ResetCreditChoice) => {
-    if (!readEnvironmentScope(environmentId, AuthProvidersManageScope)) return;
+    if (!choice.input || !readEnvironmentScope(environmentId, AuthProvidersManageScope)) return;
     setBusy(true);
     setStatus(null);
     const result = await consume({ environmentId, input: choice.input });
@@ -280,7 +280,7 @@ export function ResetCredits(props: {
   };
 
   const confirm = (choice: ResetCreditChoice) => {
-    if (!readEnvironmentScope(environmentId, AuthProvidersManageScope)) return;
+    if (!choice.input || !readEnvironmentScope(environmentId, AuthProvidersManageScope)) return;
     Dialog.alert(resolveNow(msg("Use a reset credit?")), choice.confirmDescription, [
       { text: resolveNow(msg("Cancel")), style: "cancel" },
       { text: resolveNow(msg("Use credit")), onPress: () => void redeem(choice) },
@@ -292,7 +292,7 @@ export function ResetCredits(props: {
       {resetCreditChoices(credits, input, now, false, m).map((choice) => (
         <View key={choice.key} className="flex-row flex-wrap items-center gap-x-3 gap-y-1">
           <Text className="text-xs tabular-nums text-foreground-tertiary">{choice.summary}</Text>
-          {choice.availableCount > 0 ? (
+          {choice.availableCount > 0 && choice.input ? (
             <Pressable
               accessibilityRole="button"
               accessibilityState={{ disabled: busy || !canManageProviders }}
