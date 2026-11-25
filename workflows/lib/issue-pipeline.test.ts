@@ -38,7 +38,9 @@ describe("issue pipeline admission", () => {
     expect(claimDecision("In progress", [], "first", { ...applied, applied: false })).toBe(
       "uncertain",
     );
-    expect(claimDecision("Todo", [], "later", applied)).toBe("claim");
+    expect(claimDecision("Todo", [], "later", applied)).toBe("skip");
+    expect(claimDecision("Todo", [], "later", { ...applied, applied: false })).toBe("skip");
+    expect(claimDecision("Todo", [], "later")).toBe("claim");
   });
 
   it("rejects foreign issue URLs and multiple push destinations", () => {

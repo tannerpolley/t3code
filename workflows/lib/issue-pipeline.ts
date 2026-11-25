@@ -31,7 +31,7 @@ export const claimDecision = (
   runId: string,
   claim?: { runId: string; applied: boolean },
 ) => {
-  if (hasHold(labels)) return "skip";
+  if ((claim && claim.runId !== runId) || hasHold(labels)) return "skip";
   if (status === "Todo") return "claim";
   if (status !== "In progress" || claim?.runId !== runId) return "skip";
   return claim.applied ? "resume" : "uncertain";

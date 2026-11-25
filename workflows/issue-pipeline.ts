@@ -104,12 +104,23 @@ const handoff = Effect.fn(function* (name: string, heading: string, reason: stri
   return yield* stop(reason);
 });
 
+const claimFor = (url: string) =>
+  store.entry(
+    `issue-pipeline/claims/${url.toLowerCase()}`,
+    Schema.Struct({ runId: Schema.String, applied: Schema.Boolean }),
+  );
+
 const worker = workflow(
   "issue-pipeline",
   {
     version: 1,
     payload: Schema.Struct({ project: Schema.String, url: Schema.String }),
     concurrency,
+    onEnd: ({ url }, { id }) =>
+      claimFor(url).update((current) => {
+        const claim = Option.getOrUndefined(current);
+        return claim?.runId === id ? undefined : claim;
+      }),
   },
   Effect.fn(function* ({ project, url }, run) {
     if (!projects.includes(project))
@@ -139,10 +150,7 @@ const worker = workflow(
     );
     const { repository, base, number, baseHead } = scope;
     const issue = { project, url };
-    const claim = store.entry(
-      `issue-pipeline/claims/${repository}/${number}`,
-      Schema.Struct({ runId: Schema.String, applied: Schema.Boolean }),
-    );
+    const claim = claimFor(url);
     const admitted = yield* within(
       `issue-pipeline/${repository}/${number}`,
       { limit: 1 },
