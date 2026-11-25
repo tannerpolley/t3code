@@ -1,10 +1,12 @@
 // @effect-diagnostics nodeBuiltinImport:off
 import * as NodeChildProcess from "node:child_process";
 import * as NodeFS from "node:fs";
+import * as NodeModule from "node:module";
 import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { expect } from "vite-plus/test";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Option from "effect/Option";
 import { afterAll, assert, describe, it } from "@effect/vitest";
 import * as Clock from "effect/Clock";
@@ -383,7 +385,7 @@ function launcherFixture() {
   ]) {
     write(file, NodeFS.readFileSync(NodePath.join(import.meta.dirname, "..", file), "utf8"));
   }
-  write(".gitignore", "node_modules/\nrecords/\n");
+  write(".gitignore", "node_modules/\nrecords/\n.generated/\n");
   write("pnpm-workspace.yaml", "packages:\n  - packages/*\n");
   write(
     "package.json",
@@ -395,7 +397,27 @@ function launcherFixture() {
       },
     }),
   );
-  write("packages/example/package.json", JSON.stringify({ name: "example" }));
+  write(
+    "packages/example/package.json",
+    JSON.stringify({ name: "example", scripts: { test: "vp test run" } }),
+  );
+  write(
+    "packages/web/package.json",
+    JSON.stringify({
+      name: "@t3tools/web",
+      dependencies: { example: "workspace:*" },
+      scripts: { test: "vp test run --project browser" },
+    }),
+  );
+  write(
+    "packages/unaffected/package.json",
+    JSON.stringify({ name: "unaffected", scripts: { test: "vp test run" } }),
+  );
+  write("packages/without-suite/package.json", JSON.stringify({ name: "without-suite" }));
+  const uncoveredSource = "packages/without-suite/issuePullRequests.ts";
+  const uncoveredTest = "packages/without-suite/issuePullRequests.test.mjs";
+  write(uncoveredSource, "export const value = 1;\n");
+  write(uncoveredTest, 'import { it } from "vitest";\nit.only("focused", () => {});\n');
   const source = "packages/example/space & (draft) %PATH% ! 研究.ts";
   write(source, "export const value = 1;\n");
   write(
@@ -405,22 +427,35 @@ function launcherFixture() {
   write(
     "node_modules/vite-plus/cli.js",
     `
+    import { spawnSync } from 'node:child_process';
     import fs from 'node:fs';
     import path from 'node:path';
     const args = process.argv.slice(2);
-    fs.writeFileSync(path.join(process.env.RECORDS, process.pid + '.json'), JSON.stringify({ args, cwd: process.cwd() }));
+    fs.writeFileSync(path.join(process.env.RECORDS, process.pid + '.json'), JSON.stringify({ args, cwd: process.cwd(), maxWorkers: process.env.VITEST_MAX_WORKERS }));
     console.log('fixture stdout: ' + args[0]);
     console.error('fixture stderr: ' + args[0]);
+    if (args[0] === 'fmt' && process.env.FIXTURE_MUTATE_INPUT === '1')
+      fs.writeFileSync('.generated/fixture.d.ts', 'export type Value = 2;');
+    if (args[0] === 'test' && process.env.FIXTURE_VITEST) {
+      const child = spawnSync(process.execPath, [process.env.FIXTURE_VITEST, ...args.slice(1)], { stdio: 'inherit' });
+      process.exit(child.status ?? 1);
+    }
+    const report = args.find(arg => arg.startsWith('--outputFile.json='));
+    if (report) {
+      const files = args.slice(args.indexOf(report) + 1);
+      fs.writeFileSync(report.slice('--outputFile.json='.length), JSON.stringify({
+        testResults: files.map(file => ({ name: path.resolve(file) })),
+      }));
+    }
     process.exit(args[0] === process.env.FAIL_STEP ? 23 : 0);
   `,
   );
   // Select the Windows launcher without changing the Effect runtime's host platform.
   write(
     "scripts/check-changed.ts",
-    NodeFS.readFileSync(NodePath.join(import.meta.dirname, "check-changed.ts"), "utf8").replace(
-      "vitePlusCommand(args, platform)",
-      'vitePlusCommand(args, "win32")',
-    ),
+    NodeFS.readFileSync(NodePath.join(import.meta.dirname, "check-changed.ts"), "utf8")
+      .replace("vitePlusCommand(args, platform)", 'vitePlusCommand(args, "win32")')
+      .replace("yield* HostProcess.HomeDirectory", JSON.stringify(NodePath.join(root, ".git"))),
   );
   for (const name of ["effect", "@effect/platform-node", "@t3tools/shared"]) {
     const dest = NodePath.join(root, "node_modules", name);
@@ -453,15 +488,35 @@ function launcherFixture() {
   return {
     root,
     source,
+    uncoveredSource,
+    uncoveredTest,
+    git,
     write,
-    run(failStep = "") {
-      return NodeChildProcess.spawnSync(process.execPath, ["scripts/check-changed.ts", "HEAD"], {
-        cwd: root,
-        encoding: "utf8",
-        env: { ...env, TEMP: NodeOS.tmpdir(), RECORDS: records, FAIL_STEP: failStep },
-      });
+    run(
+      failStep = "",
+      flags: ReadonlyArray<string> = [],
+      ref = "HEAD",
+      vitest?: string,
+      mutateInput = false,
+    ) {
+      return NodeChildProcess.spawnSync(
+        process.execPath,
+        ["scripts/check-changed.ts", ref, ...flags],
+        {
+          cwd: root,
+          encoding: "utf8",
+          env: {
+            ...env,
+            TEMP: NodeOS.tmpdir(),
+            RECORDS: records,
+            FAIL_STEP: failStep,
+            FIXTURE_VITEST: vitest,
+            FIXTURE_MUTATE_INPUT: mutateInput ? "1" : undefined,
+          },
+        },
+      );
     },
-    calls: (): Array<{ args: Array<string>; cwd: string }> =>
+    calls: (): Array<{ args: Array<string>; cwd: string; maxWorkers: string }> =>
       NodeFS.readdirSync(records).map((file) =>
         JSON.parse(NodeFS.readFileSync(NodePath.join(records, file), "utf8")),
       ),
@@ -470,6 +525,121 @@ function launcherFixture() {
     },
   };
 }
+
+it.skipIf(HostProcess.Platform.defaultValue() !== "linux")(
+  "runs full typecheck and affected suites after a passing fast check",
+  () => {
+    using project = launcherFixture();
+    project.write(project.source, "export const value = 2;\n");
+    project.write(project.uncoveredSource, "export const value = 2;\n");
+    const fast = project.run();
+    assert.strictEqual(fast.status, 0, fast.stderr);
+    assert.isFalse(project.calls().some(({ args }) => args.at(-1) === "test"));
+    assert.isTrue(
+      project
+        .calls()
+        .some(({ args }) => args[0] === "test" && args.includes(project.uncoveredTest)),
+    );
+
+    const full = project.run("", ["--full-validation"]);
+    assert.strictEqual(full.status, 0, full.stderr);
+    assert.include(full.stdout, "full typecheck");
+    const calls = project.calls();
+    assert.strictEqual(
+      calls.filter(({ args }) => args[0] === "test" && args.includes(project.uncoveredTest)).length,
+      2,
+    );
+    assert.isTrue(
+      calls.some(({ args }) => args.join(" ") === "run -r --cache --concurrency-limit 1 typecheck"),
+    );
+    assert.sameDeepMembers(
+      calls
+        .filter(({ args }) => args.at(-1) === "test")
+        .map(({ args, maxWorkers }) => [args, maxWorkers]),
+      [
+        [["run", "--filter", "example", "test"], "2"],
+        [["run", "--filter", "@t3tools/web", "test"], "1"],
+      ],
+    );
+  },
+);
+
+it.skipIf(HostProcess.Platform.defaultValue() !== "linux")(
+  "full validation rejects it.only in an uncovered test",
+  () => {
+    using project = launcherFixture();
+    project.write(project.uncoveredSource, "export const value = 2;\n");
+    project.write(
+      "vitest.config.mjs",
+      "export default { test: { allowOnly: !process.env.CI } };\n",
+    );
+    project.git("add", "vitest.config.mjs");
+    project.git("commit", "-m", "fixture Vitest config");
+    const requireFromVite = NodeModule.createRequire(import.meta.resolve("vite-plus/bin"));
+    const vitest = NodePath.dirname(requireFromVite.resolve("vitest/package.json"));
+    NodeFS.symlinkSync(vitest, NodePath.join(project.root, "node_modules", "vitest"), "junction");
+    const cli = NodePath.join(vitest, "vitest.mjs");
+    const full = project.run("", ["--full-validation"], "HEAD", cli);
+    expect(full.status, full.stdout + full.stderr).toBe(1);
+    expect(full.stdout).toContain("Unexpected .only");
+  },
+);
+
+it.skipIf(HostProcess.Platform.defaultValue() !== "linux")(
+  "full validation rejects a selected test the affected package suite cannot discover",
+  () => {
+    using project = launcherFixture();
+    const test = "packages/example/src/undiscovered.test.tsx";
+    project.write(test, 'import { it } from "vitest";\nit("runs", () => {});\n');
+    project.write(
+      "packages/example/src/discovered.test.ts",
+      'import { it } from "vitest";\nit("runs", () => {});\n',
+    );
+    project.write("vitest.config.mjs", 'export default { test: { include: ["**/*.test.ts"] } };\n');
+    project.git("add", "vitest.config.mjs");
+    project.git("commit", "-m", "fixture Vitest config");
+    const requireFromVite = NodeModule.createRequire(import.meta.resolve("vite-plus/bin"));
+    const vitest = NodePath.dirname(requireFromVite.resolve("vitest/package.json"));
+    NodeFS.symlinkSync(vitest, NodePath.join(project.root, "node_modules", "vitest"), "junction");
+    const full = project.run(
+      "",
+      ["--full-validation"],
+      "HEAD",
+      NodePath.join(vitest, "vitest.mjs"),
+    );
+    expect(full.status, full.stdout + full.stderr).toBe(1);
+    expect(full.stdout).toContain("1 passed");
+    expect(full.stdout).toContain(`No Vitest result for ${test}`);
+  },
+);
+
+it.skipIf(HostProcess.Platform.defaultValue() !== "linux")(
+  "full validation refuses a pass when an ignored declaration changes",
+  () => {
+    using project = launcherFixture();
+    project.write(project.source, "export const value = 2;\n");
+    project.write(".generated/fixture.d.ts", "export type Value = 1;");
+    const full = project.run("", ["--full-validation"], "HEAD", undefined, true);
+    expect(full.status, full.stdout + full.stderr).toBe(1);
+    expect(full.stderr).toContain("Validation inputs changed during the run.");
+  },
+);
+
+it.skipIf(HostProcess.Platform.defaultValue() !== "linux")(
+  "refuses full validation before the target tip is included",
+  () => {
+    using project = launcherFixture();
+    project.git("switch", "-c", "target");
+    project.write(project.source, "export const value = 3;\n");
+    project.git("add", project.source);
+    project.git("commit", "-m", "advance target");
+    project.git("switch", "--detach", "HEAD^");
+    const full = project.run("", ["--full-validation"], "target");
+    expect(full.status, full.stdout + full.stderr).toBe(1);
+    expect(full.stderr).toContain("Merge the current target");
+    expect(project.calls()).toEqual([]);
+  },
+);
 
 it("checks changed source paths through the Windows launcher", () => {
   using project = launcherFixture();
@@ -480,6 +650,7 @@ it("checks changed source paths through the Windows launcher", () => {
   expect(calls.find(({ args }) => args[0] === "lint")).toEqual({
     args: ["lint", "--no-error-on-unmatched-pattern", project.source],
     cwd: project.root,
+    maxWorkers: "2",
   });
   expect(calls.some(({ args }) => args[0] === "fmt" && args.includes(project.source))).toBe(true);
   expect(calls.some(({ args }) => args[0] === "run" && args.includes("typecheck"))).toBe(true);
