@@ -6,6 +6,7 @@ import * as NodeOS from "node:os";
 import * as NodePath from "node:path";
 import { expect } from "vite-plus/test";
 import * as NodeServices from "@effect/platform-node/NodeServices";
+import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Option from "effect/Option";
 import { afterAll, assert, describe, it } from "@effect/vitest";
 import * as Clock from "effect/Clock";
@@ -509,7 +510,7 @@ function launcherFixture() {
   };
 }
 
-it.skipIf(NodeOS.platform() !== "linux")(
+it.skipIf(HostProcess.Platform.defaultValue() !== "linux")(
   "runs full typecheck and affected suites after a passing fast check",
   () => {
     using project = launcherFixture();
@@ -547,7 +548,7 @@ it.skipIf(NodeOS.platform() !== "linux")(
   },
 );
 
-it.skipIf(NodeOS.platform() !== "linux")(
+it.skipIf(HostProcess.Platform.defaultValue() !== "linux")(
   "full validation rejects it.only in an uncovered test",
   () => {
     using project = launcherFixture();
@@ -568,7 +569,7 @@ it.skipIf(NodeOS.platform() !== "linux")(
   },
 );
 
-it.skipIf(NodeOS.platform() !== "linux")(
+it.skipIf(HostProcess.Platform.defaultValue() !== "linux")(
   "refuses full validation before the target tip is included",
   () => {
     using project = launcherFixture();
