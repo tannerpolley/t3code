@@ -21,7 +21,7 @@ const dependencies = Layer.mergeAll(IssueWorkStore.layer, EffectOutbox.layer).pi
 it.effect.each([
   { name: "archived worker", archived: true, count: 0 },
   { name: "interrupted worker", run: "interrupted", count: 0 },
-  { name: "worker on a merged branch", merged: true, count: 0 },
+  { name: "visible worker with a cached merge", merged: true, count: 1 },
   { name: "closed issue", closed: true, count: 0 },
   { name: "idle worker on an open issue", count: 1 },
   { name: "archived worker with pending work", archived: true, run: "waiting", count: 1 },
@@ -38,7 +38,28 @@ it.effect.each([
     count: 1,
   },
   { name: "worker waiting for a merged PR notification", merged: true, watch: true, count: 1 },
-])("counts slots for $name", ({ archived, run, merged, closed, roster, watch, count }) =>
+  {
+    name: "closed worker with a running command",
+    closed: true,
+    run: "completed",
+    item: "command_execution",
+    count: 1,
+  },
+  {
+    name: "closed worker with a rolled-back command",
+    closed: true,
+    run: "rolled_back",
+    item: "command_execution",
+    count: 0,
+  },
+  {
+    name: "closed worker with a persistent tool",
+    closed: true,
+    run: "completed",
+    item: "dynamic_tool",
+    count: 0,
+  },
+])("counts slots for $name", ({ archived, run, merged, closed, roster, watch, item, count }) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     const store = yield* IssueWorkStore.IssueWorkStore;
@@ -71,6 +92,10 @@ it.effect.each([
     if (run !== undefined)
       yield* sql`INSERT INTO orchestration_v2_projection_runs(run_id, thread_id, ordinal, provider, status, requested_at, payload_json)
         VALUES ('run', 'worker', 1, 'codex', ${run}, '2026-11-24', '{}')`;
+    if (item !== undefined)
+      yield* sql`INSERT INTO orchestration_v2_projection_turn_items(turn_item_id, thread_id, run_id, ordinal, type, status, updated_at, payload_json)
+        VALUES ('item', 'worker', 'run', 1, ${item}, 'running', '2026-11-24',
+          ${item === "dynamic_tool" ? '{"input":{"persistent":true}}' : "{}"})`;
     if (roster !== undefined) {
       const pending = JSON.stringify({ pendingBackgroundTasks: [{ taskId: "command" }] });
       yield* sql`UPDATE orchestration_v2_projection_threads SET active_provider_thread_id = 'current'
@@ -80,7 +105,11 @@ it.effect.each([
           ('old', 'worker', 'codex', 'idle', '2026-11-24', ${roster === "old" ? pending : "{}"})`;
     }
     assert.equal(yield* store.slotsInUse(root), count);
-    if (watch) assert.isTrue(yield* store.workerRetainsSlot(ThreadId.make("worker"), true));
+    if (merged || item !== undefined)
+      assert.equal(
+        yield* store.workerRetainsSlot(ThreadId.make("worker"), true),
+        merged ? watch === true : count === 1,
+      );
   }).pipe(Effect.provide(dependencies)),
 );
 

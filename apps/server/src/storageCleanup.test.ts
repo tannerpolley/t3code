@@ -3984,6 +3984,9 @@ describe("storage cleanup reports and local file policies", () => {
         if (unsettledStatus !== null || visible) {
           yield* service.runNow;
           expect(getThreads()[0]).toMatchObject({ worktreePath: slot, branch: "feature" });
+          setBranchPullRequest({ ...merged, headSha: "0".repeat(40) });
+          yield* service.runNow;
+          expect(getThreads()[0]).toMatchObject({ worktreePath: slot, branch: "feature" });
           setBranchPullRequest(merged);
           expect((yield* service.runNow).entries[0]?.reason).toBe(
             "Returned to the issue worktree pool",

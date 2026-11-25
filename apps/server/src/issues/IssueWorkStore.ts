@@ -244,6 +244,14 @@ export const layer = Layer.effect(
           AND (thread.active_provider_thread_id IS NULL
             OR provider.provider_thread_id = thread.active_provider_thread_id)
           AND json_array_length(provider.payload_json, '$.pendingBackgroundTasks') > 0)
+      OR EXISTS (SELECT 1 FROM orchestration_v2_projection_turn_items item
+        LEFT JOIN orchestration_v2_projection_runs run ON run.run_id = item.run_id
+        WHERE item.thread_id = thread.thread_id
+          AND item.type IN ('command_execution', 'dynamic_tool', 'subagent')
+          AND item.status NOT IN ('completed', 'interrupted', 'failed', 'cancelled')
+          AND item.status IN ('pending', 'running', 'waiting')
+          AND (item.run_id IS NULL OR run.status <> 'rolled_back')
+          AND NOT (item.type = 'dynamic_tool' AND json_type(item.payload_json, '$.input.persistent') IS 'true'))
       OR EXISTS (SELECT 1 FROM json_each(thread.payload_json, '$.pullRequests') pr
         WHERE json_type(pr.value, '$.watch') = 'object'
           AND json_extract(pr.value, '$.source') <> 'stack-dismissed')
@@ -262,11 +270,6 @@ export const layer = Layer.effect(
             AND (json_extract(suspension.value, '$.kind') = 'closed'
               OR (json_extract(suspension.value, '$.kind') IS NULL
                 AND json_extract(suspension.value, '$.reason') = ${CLOSED_ISSUE_SUSPENSION_REASON})))
-        AND NOT EXISTS (SELECT 1 FROM json_each(thread.payload_json, '$.pullRequests') pr
-          WHERE json_extract(pr.value, '$.snapshot.state') = 'merged'
-            AND json_extract(pr.value, '$.snapshot.headBranch') = json_extract(thread.payload_json, '$.branch')
-            AND lower(json_extract(pr.value, '$.host')) = lower(json_extract(thread.payload_json, '$.linkedIssue.host'))
-            AND lower(json_extract(pr.value, '$.repository')) = lower(json_extract(thread.payload_json, '$.linkedIssue.repository')))
       )`
       }
     )`;
