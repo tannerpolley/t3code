@@ -66,6 +66,15 @@ const managedThread = (id) => `EXISTS (SELECT 1 FROM ${threads} thread
       WHERE owner.root_thread_id IN (thread.thread_id, json_extract(thread.payload_json, '$.lineage.rootThreadId')))
   ))`;
 
+// Owner choice (2026-11-25): stalled fork records stay as inert data and are reported, not blocking.
+const abandoned = {
+  ownerDecisions: ["owner_decisions", "state = 'awaiting_choice'"],
+  issueChanges: [
+    "issue_changes",
+    "status IN ('failed', 'needs_attention') AND (status = 'needs_attention' OR in_flight_step IS NOT NULL)",
+  ],
+};
+
 const blockers = {
   unresolvedAppRequests: [
     requests,
@@ -81,13 +90,13 @@ const blockers = {
   ],
   ownerDecisions: [
     "owner_decisions",
-    `state IN ('publishing', 'awaiting_choice') OR pending_publish IS NOT NULL
+    `state = 'publishing' OR pending_publish IS NOT NULL
     OR pending_delivery = 1 OR pending_label = 1`,
   ],
   issueChanges: [
     "issue_changes",
-    `status IN ('pending', 'queued', 'executing', 'needs_attention')
-    OR in_flight_step IS NOT NULL`,
+    `status IN ('pending', 'queued', 'executing')
+    OR (in_flight_step IS NOT NULL AND status NOT IN ('failed', 'needs_attention'))`,
   ],
   issueRequests: [
     "orchestration_v2_projection_issue_work_requests",
@@ -396,6 +405,13 @@ async function run(db, mode, settingsPath) {
           Object.entries(recorded).map(([table, rows]) => [table, rows.length]),
         ),
         blockers: blocked,
+        abandoned: Object.fromEntries(
+          Object.entries(abandoned).map(([key, [table, where]]) => [
+            key,
+            scan(db, table, `count(CASE WHEN ${where} THEN 1 END) AS count`, mode === "dry-run")
+              .count,
+          ]),
+        ),
         counts: before,
         settingsKeys: Object.keys(exported),
       },
