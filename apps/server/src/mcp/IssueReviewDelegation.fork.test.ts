@@ -713,7 +713,7 @@ it.effect.each(["closed out", "restored", "disposed", "nested disposal", "pruned
         });
         assert.isNotNull((yield* threads.getThreadShell(childId))?.archivedAt);
       }
-    }).pipe(Effect.provide(ProjectionMaintenance.layer), Effect.provide(harness.layer));
+    }).pipe(Effect.provide(ProjectionMaintenance.layer.pipe(Layer.provideMerge(harness.layer))));
   },
 );
 
