@@ -385,6 +385,7 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
             }),
           ClaudeResetCredits.isSettledClaudeResetCreditFailure,
           creditId,
+          automatic !== undefined,
         );
       },
       Effect.provideService(HttpClient.HttpClient, httpClient),

@@ -293,11 +293,7 @@ export const consumeClaudeResetCredit = Effect.fn("consumeClaudeResetCredit")(fu
   if (input.automatic) {
     const { creditId, expiresAt, email, workspaceId, canRedeem } = input.automatic;
     const accountEmail = config.oauthAccount?.emailAddress?.trim().toLowerCase();
-    if (
-      input.grantId !== creditId ||
-      (accountEmail && accountEmail !== email) ||
-      (workspaceId && workspaceId !== organization)
-    ) {
+    if (input.grantId !== creditId || accountEmail !== email || workspaceId !== organization) {
       return undefined;
     }
     const credits = yield* readCreditsForToken(token, input.version);

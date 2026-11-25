@@ -204,7 +204,7 @@ export function resetCreditChoices(
         ),
       ),
       availableCount: count,
-      input,
+      input: credits.nextCreditId ? { ...input, creditId: credits.nextCreditId } : input,
     },
   ];
 }

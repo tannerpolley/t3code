@@ -90,7 +90,7 @@ export const start = Effect.gen(function* () {
       const expiry = Date.parse(expiresAt);
       if (!Number.isFinite(expiry)) continue;
       selected.push({
-        key: JSON.stringify([report.driver, creditId]),
+        key: JSON.stringify([account, creditId]),
         signature: JSON.stringify([report.owner, email, report.workspaceId, expiresAt]),
         owner: report.owner,
         creditId,
@@ -115,7 +115,7 @@ export const start = Effect.gen(function* () {
     const previous = attempts.get(credit.key);
     if (
       now < credit.opens ||
-      now >= credit.closes ||
+      now > credit.closes ||
       (previous && (previous.signature !== credit.signature || previous.retryAt > now))
     )
       return;
@@ -170,7 +170,7 @@ export const start = Effect.gen(function* () {
         )
           return false;
         const currentTime = yield* Clock.currentTimeMillis;
-        return currentTime >= credit.opens && currentTime < credit.closes;
+        return currentTime >= credit.opens && currentTime <= credit.closes;
       }),
     } satisfies AutomaticResetCredit;
     const outcome = yield* (
@@ -196,12 +196,10 @@ export const start = Effect.gen(function* () {
           )
         : sources.refresh;
     yield* refresh.pipe(Effect.ignoreCause({ log: true }));
-    if (status === "unconfirmed" || status === "nothingToReset") {
-      attempts.set(credit.key, {
-        signature: credit.signature,
-        retryAt: (yield* Clock.currentTimeMillis) + MINUTE,
-      });
-    }
+    attempts.set(credit.key, {
+      signature: credit.signature,
+      retryAt: (yield* Clock.currentTimeMillis) + MINUTE,
+    });
   });
 
   const run = Effect.gen(function* () {
@@ -232,7 +230,7 @@ export const start = Effect.gen(function* () {
           const previous = attempts.get(credit.key);
           if (previous && previous.signature !== credit.signature) continue;
           const at = Math.max(credit.opens, previous?.retryAt ?? 0);
-          if (Math.max(at, now) >= credit.closes) continue;
+          if (Math.max(at, now) > credit.closes) continue;
           if (at <= now) due.push(credit);
           else next = Math.min(next, at);
         }

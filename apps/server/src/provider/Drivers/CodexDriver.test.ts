@@ -206,6 +206,9 @@ it.layer(layerTest)("CodexDriver", (it) => {
       nextCredit = "grant";
       expect(yield* instance.consumeResetCredit!(selection)).toBe("reset");
       expect(requests).toEqual([expect.objectContaining({ creditId: "grant" })]);
+      nextCredit = "other";
+      expect(yield* instance.consumeResetCredit!(selection.creditId)).toBe("noCredit");
+      expect(requests).toHaveLength(1);
     }),
   );
 

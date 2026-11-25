@@ -25,7 +25,7 @@ import * as ProviderRegistry from "./ProviderRegistry.ts";
 import * as ResetCreditExpiry from "./ResetCreditExpiry.ts";
 
 const expiry = DateTime.formatIso(DateTime.makeUnsafe(11 * 60_000));
-const hub = (id: string): UsageLimitSourceSnapshot => ({
+const hub = (id: string, email = "user@example.test"): UsageLimitSourceSnapshot => ({
   id: UsageLimitSourceId.make(id),
   kind: "cliproxy",
   label: id,
@@ -35,7 +35,7 @@ const hub = (id: string): UsageLimitSourceSnapshot => ({
     {
       id: "account.json",
       driver: ProviderDriverKind.make("codex"),
-      email: "user@example.test",
+      email,
       workspaceId: "workspace",
       usageLimits: {
         windows: [],
@@ -86,12 +86,16 @@ it.effect("serializes duplicate accounts and paces retries after unconfirmed red
     const attempts = yield* Ref.make(0);
     const first = hub("first");
     const second = hub("second");
+    const snapshots = yield* Ref.make<readonly UsageLimitSourceSnapshot[]>([first, second]);
     const account = first.accounts[0]!;
     yield* start(
       {
-        current: Effect.succeed([first, second]),
+        current: Ref.get(snapshots),
         streamChanges: Stream.fromQueue(polls),
-        refresh: Queue.offer(refreshed, undefined).pipe(Effect.asVoid),
+        refresh: Effect.gen(function* () {
+          if ((yield* Ref.get(attempts)) === 3) yield* Ref.set(snapshots, []);
+          yield* Queue.offer(refreshed, undefined);
+        }),
         consumeResetCredit: ({ sourceId }, automatic) =>
           Effect.gen(function* () {
             expect(yield* automatic!.canRedeem).toBe(true);
@@ -133,9 +137,63 @@ it.effect("serializes duplicate accounts and paces retries after unconfirmed red
     yield* TestClock.adjust("1 second");
     expect(yield* Queue.take(calls)).toBe(first.id);
     yield* Queue.take(refreshed);
+    yield* TestClock.adjust("1 minute");
+    expect(yield* Queue.take(calls)).toBe(first.id);
+    yield* Queue.take(refreshed);
     yield* TestClock.adjust("10 minutes");
-    expect(yield* Ref.get(attempts)).toBe(2);
+    expect(yield* Ref.get(attempts)).toBe(3);
   }),
+);
+
+it.effect("allows the same grant ID on two distinct accounts", () =>
+  Effect.gen(function* () {
+    const one = hub("first");
+    const two = hub("second", "other@example.test");
+    const calls = yield* Queue.unbounded<UsageLimitSourceId>();
+    yield* start({
+      current: Effect.succeed([one, two]),
+      streamChanges: Stream.empty,
+      refresh: Effect.void,
+      consumeResetCredit: ({ sourceId }, automatic) =>
+        Effect.gen(function* () {
+          expect(yield* automatic!.canRedeem).toBe(true);
+          yield* Queue.offer(calls, sourceId);
+          return { outcome: "reset" } as const;
+        }),
+    });
+    yield* TestClock.adjust("1 minute");
+    expect(new Set([yield* Queue.take(calls), yield* Queue.take(calls)])).toEqual(
+      new Set([one.id, two.id]),
+    );
+  }),
+);
+
+it.effect.each([0, 1])(
+  "checks the one-minute cutoff after preparation with a %s ms offset",
+  (offset) =>
+    Effect.gen(function* () {
+      const source = hub("hub");
+      const preparing = yield* Deferred.make<void>();
+      const release = yield* Deferred.make<void>();
+      const allowed = yield* Deferred.make<boolean>();
+      yield* start({
+        current: Effect.succeed([source]),
+        streamChanges: Stream.empty,
+        refresh: Effect.void,
+        consumeResetCredit: (_input, automatic) =>
+          Effect.gen(function* () {
+            yield* Deferred.succeed(preparing, undefined);
+            yield* Deferred.await(release);
+            yield* Deferred.succeed(allowed, yield* automatic!.canRedeem);
+            return { outcome: "nothingToReset" } as const;
+          }),
+      });
+      yield* TestClock.adjust("1 minute");
+      yield* Deferred.await(preparing);
+      yield* TestClock.adjust(9 * 60_000 + offset);
+      yield* Deferred.succeed(release, undefined);
+      expect(yield* Deferred.await(allowed)).toBe(offset === 0);
+    }),
 );
 
 it.effect("rejects a grant whose owning source changes during preparation", () =>

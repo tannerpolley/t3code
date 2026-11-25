@@ -26,9 +26,18 @@ import {
   usesChatGptSharing,
   resolveNewThreadModelSelection,
 } from "./usageLimits.ts";
-import { collectLimitNotices } from "./usageLimitsCopy.ts";
+import { collectLimitNotices, resetCreditChoices } from "./usageLimitsCopy.ts";
 
 const now = Date.parse("2026-09-03T12:00:00.000Z");
+
+it("pins a confirmation to the displayed reset credit even when the selection changes", () => {
+  const instanceId = ProviderInstanceId.make("codex");
+  const credit = { availableCount: 1, nextCreditId: "original" };
+  const [openConfirm] = resetCreditChoices(credit, { instanceId }, now);
+  const [newChoice] = resetCreditChoices({ ...credit, nextCreditId: "new" }, { instanceId }, now);
+  expect(openConfirm?.input).toEqual({ instanceId, creditId: "original" });
+  expect(newChoice?.input).toEqual({ instanceId, creditId: "new" });
+});
 
 const window = {
   id: "five_hour",
