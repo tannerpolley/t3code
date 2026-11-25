@@ -1207,6 +1207,46 @@ const make = Effect.gen(function* () {
       const releaseSlot =
         slot && maintainIssueSlots && thread.linkedIssue !== undefined && issueSlots !== undefined;
       let releaseSlotBase: string | null = null;
+      let preserveSlotBranch = explicit;
+      let slotBranchMerged = false;
+      const workerRetainsSlot = (worker: OrchestrationV2ThreadShell) =>
+        issueWork?.workerRetainsSlot(worker.id, slotBranchMerged) ??
+        Effect.succeed(worker.archivedAt === null && !slotBranchMerged);
+      const unbindSlot = Effect.fnUntraced(function* (preserveBranch: boolean, archive: boolean) {
+        // Release the worker last so an interrupted sweep can find its remaining descendants.
+        const children = Map.groupBy(
+          group.filter((member) => member.id !== thread.id),
+          (member) => member.lineage.parentThreadId,
+        );
+        const ordered = [...(children.get(thread.id) ?? [])];
+        for (const member of ordered) ordered.push(...(children.get(member.id) ?? []));
+        ordered.reverse();
+        if (!deleted) ordered.push(thread);
+        for (const member of ordered) {
+          const attempt = yield* randomUuidV4;
+          if (
+            archive &&
+            member.id !== thread.id &&
+            member.archivedAt === null &&
+            member.role !== "writer"
+          )
+            yield* engine.dispatch({
+              type: "thread.archive",
+              commandId: CommandId.make(`storage-cleanup:merged-slot:${member.id}:${attempt}`),
+              threadId: member.id,
+            });
+          yield* engine.dispatch({
+            type: "thread.metadata.update",
+            commandId: CommandId.make(`storage-cleanup:release-slot:${member.id}:${attempt}`),
+            threadId: member.id,
+            expectedWorktreePath: member.worktreePath,
+            expectedBranch: member.branch,
+            worktreePath: null,
+            branch: preserveBranch ? member.branch : null,
+            releaseIssueWorktreeSlot: true,
+          });
+        }
+      });
       let issueMerged = false;
       const entries: StorageCleanupReportEntry[] = [];
       const keep = (reason: string) => entries.push({ ...entry, reason: sentence(reason) });
@@ -1273,18 +1313,16 @@ const make = Effect.gen(function* () {
         const guardedIdentity =
           taskFolder === null ? worktreeIdentity : yield* canonicalPath(guardedPath);
         if (slot && !releaseSlot) return keep("reserved for repository issue work");
-        if (
-          !(yield* fs.exists(guardedPath).pipe(
-            Effect.catchIf(
-              (error) =>
-                error.cause instanceof Error &&
-                "code" in error.cause &&
-                error.cause.code === "ENOTDIR",
-              () => Effect.succeed(false),
-            ),
-          ))
-        )
-          return;
+        const guardedPathExists = yield* fs.exists(guardedPath).pipe(
+          Effect.catchIf(
+            (error) =>
+              error.cause instanceof Error &&
+              "code" in error.cause &&
+              error.cause.code === "ENOTDIR",
+            () => Effect.succeed(false),
+          ),
+        );
+        if (!guardedPathExists && (!releaseSlot || deleted)) return;
         if (deleted && !releaseSlot && !settings.worktreeOnDelete) return keep("no rules apply");
         if (members.length > 1 && worktreeOwner(members) === undefined)
           return keep(`shared by ${group.length} threads`);
@@ -1295,7 +1333,8 @@ const make = Effect.gen(function* () {
             (yield* awaitingDelegatedWork(group.map((member) => member.id))))
         )
           return keep(waitForStop("thread is running or has pending work"));
-        if (thread.branch === null && !scratch) return keep("thread has no branch");
+        if (guardedPathExists && thread.branch === null && !scratch)
+          return keep("thread has no branch");
         if (members.some((member) => member.branch !== thread.branch))
           return keep("a subagent thread's branch differs from this worktree's branch");
         if (yield* hasTerminal(guardedIdentity, canonicalPath))
@@ -1421,11 +1460,14 @@ const make = Effect.gen(function* () {
               })
             )
               return waitForStop("thread activity or shared worktree changed since check");
+            if (releaseSlot && (yield* awaitingDelegatedWork(latestGroup.map((shell) => shell.id))))
+              return waitForStop("thread is running or has pending work");
             const liveOwner =
               releaseSlot && !explicit && !deleted
                 ? latestGroup.find((shell) => shell.id === thread.id)
                 : undefined;
-            if (liveOwner?.archivedAt === null) return "issue worker is still visible";
+            if (liveOwner !== undefined && (yield* workerRetainsSlot(liveOwner)))
+              return "issue worker still holds its slot";
             if (settlementChain.length > 1) {
               const ancestors = yield* Effect.forEach(settlementChain.slice(1), (ancestor) =>
                 projections.getThreadShell(ancestor.id),
@@ -1476,6 +1518,59 @@ const make = Effect.gen(function* () {
           worktreeIdentity !== pathKey(path.join(realParent, path.basename(thread.worktreePath!)))
         )
           return keep("worktree is a symbolic link");
+        if (!guardedPathExists) {
+          const { branch, linkedIssue } = thread;
+          if (
+            !explicit &&
+            !deleted &&
+            thread.archivedAt === null &&
+            branch !== null &&
+            linkedIssue !== undefined &&
+            (yield* workerRetainsSlot(thread))
+          ) {
+            // An absent checkout only needs its binding cleared. Preserve any surviving branch.
+            slotBranchMerged =
+              thread.pullRequests?.some(
+                (link) =>
+                  link.source !== "stack-dismissed" &&
+                  link.host.toLowerCase() === linkedIssue.host.toLowerCase() &&
+                  link.repository.toLowerCase() === linkedIssue.repository.toLowerCase() &&
+                  link.snapshot?.state === "merged" &&
+                  link.snapshot.headBranch === branch,
+              ) ?? false;
+            const pullRequest = yield* gitManager
+              .branchPullRequest(
+                { cwd: project.workspaceRoot, branch },
+                { refresh: true, includeHeadRepository: true, useLocalBranchName: true },
+              )
+              .pipe(Effect.orElseSucceed(() => null));
+            // Without the forge's answer, a surviving branch may hold newer commits, so keep the slot.
+            if (pullRequest === null && slotBranchMerged) {
+              const surviving = yield* git
+                .resolveCommit({ cwd: project.workspaceRoot, revision: `refs/heads/${branch}` })
+                .pipe(Effect.orElseSucceed(() => null));
+              if (surviving !== null) slotBranchMerged = false;
+            } else if (pullRequest !== null && pullRequest.headRef === branch) {
+              if (pullRequest.state !== "merged") slotBranchMerged = false;
+              else if (pullRequest.headSha !== null) {
+                const head = yield* git
+                  .resolveCommit({ cwd: project.workspaceRoot, revision: `refs/heads/${branch}` })
+                  .pipe(Effect.orElseSucceed(() => null));
+                slotBranchMerged = head === null || head.commitSha === pullRequest.headSha;
+              }
+            }
+          }
+          return yield* withWorkspaceLease(
+            worktreePath,
+            Effect.gen(function* () {
+              const reason = yield* blockedSinceCheck();
+              if (reason !== null) return keep(reason);
+              if (yield* fs.exists(guardedPath)) return keep("worktree reappeared since check");
+              yield* unbindSlot(true, false);
+              return keep("cleared a missing issue worktree binding");
+            }).pipe(Effect.uninterruptible),
+          );
+        }
         if (!scratch && !releaseSlot && !roots.some((root) => inside(root, worktreeIdentity)))
           return keep("outside the managed worktree folder");
         if (
@@ -1747,7 +1842,7 @@ const make = Effect.gen(function* () {
             removalReason = "work is on the default branch";
           }
           if (
-            !eligible &&
+            (!eligible || (releaseSlot && !explicit && !deleted && thread.archivedAt === null)) &&
             remote !== null &&
             (slot || retainedIssue || settings.worktreeOnMerge) &&
             thread.branch !== null
@@ -1756,14 +1851,18 @@ const make = Effect.gen(function* () {
               { cwd: worktreePath, branch: thread.branch },
               { refresh: true, includeHeadRepository: true, useLocalBranchName: releaseSlot },
             );
-            eligible = storageCleanupPullRequestMerged(pullRequest, {
+            const merged = storageCleanupPullRequestMerged(pullRequest, {
               branch: thread.branch,
               defaultBranch: branch,
               headSha: head.commitSha,
               integrated: slot || retainedIssue ? false : integrated,
             });
-            issueMerged = retainedIssue && eligible;
-            if (eligible) removalReason = "pull request was merged";
+            slotBranchMerged = releaseSlot && merged;
+            issueMerged = retainedIssue && merged;
+            if (merged) {
+              eligible = true;
+              removalReason = "pull request was merged";
+            }
           }
           // Squash and rebase merges leave a subagent's commits off the default branch, so
           // its work counts as shipped when a parent's merged pull request head contains it.
@@ -1797,6 +1896,11 @@ const make = Effect.gen(function* () {
               eligible = shipped.exitCode === 0;
               if (eligible) removalReason = "parent's pull request was merged";
             }
+          }
+          if (releaseSlot && !eligible && !deleted && !(yield* workerRetainsSlot(thread))) {
+            // Without merge evidence, the local branch may be the only ref holding the work.
+            eligible = true;
+            preserveSlotBranch = true;
           }
           if (slot && eligible) releaseSlotBase = base.commitSha;
           if (!eligible && remote === null)
@@ -1848,42 +1952,11 @@ const make = Effect.gen(function* () {
                 branch: thread.branch!,
                 head: head.commitSha,
                 defaultRef,
-                preserveBranch: explicit,
-                unbind: Effect.gen(function* () {
-                  // Keep the ownership chain intact if a sweep stops halfway.
-                  const children = Map.groupBy(
-                    group.filter((member) => member.id !== thread.id),
-                    (member) => member.lineage.parentThreadId,
-                  );
-                  const ordered = [...(children.get(thread.id) ?? [])];
-                  for (const member of ordered) ordered.push(...(children.get(member.id) ?? []));
-                  ordered.reverse();
-                  if (!deleted) ordered.push(thread);
-                  for (const member of ordered) {
-                    // Each sweep needs fresh command IDs to retry recorded rejections.
-                    const attempt = yield* randomUuidV4;
-                    if (!explicit && member.archivedAt === null && member.role !== "writer")
-                      yield* engine.dispatch({
-                        type: "thread.archive",
-                        commandId: CommandId.make(
-                          `storage-cleanup:merged-slot:${member.id}:${attempt}`,
-                        ),
-                        threadId: member.id,
-                      });
-                    yield* engine.dispatch({
-                      type: "thread.metadata.update",
-                      commandId: CommandId.make(
-                        `storage-cleanup:release-slot:${member.id}:${attempt}`,
-                      ),
-                      threadId: member.id,
-                      expectedWorktreePath: member.worktreePath,
-                      expectedBranch: member.branch,
-                      worktreePath: null,
-                      branch: explicit ? member.branch : null,
-                      releaseIssueWorktreeSlot: true,
-                    });
-                  }
-                }),
+                preserveBranch: preserveSlotBranch,
+                unbind: unbindSlot(
+                  preserveSlotBranch,
+                  !preserveSlotBranch && (deleted || thread.archivedAt !== null),
+                ),
               });
               if (released !== null) return keep(released);
               yield* gitManager.invalidateStatus(project.workspaceRoot);
@@ -2756,8 +2829,9 @@ const make = Effect.gen(function* () {
           )
             return requestSweep;
           if (
-            event.type === "thread.pull-request-link-updated" &&
-            event.payload.snapshot?.state === "merged"
+            (event.type === "thread.pull-request-link-updated" &&
+              event.payload.snapshot?.state === "merged") ||
+            (event.type === "run.updated" && event.payload.status === "interrupted")
           )
             return projections.getThreadShell(event.threadId).pipe(
               Effect.orElseSucceed(() => null),

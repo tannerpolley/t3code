@@ -1573,10 +1573,13 @@ ${exhaustionMarker}`,
       if (config.restore !== undefined) return yield* continueLocal(rootThreadId);
       const admitsWork = repositoryAdmitsWork(config);
       const suspended = new Map(config.suspendedIssues.map((entry) => [entry.id, entry]));
-      for (const threadId of yield* store.workerThreads(rootThreadId)) {
+      const currentWorkers = new Set(yield* store.workerThreads(rootThreadId));
+      const slotWorkers = new Set(admitsWork ? yield* store.slotWorkerThreads(rootThreadId) : []);
+      for (const threadId of new Set([...currentWorkers, ...slotWorkers])) {
         const shell = yield* threads.getThreadShell(threadId).pipe(Effect.mapError(mapError));
         if (shell?.linkedIssue === undefined) continue;
-        if (admitsWork && repositoryPhase(config) !== "draining") {
+        const currentWorker = currentWorkers.has(threadId);
+        if (currentWorker && admitsWork && repositoryPhase(config) !== "draining") {
           yield* retryFailedWorker(shell, shell.linkedIssue).pipe(
             Effect.catch((cause) =>
               Effect.logWarning("Could not retry or park a failed issue worker", {
@@ -1586,25 +1589,31 @@ ${exhaustionMarker}`,
             ),
           );
         }
-        if (shell.activeRunId === null && shell.status !== "queued") {
+        if (currentWorker && shell.activeRunId === null && shell.status !== "queued") {
           yield* threads.archiveObservedWorker(threadId);
         }
-        if (
-          !admitsWork ||
-          (!isAutomaticIssueSuspension(suspended.get(shell.linkedIssue.id)) &&
+        if (!admitsWork) continue;
+        // Closed and re-parented attempts still require an explicit Resume decision.
+        const priorReason = suspended.get(shell.linkedIssue.id);
+        if (priorReason?.kind === "closed") continue;
+        const closureOnly =
+          !currentWorker ||
+          (priorReason !== undefined && !isAutomaticIssueSuspension(priorReason)) ||
+          (priorReason === undefined &&
             shell.activeRunId === null &&
             shell.status !== "queued" &&
             (shell.pendingBackgroundTasks?.length ?? 0) === 0 &&
             ((yield* store.resultAvailable(threadId)) ||
-              (yield* progressFor(threadId, false)).progress.state === "result_available"))
+              (yield* progressFor(threadId, false)).progress.state === "result_available"));
+        if (
+          closureOnly &&
+          (!slotWorkers.has(threadId) || !(yield* store.workerRetainsSlot(threadId)))
         )
           continue;
-        // Closed and re-parented attempts still require an explicit Resume decision.
-        const priorReason = suspended.get(shell.linkedIssue.id);
-        if (priorReason !== undefined && !isAutomaticIssueSuspension(priorReason)) continue;
         const read = yield* issues
           .workRead(shell.linkedIssue, { cached: true })
           .pipe(Effect.result);
+        if (closureOnly && (read._tag === "Failure" || read.success.state !== "closed")) continue;
         let reason: string | null = null;
         let kind: IssueSuspensionKind = "reparented";
         if (read._tag === "Failure") {
@@ -1612,11 +1621,11 @@ ${exhaustionMarker}`,
             continue;
           kind = "unreadable";
           reason = unreadableRelationshipsSuspensionReason;
-        } else if (issueEligibility(read.success) === "unknown") continue;
-        else if (read.success.state === "closed") {
+        } else if (read.success.state === "closed") {
           kind = "closed";
           reason = CLOSED_ISSUE_SUSPENSION_REASON;
-        } else if (issueEligibility(read.success) === "blocked") {
+        } else if (issueEligibility(read.success) === "unknown") continue;
+        else if (issueEligibility(read.success) === "blocked") {
           kind = "blocked";
           reason = openBlockerSuspensionReason;
         } else {

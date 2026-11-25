@@ -1769,6 +1769,78 @@ it.effect.each(["blocker", "unreadable"] as const)(
   },
 );
 
+it.effect.each(["reparented", "former root"] as const)(
+  "reconciles a closed slot worker from %s",
+  (scenario) => {
+    const issue = reviewIssue(1);
+    let closed = false;
+    const harness = reviewHarness(() =>
+      Effect.succeed({ ...reviewRead(issue), state: closed ? "closed" : "open" }),
+    );
+    return Effect.gen(function* () {
+      const threads = yield* ThreadManagement.ThreadManagementService;
+      const service = yield* IssueWorkService.IssueWorkService;
+      const store = yield* IssueWorkStore.IssueWorkStore;
+      const sink = yield* EventSink.EventSinkV2;
+      const root = yield* createReviewRoot();
+      yield* delegateReviewIssue(root, issue, "retained-slot-worker");
+      const worker = (yield* store.issueOwner(issue))!;
+      const { thread, runs } = yield* threads.getThreadRecords(worker, ["runs"]);
+      const run = runs[0]!;
+      const now = yield* DateTime.now;
+      yield* sink.write({
+        events: [
+          {
+            id: EventId.make("retained-slot-bound"),
+            type: "thread.metadata-updated",
+            threadId: worker,
+            occurredAt: now,
+            payload: {
+              ...thread,
+              worktreePath: "/repo/.worktrees/slot-1",
+              branch: "feature",
+              lineage:
+                scenario === "former root"
+                  ? { ...thread.lineage, rootThreadId: ThreadId.make("previous-root") }
+                  : thread.lineage,
+            },
+          },
+          {
+            id: EventId.make("retained-slot-run-done"),
+            type: "run.updated",
+            threadId: worker,
+            runId: run.id,
+            occurredAt: now,
+            payload: { ...run, status: "completed", startedAt: now, completedAt: now },
+          },
+        ],
+      });
+      if (scenario === "reparented") {
+        const config = (yield* store.configuration(root))!;
+        yield* threads.dispatch({
+          type: "repository.work.update",
+          threadId: root,
+          commandId: CommandId.make("retained-slot-reparented"),
+          expectedRevision: config.revision,
+          orchestration: {
+            ...config,
+            suspendedIssues: [
+              { id: issue.id, kind: "reparented", reason: "Issue was re-parented." },
+            ],
+          },
+        });
+      } else {
+        assert.notInclude(yield* store.workerThreads(root), worker);
+      }
+      assert.equal(yield* store.slotsInUse(root), 1);
+      closed = true;
+      yield* service.reconcile(root);
+      assert.equal((yield* store.configuration(root))!.suspendedIssues[0]?.kind, "closed");
+      assert.equal(yield* store.slotsInUse(root), 0);
+    }).pipe(Effect.provide(harness.layer));
+  },
+);
+
 it.effect(
   "resumes only blocker-suspended workers once, retains other suspensions, and survives notification replay",
   () => {

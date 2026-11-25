@@ -1,5 +1,6 @@
 import {
   DEFAULT_REPOSITORY_WORK_SETTINGS,
+  CLOSED_ISSUE_SUSPENSION_REASON,
   PROJECT_WORKTREES_FOLDER,
   IssueWorkError,
   IssueWorkRequested,
@@ -19,6 +20,7 @@ import * as Context from "effect/Context";
 import * as Effect from "effect/Effect";
 import * as Layer from "effect/Layer";
 import * as Schema from "effect/Schema";
+import type { Fragment } from "effect/sql/Statement";
 import { readIssueQueue, QUEUED_ISSUE_START_PREFIX } from "./IssueQueueStore.ts";
 import { readOnlyIssueRoles } from "./IssueEligibility.ts";
 import { derive } from "@t3tools/provider-core/server/IdAllocator";
@@ -93,6 +95,13 @@ export class IssueWorkStore extends Context.Service<
       IssueWorkError
     >;
     readonly slotsInUse: (rootThreadId: ThreadId) => Effect.Effect<number, IssueWorkError>;
+    readonly workerRetainsSlot: (
+      threadId: ThreadId,
+      branchMerged?: boolean,
+    ) => Effect.Effect<boolean, IssueWorkError>;
+    readonly slotWorkerThreads: (
+      rootThreadId: ThreadId,
+    ) => Effect.Effect<ReadonlyArray<ThreadId>, IssueWorkError>;
     readonly hasPendingOpening: (
       issue: ThreadLinkedIssue,
     ) => Effect.Effect<boolean, IssueWorkError>;
@@ -213,21 +222,72 @@ export const layer = Layer.effect(
         AND request.kind NOT IN ('auth_refresh', 'dynamic_tool_call')
     ))`;
     const workerCheckout = sql`replace(json_extract(thread.payload_json, '$.worktreePath'), char(92), '/')`;
+    const isWorkerCheckout = sql`${workerCheckout} GLOB ${`*/${PROJECT_WORKTREES_FOLDER}/slot-[1-9]*`}
+      AND rtrim(${workerCheckout}, '0123456789') GLOB ${`*/${PROJECT_WORKTREES_FOLDER}/slot-`}`;
+    const matchesWorkerRepository = sql`
+      lower(CASE WHEN json_valid(thread.payload_json) THEN json_extract(thread.payload_json, '$.linkedIssue.host') END) = lower(owner.host)
+      AND lower(CASE WHEN json_valid(thread.payload_json) THEN json_extract(thread.payload_json, '$.linkedIssue.repository') END) = lower(owner.repository)
+      AND json_extract(thread.payload_json, '$.linkedIssue.repositoryId') = owner.repository_id
+    `;
+    const retainsBoundSlot = (rootPayload: Fragment, branchMerged = false) => sql`(
+      ${usesWorkerSlot}
+      OR EXISTS (SELECT 1 FROM orchestration_v2_projection_runs run
+        WHERE run.thread_id = thread.thread_id AND run.status = 'queued')
+      OR EXISTS (SELECT 1 FROM orchestration_v2_projection_runtime_requests request
+        WHERE request.thread_id = thread.thread_id AND request.status = 'pending')
+      OR EXISTS (SELECT 1 FROM orchestration_v2_projection_subagents task
+        WHERE task.thread_id = thread.thread_id
+          AND (task.status IN ('pending', 'running', 'waiting')
+            OR task.completion_delivery_state IN ('pending', 'claimed')))
+      OR EXISTS (SELECT 1 FROM orchestration_v2_projection_provider_threads provider
+        WHERE provider.thread_id = thread.thread_id
+          AND (thread.active_provider_thread_id IS NULL
+            OR provider.provider_thread_id = thread.active_provider_thread_id)
+          AND json_array_length(provider.payload_json, '$.pendingBackgroundTasks') > 0)
+      OR EXISTS (SELECT 1 FROM orchestration_v2_projection_turn_items item
+        LEFT JOIN orchestration_v2_projection_runs run ON run.run_id = item.run_id
+        WHERE item.thread_id = thread.thread_id
+          AND item.type IN ('command_execution', 'dynamic_tool', 'subagent')
+          AND item.status NOT IN ('completed', 'interrupted', 'failed', 'cancelled')
+          AND item.status IN ('pending', 'running', 'waiting')
+          AND (item.run_id IS NULL OR run.status <> 'rolled_back')
+          AND NOT (item.type = 'dynamic_tool' AND json_type(item.payload_json, '$.input.persistent') IS 'true'))
+      OR EXISTS (SELECT 1 FROM json_each(thread.payload_json, '$.pullRequests') pr
+        WHERE json_type(pr.value, '$.watch') = 'object'
+          AND json_extract(pr.value, '$.source') <> 'stack-dismissed')
+      OR EXISTS (SELECT 1 FROM json_each(thread.payload_json, '$.guestShare.messages') message
+        WHERE json_extract(message.value, '$.status') = 'pending')
+      OR EXISTS (SELECT 1 FROM orchestration_v2_effect_outbox effect
+        WHERE effect.thread_id = thread.thread_id AND effect.status IN ('pending', 'running')
+          AND effect.effect_type = 'provider-runtime.continue')
+      ${
+        branchMerged
+          ? sql``
+          : sql`OR (
+        thread.archived_at IS NULL
+        AND coalesce((SELECT run.status FROM orchestration_v2_projection_runs run
+          WHERE run.thread_id = thread.thread_id ORDER BY run.ordinal DESC LIMIT 1), '') <> 'interrupted'
+        AND NOT EXISTS (SELECT 1 FROM json_each(${rootPayload}, '$.repositoryOrchestration.suspendedIssues') suspension
+          WHERE json_extract(suspension.value, '$.id') = json_extract(thread.payload_json, '$.linkedIssue.id')
+            AND (json_extract(suspension.value, '$.kind') = 'closed'
+              OR (json_extract(suspension.value, '$.kind') IS NULL
+                AND json_extract(suspension.value, '$.reason') = ${CLOSED_ISSUE_SUSPENSION_REASON})))
+      )`
+      }
+    )`;
     // The linked-issue index includes past owners whose slots have not been released.
     const occupiedWorkerCount = (exclude?: ThreadId) => sql`(
       SELECT count(*) FROM (
         SELECT thread.thread_id FROM orchestration_v2_projection_issue_work work
         JOIN orchestration_v2_projection_threads thread ON thread.thread_id = work.owner_thread_id
         WHERE work.host = owner.host AND work.repository_id = owner.repository_id
-          AND ${usesWorkerSlot}
+          AND thread.deleted_at IS NULL AND ${usesWorkerSlot}
         UNION
         SELECT thread.thread_id FROM orchestration_v2_projection_threads thread
         WHERE thread.deleted_at IS NULL
-          AND lower(CASE WHEN json_valid(thread.payload_json) THEN json_extract(thread.payload_json, '$.linkedIssue.host') END) = lower(owner.host)
-          AND lower(CASE WHEN json_valid(thread.payload_json) THEN json_extract(thread.payload_json, '$.linkedIssue.repository') END) = lower(owner.repository)
-          AND json_extract(thread.payload_json, '$.linkedIssue.repositoryId') = owner.repository_id
-          AND ${workerCheckout} GLOB ${`*/${PROJECT_WORKTREES_FOLDER}/slot-[1-9]*`}
-          AND rtrim(${workerCheckout}, '0123456789') GLOB ${`*/${PROJECT_WORKTREES_FOLDER}/slot-`}
+          AND ${matchesWorkerRepository}
+          AND ${isWorkerCheckout}
+          AND ${retainsBoundSlot(sql`root.payload_json`)}
       ) occupied
       ${exclude === undefined ? sql`` : sql`WHERE occupied.thread_id <> ${exclude}`}
     )`;
@@ -370,9 +430,36 @@ export const layer = Layer.effect(
         sql<{ active: number }>`
           SELECT ${occupiedWorkerCount()} AS active
           FROM orchestration_v2_projection_repository_orchestration owner
+          JOIN orchestration_v2_projection_threads root ON root.thread_id = owner.root_thread_id
           WHERE owner.root_thread_id = ${rootThreadId}
         `.pipe(
           Effect.map((rows) => rows[0]?.active ?? 0),
+          Effect.mapError(mapError),
+        ),
+      ),
+      workerRetainsSlot: Effect.fn("IssueWorkStore.workerRetainsSlot")((threadId, branchMerged) =>
+        sql`SELECT 1 FROM orchestration_v2_projection_threads thread
+          LEFT JOIN orchestration_v2_projection_repository_orchestration owner
+            ON owner.host = json_extract(thread.payload_json, '$.linkedIssue.host')
+            AND owner.repository_id = json_extract(thread.payload_json, '$.linkedIssue.repositoryId')
+          LEFT JOIN orchestration_v2_projection_threads root ON root.thread_id = owner.root_thread_id
+          WHERE thread.thread_id = ${threadId} AND thread.deleted_at IS NULL AND ${isWorkerCheckout}
+            AND ${retainsBoundSlot(sql`root.payload_json`, branchMerged)}`.pipe(
+          Effect.map((rows) => rows.length > 0),
+          Effect.mapError(mapError),
+        ),
+      ),
+      slotWorkerThreads: Effect.fn("IssueWorkStore.slotWorkerThreads")((rootThreadId) =>
+        sql<{ thread_id: string }>`SELECT thread.thread_id
+          FROM orchestration_v2_projection_repository_orchestration owner
+          JOIN orchestration_v2_projection_threads root ON root.thread_id = owner.root_thread_id
+          CROSS JOIN orchestration_v2_projection_threads thread
+          WHERE owner.root_thread_id = ${rootThreadId}
+            AND thread.deleted_at IS NULL AND thread.archived_at IS NULL
+            AND ${matchesWorkerRepository} AND ${isWorkerCheckout}
+            AND ${retainsBoundSlot(sql`root.payload_json`)}
+          ORDER BY thread.created_at, thread.thread_id`.pipe(
+          Effect.map((rows) => rows.map((row) => ThreadId.make(row.thread_id))),
           Effect.mapError(mapError),
         ),
       ),
