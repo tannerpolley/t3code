@@ -1484,7 +1484,7 @@ it("grades the Writer's choice to ask or edit across question formats", () => {
   )
     .trim()
     .split("\n")
-    .map(decodeDeviceCase);
+    .map((line) => decodeDeviceCase(line));
   const passes = (id: string, ...calls: Array<Omit<SampleRun["calls"][number], "step">>) => {
     const testCase = cases.find((entry) => entry.id === id)!;
     return gradeSample(testCase.expect, {
