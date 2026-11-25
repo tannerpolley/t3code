@@ -12991,5 +12991,12 @@
   "54d9df5245fa49a7": "No se pudo guardar la disposición de la barra lateral. Inténtalo de nuevo.",
   "7070d28e490778c2": "Nombre de la sección",
   "7c95a36da22a5eff": "Nueva sección",
-  "e0d0ac58b0ddb151": "Cambiar el nombre de la sección"
+  "e0d0ac58b0ddb151": "Cambiar el nombre de la sección",
+  "1becfb4db7ffe135": "Predeterminado de Codex",
+  "3c8f3dd37881c169": "Codex velocidad normal rápida ultrarrápida nivel de servicio",
+  "72dc8979fc87df5c": "Velocidad de Codex: {speed}",
+  "7aa202a739c5f90d": "Se aplica en el siguiente turno a los hilos y agentes de Codex que usan la velocidad predeterminada. Los modelos usan la velocidad más rápida disponible hasta la que elijas.",
+  "afecbf6b765a2fb0": "Ultrarrápida",
+  "e2a5cf66eeec090e": "Velocidad predeterminada",
+  "e351e22d0be49f2b": "Velocidad de Codex: {speed} en {environment}"
 }

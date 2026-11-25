@@ -1407,7 +1407,13 @@ export const CloudSpeechCredentials = Schema.Struct({
   openrouter: CloudSpeechCredential,
 });
 
+export const CodexDefaultSpeed = Schema.Literals(["normal", "fast", "ultrafast"]);
+export type CodexDefaultSpeed = typeof CodexDefaultSpeed.Type;
+
 export const ServerSettings = Schema.Struct({
+  codexDefaultSpeed: Schema.NullOr(CodexDefaultSpeed).pipe(
+    Schema.withDecodingDefault(Effect.succeed(null)),
+  ),
   // Null means unmigrated; empty is authoritative and must not resurrect cleared preferences.
   favorites: Schema.NullOr(ModelFavorites).pipe(Schema.withDecodingDefault(Effect.succeed(null))),
   providerModelPreferences: Schema.NullOr(ProviderModelPreferences).pipe(
@@ -1857,6 +1863,7 @@ const ModelSelectionPatch = Schema.Struct({
 });
 
 export const ServerSettingsPatch = Schema.Struct({
+  codexDefaultSpeed: Schema.optionalKey(Schema.NullOr(CodexDefaultSpeed)),
   setModelFavorites: Schema.optionalKey(
     Schema.Array(Schema.Struct({ ...ModelFavorite.fields, favorite: Schema.Boolean })),
   ),

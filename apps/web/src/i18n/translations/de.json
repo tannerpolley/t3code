@@ -12996,5 +12996,12 @@
   "54d9df5245fa49a7": "Das Seitenleistenlayout konnte nicht gespeichert werden. Versuche es erneut.",
   "7070d28e490778c2": "Abschnittsname",
   "7c95a36da22a5eff": "Neuer Abschnitt",
-  "e0d0ac58b0ddb151": "Abschnitt umbenennen"
+  "e0d0ac58b0ddb151": "Abschnitt umbenennen",
+  "1becfb4db7ffe135": "Codex-Standard",
+  "3c8f3dd37881c169": "Codex Geschwindigkeit Standard schnell ultraschnell Dienststufe",
+  "72dc8979fc87df5c": "Codex-Geschwindigkeit: {speed}",
+  "7aa202a739c5f90d": "Gilt ab dem nächsten Zug für Codex-Threads und Worker mit der Standardeinstellung. Modelle verwenden die schnellste verfügbare Stufe bis zur gewählten Geschwindigkeit.",
+  "afecbf6b765a2fb0": "Ultraschnell",
+  "e2a5cf66eeec090e": "Standardgeschwindigkeit",
+  "e351e22d0be49f2b": "Codex-Geschwindigkeit: {speed} auf {environment}"
 }

@@ -1,5 +1,11 @@
 import { describe, expect, it, vi } from "vite-plus/test";
-import type { EnvironmentId, ProjectId, RuntimeMode } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  ModelSelection,
+  ProjectId,
+  ProviderInstanceId,
+  RuntimeMode,
+} from "@t3tools/contracts";
 
 const testState = vi.hoisted(() => {
   type ProjectFile = { readonly defaultThreadEnvMode?: "local" | "worktree" } | null;
@@ -38,7 +44,15 @@ const testState = vi.hoisted(() => {
     }),
   };
   const draftStore = {
-    getComposerDraft: vi.fn((draftId: string) => ({ draftId })),
+    getComposerDraft: vi.fn(
+      (
+        draftId: string,
+      ): {
+        draftId: string;
+        activeProvider?: ProviderInstanceId;
+        modelSelectionByProvider?: Record<ProviderInstanceId, ModelSelection>;
+      } => ({ draftId }),
+    ),
     getDraftSessionByLogicalProjectKey: vi.fn(() => storedDraft),
     getDraftSession: vi.fn(() =>
       openDraftRoute === null
@@ -160,7 +174,8 @@ vi.mock("@t3tools/client-runtime/environment", () => ({
   scopeProjectRef: (environmentId: string, projectId: string) => ({ environmentId, projectId }),
   scopeThreadRef: (environmentId: string, threadId: string) => ({ environmentId, threadId }),
 }));
-vi.mock("@t3tools/contracts", () => ({
+vi.mock("@t3tools/contracts", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("@t3tools/contracts")>()),
   DEFAULT_RUNTIME_MODE: "default",
   DEFAULT_SERVER_SETTINGS: {},
 }));
@@ -211,9 +226,10 @@ vi.mock("../composerDraftStore", () => {
 vi.mock("../lib/chatThreadActions", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../lib/chatThreadActions")>()),
   hasExplicitComposerModelSelection: () => false,
-  resolveNewThreadModelSelectionOverride: () => null,
 }));
-vi.mock("../providerInstances", () => ({ resolveDefaultProviderModelSelection: () => null }));
+vi.mock("../providerInstances", () => ({
+  resolveProjectDefaultProviderModelSelection: () => null,
+}));
 vi.mock("../lib/t3ProjectFileDefaults", () => ({
   readT3ProjectFile: () => testState.projectFileRead,
   peekT3ProjectFile: () => undefined,
@@ -391,6 +407,34 @@ describe("useNewThreadHandler", () => {
     expect(opened).toEqual({ draftId: "draft-delayed", threadId: "thread-delayed" });
     expect(testState.router.navigate).toHaveBeenCalledOnce();
   });
+});
+
+it("keeps reasoning when copying a Codex model to a new thread but leaves speed inherited", async () => {
+  testState.reset(null);
+  testState.openEmptyDraft("draft-source");
+  const codex = "codex" as ProviderInstanceId;
+  const option = { id: "reasoningEffort", value: "high" };
+  testState.draftStore.getComposerDraft.mockImplementationOnce((draftId) => ({
+    draftId,
+    activeProvider: codex,
+    modelSelectionByProvider: {
+      [codex]: {
+        instanceId: codex,
+        model: "test-model",
+        options: [option, { id: "serviceTier", value: "priority" }],
+      },
+    },
+  }));
+  const opened = await useNewThreadHandler()({
+    environmentId: "environment-ssh",
+    projectId: "different-project",
+  } as never);
+  expect(opened?.draftId).toBe("draft-delayed");
+  expect(testState.draftStore.setModelSelection).toHaveBeenCalledWith(
+    opened?.draftId,
+    { instanceId: codex, model: "test-model", options: [option] },
+    { replaceOptions: true },
+  );
 });
 
 describe("default project selection", () => {

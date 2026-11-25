@@ -12,10 +12,10 @@ import { hasExplicitComposerModelSelection } from "./chatThreadActions";
 export function seedDraftModelSelection(draftId: DraftId, projectRef: ScopedProjectRef): void {
   const store = useComposerDraftStore.getState();
   if (hasExplicitComposerModelSelection(store.getComposerDraft(draftId))) return;
-  store.applyStickyState(draftId);
   const project = readProject(projectRef);
   const settings = readEnvironment(projectRef.environmentId)?.serverConfig?.settings;
   const providers = readEnvironmentProviders(projectRef.environmentId) ?? [];
+  store.applyStickyState(draftId, settings?.providerInstances);
   const defaultSelection = settings
     ? resolveProjectSettings(settings, projectRef.projectId, project ?? undefined).settings
         .defaultModelSelection

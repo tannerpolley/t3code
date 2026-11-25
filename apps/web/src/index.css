@@ -2351,7 +2351,28 @@ code {
   font-style: normal;
 }
 
-.chat-markdown [data-markdown-math] > svg {
+.chat-markdown [data-markdown-math="inline"] {
+  display: inline-grid;
+  grid-template-columns: minmax(0, auto);
+  /* Give the scrollport room for glyph overhang without reserving extra space in prose. */
+  padding: 0.15em;
+  margin: -0.15em;
+}
+
+.chat-markdown [data-markdown-math="inline"]::before {
+  /* Publish the SVG baseline even when a horizontal scrollbar adds height below it. */
+  content: "";
+  grid-area: 1 / 1;
+  align-self: baseline;
+  block-size: var(--math-ascent);
+}
+
+.chat-markdown [data-markdown-math="inline"] > svg {
+  grid-area: 1 / 1;
+  align-self: start;
+}
+
+.chat-markdown [data-markdown-math="display"] > svg {
   font-size: 1.21em;
 }
 

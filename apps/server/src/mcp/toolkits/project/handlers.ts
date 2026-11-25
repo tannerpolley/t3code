@@ -31,6 +31,7 @@ import * as GitVcsDriver from "../../../vcs/GitVcsDriver.ts";
 import * as ServerSettings from "../../../serverSettings.ts";
 import * as ProviderRegistry from "../../../provider/ProviderRegistry.ts";
 import * as DateTime from "effect/DateTime";
+import { modelSelectionWithoutCodexSpeed } from "@t3tools/shared/model";
 import { resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
 import {
   resolveProjectFileBackedSetting,
@@ -431,7 +432,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
         // project's effective defaults, as the composer does. Its mode stays
         // within the ceiling it was approved with.
         const projectDefaults = caller === undefined ? projectSettings : undefined;
-        const modelSelection =
+        let modelSelection =
           validatedModelSelection ??
           launchedModel ??
           caller?.modelSelection ??
@@ -462,11 +463,17 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
             : runtimeMode;
         if (!replaying) {
           const providers = yield* (yield* ProviderRegistry.ProviderRegistry).getProviders;
+          const { instanceId } = modelSelection;
+          const provider = providers.find((candidate) => candidate.instanceId === instanceId);
+          if (
+            modelSelection === caller?.modelSelection &&
+            (provider?.driver === "codex" || modelSelection.instanceId === "codex")
+          ) {
+            modelSelection = modelSelectionWithoutCodexSpeed(modelSelection);
+          }
           startedRuntimeMode = yield* resolveRuntimeMode(startedRuntimeMode, input.runtimeMode, {
             modelSelection,
-            supportedRuntimeModes: providers.find(
-              (provider) => provider.instanceId === modelSelection.instanceId,
-            )?.supportedRuntimeModes,
+            supportedRuntimeModes: provider?.supportedRuntimeModes,
           });
         }
         const result = yield* ThreadMessageIntake.launchThread({

@@ -12996,5 +12996,12 @@
   "54d9df5245fa49a7": "Não foi possível salvar o layout da barra lateral. Tente novamente.",
   "7070d28e490778c2": "Nome da seção",
   "7c95a36da22a5eff": "Nova seção",
-  "e0d0ac58b0ddb151": "Renomear seção"
+  "e0d0ac58b0ddb151": "Renomear seção",
+  "1becfb4db7ffe135": "Padrão do Codex",
+  "3c8f3dd37881c169": "Codex velocidade normal rápida ultrarrápida nível de serviço",
+  "72dc8979fc87df5c": "Velocidade do Codex: {speed}",
+  "7aa202a739c5f90d": "Aplica-se no próximo turno às conversas e aos agentes do Codex que usam o padrão. Os modelos usam a maior velocidade compatível até o limite escolhido.",
+  "afecbf6b765a2fb0": "Ultrarrápida",
+  "e2a5cf66eeec090e": "Velocidade padrão",
+  "e351e22d0be49f2b": "Velocidade do Codex: {speed} em {environment}"
 }

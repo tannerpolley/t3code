@@ -2149,7 +2149,7 @@ describe("composerDraftStore sticky composer settings", () => {
     });
   });
 
-  it("replaces a non-explicit stale model and its options with sticky state", () => {
+  it("seeds a new Codex draft with sticky reasoning and the environment speed", () => {
     const store = useComposerDraftStore.getState();
     const draftId = DraftId.make("draft-stale-sticky-seed");
 
@@ -2158,18 +2158,16 @@ describe("composerDraftStore sticky composer settings", () => {
       modelSelection(CODEX_DRIVER, "stale-model", { reasoningEffort: "low" }),
     );
     store.setStickyModelSelection(
-      modelSelection(CODEX_DRIVER, "sticky-model", { reasoningEffort: "xhigh" }),
+      modelSelection(CODEX_DRIVER, "sticky-model", {
+        reasoningEffort: "xhigh",
+        serviceTier: "priority",
+      }),
     );
     store.applyStickyState(draftId);
 
-    expect(draftByKey(draftId)).toMatchObject({
-      activeProvider: CODEX_INSTANCE,
-      modelSelectionByProvider: {
-        [CODEX_INSTANCE]: modelSelection(CODEX_DRIVER, "sticky-model", {
-          reasoningEffort: "xhigh",
-        }),
-      },
-    });
+    expect(draftByKey(draftId)?.modelSelectionByProvider[CODEX_INSTANCE]).toEqual(
+      modelSelection(CODEX_DRIVER, "sticky-model", { reasoningEffort: "xhigh" }),
+    );
   });
 
   // regression: #6011 a stale seeded model overrode the project default

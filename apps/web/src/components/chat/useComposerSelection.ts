@@ -1,6 +1,7 @@
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import type { UnifiedSettings } from "@t3tools/contracts";
 import { useMessages } from "gt-react";
+import { withoutCodexSpeed } from "@t3tools/shared/model";
 import type { Dispatch } from "react";
 import type { ComposerThreadTarget, DraftSessionState } from "../../composerDraftStore";
 import { useStableCallback } from "../../hooks/useStableCallback";
@@ -195,8 +196,10 @@ export function useComposerSelection(input: ComposerSelectionInput) {
       if (options?.focusComposer !== false) scheduleComposerFocus();
       return;
     }
-    const rememberedOptions =
+    const storedOptions =
       useComposerDraftStore.getState().stickyOptionsByModelByProvider[instanceId]?.[resolvedModel];
+    const rememberedOptions =
+      entry?.driver === "codex" ? withoutCodexSpeed(storedOptions) : storedOptions;
     const threadSelection = activeThread.modelSelection;
     // This pick replaces the stored options, so the thread's own model carries them over.
     const pickOptions =

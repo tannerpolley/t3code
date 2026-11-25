@@ -2,7 +2,11 @@ import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { DEFAULT_CLIENT_SETTINGS } from "@t3tools/contracts/settings";
-import { AuthOrchestrationOperateScope, AuthSourceControlWriteScope } from "@t3tools/contracts";
+import {
+  AuthOrchestrationOperateScope,
+  AuthSourceControlWriteScope,
+  type EnvironmentId,
+} from "@t3tools/contracts";
 import { act, render } from "../../test/render";
 import { CommandPalette } from "./CommandPalette";
 import { openCommandPalette } from "../commandPaletteBus";
@@ -117,6 +121,11 @@ vi.mock("../state/queries", async (original) => ({
 vi.mock("../state/session", async (original) => ({
   ...(await original<typeof import("../state/session")>()),
   useEnvironmentScope: (_environmentId: unknown, scope: string) => scope !== scopes.denied,
+  useEnvironmentsWithScope: (
+    environments: ReadonlyArray<{ readonly environmentId: EnvironmentId }>,
+    scope: string,
+  ) =>
+    new Set(scope === scopes.denied ? [] : environments.map(({ environmentId }) => environmentId)),
   readEnvironmentScope: () => true,
 }));
 vi.mock("../state/filesystem", async (original) => ({
