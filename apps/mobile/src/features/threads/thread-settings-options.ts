@@ -1,10 +1,5 @@
 import { managedRuntimeModeDenial } from "@t3tools/client-runtime/contract-labels";
-import { withCodexSpeedFrom } from "@t3tools/shared/model";
-import type {
-  ManagedPolicySummary,
-  ProviderOptionSelection,
-  RuntimeMode,
-} from "@t3tools/contracts";
+import type { ManagedPolicySummary, RuntimeMode } from "@t3tools/contracts";
 import { msg } from "gt-react-native";
 
 import { m, type MessageResolver } from "../../i18n/messages";
@@ -87,17 +82,6 @@ export function compatibleRuntimeModeForChoices(
   return choices.some((choice) => choice.mode === runtimeMode)
     ? runtimeMode
     : (choices[0]?.mode ?? runtimeMode);
-}
-
-export function preserveCodexSpeedOnTraitChange(
-  next: ReadonlyArray<ProviderOptionSelection>,
-  previous: ReadonlyArray<ProviderOptionSelection> | undefined,
-  driver: string | undefined,
-  changedId: string,
-): ReadonlyArray<ProviderOptionSelection> {
-  return driver === "codex" && changedId !== "serviceTier" && changedId !== "fastMode"
-    ? (withCodexSpeedFrom(next, previous) ?? [])
-    : next;
 }
 
 export { selectableProviderOptionChoices as selectableChoices } from "@t3tools/client-runtime/model-traits";
