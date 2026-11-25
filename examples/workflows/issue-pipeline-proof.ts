@@ -26,7 +26,7 @@ const privateFixture = () =>
     );
     if (
       !repo.isPrivate ||
-      (await git(project, "remote", "get-url", "--push", "origin")) !==
+      (await git(project, "remote", "get-url", "--push", "--all", "origin")) !==
         `https://github.com/${repository}.git`
     ) {
       throw new Error("Expected origin to point to the private fixture repository");
@@ -41,7 +41,7 @@ const handoff = Effect.fn(function* (name: string, title: string, reason: string
 
 const worker = workflow(
   "issue-pipeline-proof",
-  { version: 3, payload: Schema.String, concurrency: 1 },
+  { version: 4, payload: Schema.String, concurrency: 1 },
   Effect.fn(function* (url) {
     const key = url.slice(prefix.length);
     if (!url.startsWith(prefix) || !/^\d+$/.test(key)) return yield* stop("Outside fixture scope");
@@ -258,7 +258,7 @@ ${snapshot.diff}`,
 
 workflow(
   "issue-pipeline-proof-poll",
-  { version: 3, payload: Tick, triggers: [every("1 minute")], concurrency: 1 },
+  { version: 4, payload: Tick, triggers: [every("1 minute")], concurrency: 1 },
   Effect.fn(function* () {
     return yield* step(
       "find-and-start",
