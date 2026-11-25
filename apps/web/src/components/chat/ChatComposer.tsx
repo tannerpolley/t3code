@@ -310,6 +310,7 @@ import {
 } from "./preparingComposerImages";
 import { HELD_COMPOSER_SEND_BANNER_ID } from "./ComposerHeldSendBanner";
 import { ComposerControlsBar } from "./ComposerControlsBar";
+import type { ComposerCodexSpeed } from "./ComposerModelEffort";
 import { composerCommandKeyHandler } from "./composerCommandKey";
 import { promptSuggestionToAccept, usePromptSuggestion } from "./usePromptSuggestion";
 import { useFreshSessionArmed } from "./freshSessionArms";
@@ -441,6 +442,7 @@ export interface ChatComposerProps {
   activeProjectDefaultModelSelection: ModelSelection | null | undefined;
   activeThreadModelSelection: ModelSelection | null | undefined;
   reportedModelSelection?: ModelSelection | null;
+  codexSpeed?: ComposerCodexSpeed;
   activeProjectId: ProjectId | null;
   projectName?: string | undefined;
 
@@ -2754,6 +2756,7 @@ export const ChatComposer = memo(function ChatComposer(props: ChatComposerProps)
       selectedProviderModels={selectedProviderModels}
       composerModelOptions={composerModelOptions}
       reportedModelSelection={reportedModelSelection}
+      codexSpeed={props.codexSpeed}
       promptUltrathink={promptUltrathink}
       onPromptEdit={editPromptFromTraitsStable}
       compatibleRuntimeMode={compatibleRuntimeMode}

@@ -4544,6 +4544,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         : { repositoryOrchestration: command.repositoryOrchestration }),
       providerInstanceId: command.modelSelection.instanceId,
       modelSelection: command.modelSelection,
+      ...(command.codexRoleSpeed === undefined ? {} : { codexRoleSpeed: command.codexRoleSpeed }),
       runtimeMode: command.runtimeMode,
       interactionMode: command.interactionMode,
       branch: command.branch,
@@ -10949,6 +10950,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           creationSource: request.creationSource,
         }),
         ...issueWork.childIssueFields(request, parentProjection.thread.projectId, now),
+        ...(request.codexRoleSpeed === undefined ? {} : { codexRoleSpeed: request.codexRoleSpeed }),
         ...(request.enableTools === undefined ? {} : { enableTools: request.enableTools }),
         ...(request.roleSkillSelection === undefined
           ? {}

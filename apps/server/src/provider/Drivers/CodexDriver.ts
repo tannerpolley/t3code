@@ -185,6 +185,7 @@ export const CodexDriver: ProviderDriver<
     const latestVersions = yield* ProviderLatestVersions.ProviderLatestVersions;
     const installation = yield* CodexInstallation.CodexInstallation;
     const modelCatalog = yield* ModelCatalog.ModelCatalog;
+    const host = yield* ProviderHost.ProviderHost;
     const currentCatalog = modelCatalog.current(DRIVER_KIND);
     const processEnv = yield* mergeProviderInstanceEnvironment(
       environment,
@@ -255,6 +256,10 @@ export const CodexDriver: ProviderDriver<
           Effect.map((value) => value.models),
         ),
         compatibility: installation.compatibility,
+        defaultSpeed: host.settings.get.pipe(
+          Effect.map((settings) => settings.codexDefaultSpeed),
+          Effect.orElseSucceed(() => null),
+        ),
       },
     ).pipe(
       Effect.mapError(

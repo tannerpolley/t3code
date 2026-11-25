@@ -42,6 +42,7 @@ import {
   ThreadId,
   TurnItemId,
   type ServerProviderModel,
+  type CodexDefaultSpeed,
 } from "@t3tools/contracts";
 import { assert, describe, it } from "@effect/vitest";
 import { vi } from "vite-plus/test";
@@ -1920,6 +1921,8 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     promptSuggestions: Effect.Effect<boolean> = Effect.succeed(false),
     onNotification: (method: string) => Effect.Effect<void> = () => Effect.void,
     models?: CodexAdapterV2.CodexAdapterV2Options["models"],
+    defaultSpeed?: Effect.Effect<CodexDefaultSpeed | null>,
+    config?: Readonly<Record<string, unknown>>,
   ) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -1932,7 +1935,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         [];
       const commandStopWatchers: Array<PortScanner.AgentCommandStopWatcher> = [];
       const driver = yield* CodexReplay.makeReplayDriver(
-        withConfigReads(transcript),
+        withConfigReads(transcript, undefined, config),
         beforeEmitInbound === undefined ? {} : { beforeEmitInbound },
       );
       const clientFactory: CodexAdapterV2.CodexAppServerClientFactoryShape = {
@@ -1984,6 +1987,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         clientFactory,
         ...(onUsageLimits ? { onUsageLimits } : {}),
         ...(models ? { models } : {}),
+        ...(defaultSpeed ? { defaultSpeed } : {}),
         digest: yield* Digest.Digest,
         fileSystem,
         idAllocator,
@@ -4797,6 +4801,231 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       yield* answer(4, "file-change", "accept");
       yield* harness.awaitTerminal(3);
       assert.lengthOf(requests(), 4);
+    }).pipe(
+      Effect.provide(
+        Layer.mergeAll(
+          IdAllocator.layer,
+          McpProviderSessions.layer,
+          NodeServices.layer,
+          NodeCrypto.layer,
+        ),
+      ),
+    ),
+  );
+
+  it.effect.each([
+    {
+      name: "new thread",
+      parent: null,
+      speed: "fast",
+      offered: ["priority", "ultrafast"],
+      expected: "priority",
+      nextSpeed: "normal",
+    },
+    {
+      name: "delegated worker",
+      parent: ThreadId.make("parent"),
+      speed: "ultrafast",
+      offered: ["priority", "ultrafast"],
+      expected: "ultrafast",
+    },
+    {
+      name: "Fast fallback",
+      parent: null,
+      speed: "ultrafast",
+      offered: ["fast"],
+      expected: "fast",
+    },
+    { name: "Normal fallback", parent: null, speed: "ultrafast", offered: [], expected: "default" },
+    {
+      name: "Codex default with no selection",
+      parent: null,
+      speed: null,
+      offered: ["priority", "flex"],
+      expected: undefined,
+    },
+    {
+      name: "Codex default with a CLI tier",
+      parent: null,
+      speed: null,
+      offered: ["priority"],
+      config: { service_tier: "priority" },
+      expected: undefined,
+    },
+    {
+      name: "explicit Normal",
+      parent: null,
+      speed: "ultrafast",
+      offered: ["priority", "ultrafast"],
+      explicit: "default",
+      expected: "default",
+    },
+    {
+      name: "explicit role speed",
+      parent: ThreadId.make("parent"),
+      speed: "ultrafast",
+      offered: ["priority", "ultrafast"],
+      roleTier: "fast",
+      expected: "priority",
+    },
+    {
+      name: "clearing a worker override restores its saved role speed on the next turn",
+      parent: ThreadId.make("parent"),
+      speed: "normal",
+      offered: ["priority", "ultrafast"],
+      explicit: "ultrafast",
+      roleTier: "fast",
+      expected: "ultrafast",
+      nextSpeed: "normal",
+      nextTier: "priority",
+    },
+  ] as const)("resolves Codex speed for $name", (test) =>
+    Effect.gen(function* () {
+      const nativeThreadId = "speed-thread";
+      const nativeTurnId = "speed-turn";
+      const entries = codexReplayPreamble({ nativeThreadId, nativeTurnId, prompt: "work" });
+      const turn = entries[5];
+      const started = entries[6];
+      if (
+        turn?.type !== "expect_outbound" ||
+        !Predicate.isObject(turn.frame) ||
+        !Predicate.isObject(turn.frame.params)
+      ) {
+        return yield* Effect.die("Missing turn/start in Codex replay");
+      }
+      entries[5] = {
+        ...turn,
+        frame: {
+          ...turn.frame,
+          params: {
+            ...turn.frame.params,
+            ...(test.expected === undefined ? {} : { serviceTier: test.expected }),
+          },
+        },
+      };
+      const defaultSpeed = yield* Ref.make<CodexDefaultSpeed | null>(test.speed);
+      if ("nextSpeed" in test) {
+        if (started?.type !== "emit_inbound" || !Predicate.isObject(started.frame)) {
+          return yield* Effect.die("Missing turn/start response in Codex replay");
+        }
+        entries.push(
+          {
+            type: "emit_inbound",
+            frame: {
+              method: "turn/completed",
+              params: {
+                threadId: nativeThreadId,
+                turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+              },
+            },
+          },
+          {
+            ...turn,
+            frame: {
+              ...turn.frame,
+              id: 4,
+              params: {
+                ...turn.frame.params,
+                serviceTier: "nextTier" in test ? test.nextTier : "default",
+              },
+            },
+          },
+          {
+            ...started,
+            frame: {
+              ...started.frame,
+              id: 4,
+              result: {
+                turn: makeCodexReplayTurn({ id: "second-speed-turn", status: "inProgress" }),
+              },
+            },
+          },
+        );
+      }
+      const models: ReadonlyArray<ServerProviderModel> = [
+        {
+          slug: CODEX_TEST_MODEL_SELECTION.model,
+          name: "Codex",
+          isCustom: false,
+          capabilities: {
+            optionDescriptors:
+              test.offered.length === 0
+                ? []
+                : [
+                    {
+                      id: "serviceTier",
+                      label: "Service Tier",
+                      type: "select",
+                      options: ["default", ...test.offered].map((id) => ({
+                        id,
+                        label: id,
+                      })),
+                    },
+                  ],
+          },
+        },
+      ];
+      const harness = yield* makeCodexReplayHarness(
+        makeCodexReplayTranscript({ scenario: "codex-speed", entries }),
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        undefined,
+        Effect.succeed(models),
+        Ref.get(defaultSpeed),
+        "config" in test ? test.config : undefined,
+      );
+      const input = makeCodexTestTurnInput({
+        threadId: harness.threadId,
+        providerThread: harness.providerThread,
+        now: yield* DateTime.now,
+        attemptId: RunAttemptId.make("speed-attempt"),
+        text: "work",
+      });
+      const modelSelection = {
+        ...input.modelSelection,
+        ...("explicit" in test ? { options: [{ id: "serviceTier", value: test.explicit }] } : {}),
+      };
+      const appThread: OrchestrationV2AppThread =
+        test.parent === null
+          ? input.appThread
+          : {
+              ...input.appThread,
+              createdBy: "agent",
+              role: "implementor",
+              ...("roleTier" in test
+                ? {
+                    codexRoleSpeed: {
+                      instanceId: modelSelection.instanceId,
+                      model: modelSelection.model,
+                      tier: test.roleTier,
+                    },
+                  }
+                : {}),
+              lineage: {
+                parentThreadId: test.parent,
+                relationshipToParent: "subagent",
+                rootThreadId: test.parent,
+              },
+            };
+      yield* harness.runtime.startTurn({ ...input, modelSelection, appThread });
+      if ("nextSpeed" in test) {
+        yield* harness.firstTerminal;
+        yield* Ref.set(defaultSpeed, test.nextSpeed);
+        yield* harness.runtime.startTurn({
+          ...makeCodexTestTurnInput({
+            threadId: harness.threadId,
+            providerThread: harness.providerThread,
+            now: yield* DateTime.now,
+            attemptId: RunAttemptId.make("next-speed-attempt"),
+            text: "work",
+          }),
+          appThread,
+        });
+      }
     }).pipe(
       Effect.provide(
         Layer.mergeAll(

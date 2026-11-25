@@ -2153,7 +2153,7 @@ describe("composerDraftStore sticky composer settings", () => {
     });
   });
 
-  it("replaces a non-explicit stale model and its options with sticky state", () => {
+  it("seeds the model and effort for a new draft without copying its old Codex speed", () => {
     const store = useComposerDraftStore.getState();
     const draftId = DraftId.make("draft-stale-sticky-seed");
 
@@ -2162,7 +2162,10 @@ describe("composerDraftStore sticky composer settings", () => {
       modelSelection(CODEX_DRIVER, "stale-model", { reasoningEffort: "low" }),
     );
     store.setStickyModelSelection(
-      modelSelection(CODEX_DRIVER, "sticky-model", { reasoningEffort: "xhigh" }),
+      modelSelection(CODEX_DRIVER, "sticky-model", {
+        reasoningEffort: "xhigh",
+        serviceTier: "priority",
+      }),
     );
     store.applyStickyState(draftId);
 

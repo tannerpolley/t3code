@@ -54,6 +54,7 @@ import {
   draftModelPickMatchesThread,
   normalizeCustomModelSlug,
   normalizeModelSlug,
+  withoutCodexSpeed,
 } from "@t3tools/shared/model";
 import { AsyncResult, Atom, type AtomRegistry } from "effect/reactivity";
 import * as Option from "effect/Option";
@@ -669,7 +670,10 @@ export interface ComposerDraftStoreState extends IssueComposerDraftActions {
   ) => void;
   /** Lets the thread's model show again once the server accepted this exact pick. */
   releaseModelSelection: (threadRef: ScopedThreadRef, modelSelection: ModelSelection) => void;
-  applyStickyState: (threadRef: ComposerThreadTarget) => void;
+  applyStickyState: (
+    threadRef: ComposerThreadTarget,
+    providers?: ReadonlyArray<ServerProvider>,
+  ) => void;
   setProviderModelOptions: (
     threadRef: ComposerThreadTarget,
     provider: ProviderDriverKind,
@@ -3324,7 +3328,7 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             };
           });
         },
-        applyStickyState: (threadRef) => {
+        applyStickyState: (threadRef, providers) => {
           const threadKey = resolveComposerDraftKey(get(), threadRef) ?? "";
           if (threadKey.length === 0) {
             return;
@@ -3335,6 +3339,20 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
             const existing = state.draftsByThreadKey[threadKey];
             const base = existing ?? createEmptyThreadDraft();
             const nextMap = compactModelSelectionByProvider(stickyMap);
+            for (const selection of Object.values(nextMap)) {
+              if (
+                selection &&
+                (selection.instanceId === "codex" ||
+                  providers?.some(
+                    (provider) =>
+                      provider.instanceId === selection.instanceId && provider.driver === "codex",
+                  ))
+              ) {
+                const options = withoutCodexSpeed(selection.options);
+                if (options) selection.options = options;
+                else delete selection.options;
+              }
+            }
             if (
               Equal.equals(base.modelSelectionByProvider, nextMap) &&
               base.activeProvider === stickyActiveProvider &&
@@ -3526,19 +3544,21 @@ const composerDraftStore = create<ComposerDraftStoreState>()(
               // Traits for another shown model belong in per-model memory only;
               // the sticky selection keeps its own model's traits.
               const appliesToSticky = rememberedModel === stickyBase.model;
-              if (providerOpts) {
+              const stickyOptions =
+                normalizedProvider === "codex" ? withoutCodexSpeed(providerOpts) : providerOpts;
+              if (stickyOptions) {
                 if (appliesToSticky) {
                   nextStickyMap[instanceKey] = createModelSelection(
                     instanceKey,
                     stickyBase.model,
-                    providerOpts,
+                    stickyOptions,
                   );
                 }
                 nextOptionsByModel = {
                   ...state.stickyOptionsByModelByProvider,
                   [instanceKey]: {
                     ...state.stickyOptionsByModelByProvider[instanceKey],
-                    [rememberedModel]: providerOpts,
+                    [rememberedModel]: stickyOptions,
                   },
                 };
               } else {

@@ -10,14 +10,43 @@ import * as Stream from "effect/Stream";
 import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as TestClock from "effect/testing/TestClock";
 import * as HostProcess from "@t3tools/shared/HostProcess";
+import { getCodexServiceTierDescriptor, resolveCodexSpeed } from "@t3tools/shared/model";
 
 import {
+  appendCustomCodexModels,
   applyPreferredCodexDefaultModel,
   codexCustomEndpoint,
   codexRoutesSpendNativeQuota,
   makeCodexSkillsProbe,
   mapCodexModelCapabilities,
 } from "./CodexProvider.ts";
+
+it("only offers a custom model the Codex tiers it declares", () => {
+  const capabilities = {
+    optionDescriptors: [
+      {
+        id: "serviceTier",
+        label: "Service Tier",
+        type: "select",
+        options: [{ id: "ultrafast", label: "Ultra fast" }],
+      },
+    ],
+  } as const;
+  const models = appendCustomCodexModels(
+    [{ slug: "builtin", name: "Built-in", isCustom: false, capabilities }],
+    ["bare", { slug: "declared", capabilities }],
+  );
+  assert.deepStrictEqual(
+    models.map(
+      ({ capabilities }) =>
+        resolveCodexSpeed({
+          descriptor: getCodexServiceTierDescriptor(capabilities),
+          defaultSpeed: "ultrafast",
+        }).tier,
+    ),
+    ["ultrafast", "default", "ultrafast"],
+  );
+});
 
 function makeFakeCodexAppServers() {
   const helpers: Array<{

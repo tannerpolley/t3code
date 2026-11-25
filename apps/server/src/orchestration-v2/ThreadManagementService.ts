@@ -117,6 +117,7 @@ export function withCreationProvenance(
       const {
         linkOrigin: _linkOrigin,
         delegatedFrom: _delegatedFrom,
+        codexRoleSpeed: _codexRoleSpeed,
         mcpClientSessionId: _mcpClientSessionId,
         initialMessage: _initialMessage,
         workflowRun: _workflowRun,

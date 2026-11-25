@@ -9818,7 +9818,6 @@
   "44eac2e9f0540171": "Não foi possível redefinir a instância do provedor",
   "e58b52d05807b929": "Atualizando provedores",
   "1d7cade347f52bbd": "Permissões limitadas",
-  "c165e95dd1b35bfd": "Esta sessão pode ver os provedores de {environment}, mas não pode alterar as configurações deles.",
   "909f245bc73b0f32": "Esta instância do provedor não está mais disponível neste dispositivo.",
   "daf14fa8c7bedb74": "Nenhum provedor configurado.",
   "2757a250104b4b7e": "Avançado",
@@ -13743,5 +13742,14 @@
   "08aed48ad712a390": "Mover issue #{number}",
   "758bdb04da8055e3": "Criar, dividir e alterar o status de issues no GitHub exige aprovação quando a confirmação dessas ações por agentes está ativada. Editar o texto, fechar ou reabrir issues e mudar vínculos de dependência ou de hierarquia exige aprovação se a conversa do agente estiver no modo Aprovação obrigatória.",
   "37fb3df559fec40b": "Restaurando o orquestrador",
-  "47056f69de6e20fb": "Lista as issues abertas do repositório na seção Issues dos detalhes da conversa, agrupadas por etapa, e as abre ao lado da conversa."
+  "47056f69de6e20fb": "Lista as issues abertas do repositório na seção Issues dos detalhes da conversa, agrupadas por etapa, e as abre ao lado da conversa.",
+  "e351e22d0be49f2b": "Velocidade do Codex: {speed} em {environment}",
+  "72dc8979fc87df5c": "Velocidade do Codex: {speed}",
+  "f94eea5cf4e7d9d6": "Padrão",
+  "7b44f2dcd82a0ea1": "Esta sessão não tem permissão para gerenciar provedores em {environment}.",
+  "7aa202a739c5f90d": "Aplica-se no próximo turno às conversas e aos agentes do Codex que usam o padrão. Os modelos usam a maior velocidade compatível até o limite escolhido.",
+  "e2a5cf66eeec090e": "Velocidade padrão",
+  "afecbf6b765a2fb0": "Ultrarrápida",
+  "3c8f3dd37881c169": "Codex velocidade normal rápida ultrarrápida nível de serviço",
+  "1becfb4db7ffe135": "Padrão do Codex"
 }

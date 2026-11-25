@@ -22,6 +22,7 @@ import {
   usageWindowAppliesToModel,
 } from "@t3tools/shared/usageLimits";
 import { isUsageWindowStale } from "@t3tools/shared/forkUsageLimits";
+import { offeredCodexServiceTier } from "@t3tools/shared/model";
 import * as Arr from "effect/Array";
 import * as Order from "effect/Order";
 import { advertisedModel, checkDelegateTarget } from "../mcp/delegateTaskTarget.ts";
@@ -54,7 +55,16 @@ export function roleDefaultTarget(
       (requestedOptions === undefined ||
         (requestedOptions.length === (options?.length ?? 0) &&
           (options ?? []).every(({ id, value }) =>
-            requestedOptions.some((option) => option.id === id && option.value === value),
+            requestedOptions.some(
+              (option) =>
+                option.id === id &&
+                (option.value === value ||
+                  (id === "serviceTier" &&
+                    driverFor(providerInstanceId) === "codex" &&
+                    typeof value === "string" &&
+                    typeof option.value === "string" &&
+                    offeredCodexServiceTier([{ id: value }], option.value) === value)),
+            ),
           ))),
   );
   if (choice === undefined) {

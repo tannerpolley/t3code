@@ -33,6 +33,16 @@ Running `codex login` does not change a managed ChatGPT connection. In
 and complete the wizard. Then select that instance from the thread's model
 picker. See [Use multiple accounts](#use-multiple-accounts).
 
+## Set the default speed
+
+In **Settings → Providers → Codex**, pick **Normal**, **Fast**, or **Ultra fast**.
+You can also search for **Codex speed** in the command palette. The setting is saved
+on the selected environment and applies on the next turn. A thread or worker with
+its own speed keeps that choice. Models fall back from Ultra fast to Fast, then
+to Normal, according to the speeds they support.
+
+Choose **Codex default** to let Codex apply its own configuration.
+
 ## Allow more time for provider checks
 
 If an authenticated Codex installation reports “Timed out while checking Codex

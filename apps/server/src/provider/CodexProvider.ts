@@ -162,7 +162,6 @@ export interface CodexAppServerProviderSnapshot {
   readonly rateLimits?: CodexRateLimitsProbe;
   readonly version: string | undefined;
   readonly models: ReadonlyArray<ServerProviderModel> | undefined;
-  readonly serviceTier?: string | undefined;
   /** Undefined when `config/read` failed, so T3 cannot know Codex's default program. */
   readonly daybreakEnabled?: boolean | undefined;
   readonly cyberAccessProgramsUnavailable?: boolean | undefined;
@@ -419,22 +418,6 @@ function withConfiguredSelectDefault(
   );
 }
 
-function applyConfiguredCodexServiceTier(
-  models: ReadonlyArray<ServerProviderModel>,
-  serviceTier: string | undefined,
-): ReadonlyArray<ServerProviderModel> {
-  if (!serviceTier) return models;
-  return withConfiguredSelectDefault(
-    models,
-    "serviceTier",
-    (options) =>
-      options.find(
-        (option) =>
-          option.id === serviceTier || (serviceTier === "fast" && option.id === "priority"),
-      )?.id,
-  );
-}
-
 /** Mirrors Codex: `daybreak = true` prefers a Daybreak program, Blue before Red. */
 function applyConfiguredCodexCyberAccess(
   models: ReadonlyArray<ServerProviderModel>,
@@ -468,16 +451,19 @@ function applyConfiguredCodexCyberAccess(
   );
 }
 
-/**
- * Codex has no static default capability set, so a bare custom slug borrows
- * the first built-in's descriptors; an entry with its own capabilities keeps
- * them.
- */
-function appendCustomCodexModels(
+/** A bare custom slug can borrow the first built-in's controls, except speed tiers. */
+export function appendCustomCodexModels(
   models: ReadonlyArray<ServerProviderModel>,
   customModels: ReadonlyArray<CustomModelSetting>,
 ): ReadonlyArray<ServerProviderModel> {
-  const fallbackCapabilities = models.find((model) => model.capabilities)?.capabilities ?? null;
+  const builtInCapabilities = models.find((model) => model.capabilities)?.capabilities;
+  const fallbackCapabilities = builtInCapabilities?.optionDescriptors
+    ? {
+        optionDescriptors: builtInCapabilities.optionDescriptors.filter(
+          ({ id }) => id !== "serviceTier",
+        ),
+      }
+    : null;
   return providerModelsFromSettings(models, customModels, fallbackCapabilities);
 }
 
@@ -976,7 +962,6 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
           ),
     skills: skillsAndPlugins.skills,
     ...(skillsAndPlugins.plugins ? { plugins: skillsAndPlugins.plugins } : {}),
-    serviceTier: config?.service_tier ?? undefined,
     daybreakEnabled: config === undefined ? undefined : cyberAccess?.daybreak === true,
     // An unread config cannot rule out an API key with the programs turned off.
     cyberAccessProgramsUnavailable:
@@ -1313,7 +1298,6 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
     models: pipe(
       appendCustomCodexModels(snapshot.models ?? [], codexSettings.customModels),
       applyPreferredCodexDefaultModel,
-      (models) => applyConfiguredCodexServiceTier(models, snapshot.serviceTier),
       (models) => applyConfiguredCodexCyberAccess(models, snapshot),
     ),
     skills: snapshot.skills,

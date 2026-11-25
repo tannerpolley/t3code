@@ -13,6 +13,7 @@ import {
   getProviderOptionDescriptors,
   isClaudeUltrathinkPrompt,
   normalizeModelSlug,
+  withCodexSpeedFrom,
   withImplicitFastModeDefault,
 } from "@t3tools/shared/model";
 
@@ -74,7 +75,10 @@ function resolveComposerOptionSelections(
   selections: ReadonlyArray<ProviderOptionSelection> | undefined;
 } {
   const caps = getProviderModelCapabilities(models, model, provider, includePlanAgent);
-  return { caps, selections: withImplicitFastModeDefault(caps, modelOptions) };
+  return {
+    caps,
+    selections: withImplicitFastModeDefault(caps, modelOptions),
+  };
 }
 
 export function getComposerProviderState(input: ComposerProviderStateInput): ComposerProviderState {
@@ -118,14 +122,16 @@ export function getComposerProviderState(input: ComposerProviderStateInput): Com
   const ultrathinkActive =
     (primarySelectDescriptor?.promptInjectedValues?.length ?? 0) > 0 &&
     promptInjectionState === "ultrathink";
+  const explicitOptions = buildExplicitProviderOptionSelectionsFromDescriptors(
+    descriptors,
+    selections,
+  );
 
   return {
     provider,
     promptEffort,
-    modelOptionsForDispatch: buildExplicitProviderOptionSelectionsFromDescriptors(
-      descriptors,
-      selections,
-    ),
+    modelOptionsForDispatch:
+      provider === "codex" ? withCodexSpeedFrom(explicitOptions, selections) : explicitOptions,
     ...(ultrathinkActive
       ? {
           composerFrameClassName: "ultrathink-frame",

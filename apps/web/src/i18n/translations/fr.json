@@ -9818,7 +9818,6 @@
   "44eac2e9f0540171": "Impossible de réinitialiser l’instance du fournisseur",
   "e58b52d05807b929": "Actualisation des fournisseurs",
   "1d7cade347f52bbd": "Autorisations limitées",
-  "c165e95dd1b35bfd": "Cette session peut afficher les fournisseurs de {environment} mais pas modifier leurs paramètres.",
   "909f245bc73b0f32": "Cette instance de fournisseur n’est plus disponible sur cet appareil.",
   "daf14fa8c7bedb74": "Aucun fournisseur configuré.",
   "2757a250104b4b7e": "Avancé",
@@ -13743,5 +13742,14 @@
   "08aed48ad712a390": "Déplacer le ticket nº {number}",
   "758bdb04da8055e3": "La création, la division et le changement de statut des tickets GitHub nécessitent une approbation lorsque la confirmation de ces actions par les agents est activée. Les modifications du texte ou des liens de parenté et de blocage, ainsi que la fermeture ou la réouverture, nécessitent une approbation si le fil de l’agent est en mode Approbation requise.",
   "37fb3df559fec40b": "Restauration de l’orchestrateur",
-  "47056f69de6e20fb": "Affiche les tickets ouverts du dépôt dans la section Tickets des détails du fil, les regroupe par étape et les ouvre à côté du fil."
+  "47056f69de6e20fb": "Affiche les tickets ouverts du dépôt dans la section Tickets des détails du fil, les regroupe par étape et les ouvre à côté du fil.",
+  "e351e22d0be49f2b": "Vitesse de Codex : {speed} sur {environment}",
+  "72dc8979fc87df5c": "Vitesse de Codex : {speed}",
+  "f94eea5cf4e7d9d6": "Par défaut",
+  "7b44f2dcd82a0ea1": "Cette session n’a pas l’autorisation de gérer les fournisseurs sur {environment}.",
+  "7aa202a739c5f90d": "S’applique dès le prochain tour aux fils et agents Codex qui utilisent la vitesse par défaut. Chaque modèle utilise la vitesse la plus élevée qu’il prend en charge, dans la limite de votre choix.",
+  "e2a5cf66eeec090e": "Vitesse par défaut",
+  "afecbf6b765a2fb0": "Ultra rapide",
+  "3c8f3dd37881c169": "Codex vitesse normale rapide ultra rapide niveau de service",
+  "1becfb4db7ffe135": "Valeur par défaut de Codex"
 }

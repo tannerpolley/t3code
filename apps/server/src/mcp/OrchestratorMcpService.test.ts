@@ -4715,9 +4715,24 @@ describe("OrchestratorMcpService provider resolution", () => {
         const override = [{ id: "reasoningEffort", value: "max" }] as const;
         const cases = [
           {
-            name: "partial override",
+            name: "reasoning override with the Codex config default",
             target: { options: override },
-            expected: { ...inherited, options: [...override, inherited.options[1]] },
+            expected: { ...inherited, options: override },
+          },
+          {
+            name: "uses the server speed instead of a parent's per-thread speed",
+            codexDefaultSpeed: "ultrafast",
+            target: { options: override },
+            expected: { ...inherited, options: override },
+          },
+          {
+            name: "keeps a speed explicitly requested by this worker",
+            codexDefaultSpeed: "ultrafast",
+            target: { options: { serviceTier: "default" } },
+            expected: {
+              ...inherited,
+              options: [inherited.options[0], { id: "serviceTier", value: "default" }],
+            },
           },
           {
             name: "clear with array",
@@ -4732,13 +4747,13 @@ describe("OrchestratorMcpService provider resolution", () => {
           {
             name: "same model by alias",
             target: { model: "GPT" },
-            expected: { ...inherited, model: "GPT" },
+            expected: { ...inherited, model: "GPT", options: [inherited.options[0]] },
           },
           {
             name: "parent named the same model by alias",
             parent: { ...inherited, model: "gpt" },
             target: { model: inherited.model },
-            expected: inherited,
+            expected: { ...inherited, options: [inherited.options[0]] },
           },
           {
             name: "change model",
@@ -4839,7 +4854,11 @@ describe("OrchestratorMcpService provider resolution", () => {
                   } as never;
                 }),
             }),
-            ServerSettings.layerTest(),
+            ServerSettings.layerTest(
+              "codexDefaultSpeed" in testCase
+                ? { codexDefaultSpeed: testCase.codexDefaultSpeed }
+                : {},
+            ),
             providerRegistryLayer([
               {
                 ...providerSnapshot({
@@ -4915,7 +4934,6 @@ describe("OrchestratorMcpService provider resolution", () => {
           yield* Effect.gen(function* () {
             const service = yield* OrchestratorMcpService.OrchestratorMcpService;
             const capabilities = yield* service.capabilities(scope);
-            assert.deepEqual(capabilities.inheritedOptions, inherited.options);
             yield* service.delegateTask(scope, {
               task: "Review the change.",
               target: yield* decodeTarget(testCase.target),
@@ -4927,6 +4945,7 @@ describe("OrchestratorMcpService provider resolution", () => {
               testCase.expected,
               testCase.name,
             );
+            assert.deepEqual(capabilities.inheritedOptions, [inherited.options[0]]);
           }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(dependencies))));
         }
       }),

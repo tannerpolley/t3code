@@ -236,6 +236,7 @@ export const CODEX_TEST_THREAD_TITLE = "Codex continuation test";
 export function withConfigReadBeforeTurnStart(
   entries: ReadonlyArray<CodexReplay.CodexAppServerReplayEntry>,
   threadName = CODEX_TEST_THREAD_TITLE,
+  config: Readonly<Record<string, unknown>> = {},
 ): Array<CodexReplay.CodexAppServerReplayEntry> {
   const result: Array<CodexReplay.CodexAppServerReplayEntry> = [];
   let offset = 0;
@@ -284,7 +285,7 @@ export function withConfigReadBeforeTurnStart(
         exchanges.push([
           "config/read",
           { cwd: params.cwd, includeLayers: false },
-          { config: {}, origins: {} },
+          { config, origins: {} },
         ]);
       }
       for (const [method, requestParams, response] of exchanges) {
@@ -321,8 +322,12 @@ export function withConfigReadBeforeTurnStart(
 export function withConfigReads(
   transcript: CodexReplay.CodexAppServerReplayTranscript,
   threadName?: string,
+  config?: Readonly<Record<string, unknown>>,
 ): CodexReplay.CodexAppServerReplayTranscript {
-  return { ...transcript, entries: withConfigReadBeforeTurnStart(transcript.entries, threadName) };
+  return {
+    ...transcript,
+    entries: withConfigReadBeforeTurnStart(transcript.entries, threadName, config),
+  };
 }
 
 export function withReplayRequestId(

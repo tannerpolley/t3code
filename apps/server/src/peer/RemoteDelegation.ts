@@ -33,6 +33,7 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as Tool from "effect/ai/Tool";
 import { withExecutedModelNote } from "@t3tools/provider-core/server/subagentProjection";
+import { withoutCodexSpeed } from "@t3tools/shared/model";
 
 import type * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import { roleDefaultTarget } from "../provider/modelRolePolicy.ts";
@@ -270,15 +271,17 @@ const make = Effect.gen(function* () {
 
   const delegate: RemoteDelegation["Service"]["delegate"] = Effect.fn("RemoteDelegation.delegate")(
     function* (scope, input) {
-      const parent = yield* threads.getThreadRecords(scope.thread.threadId, ["runs"]).pipe(
-        Effect.mapError(
-          () =>
-            new OrchestratorMcpFailure({
-              code: "thread_not_found",
-              message: "The calling thread was not found.",
-            }),
-        ),
-      );
+      const parent = yield* threads
+        .getThreadRecords(scope.thread.threadId, ["runs", "providerThreads"])
+        .pipe(
+          Effect.mapError(
+            () =>
+              new OrchestratorMcpFailure({
+                code: "thread_not_found",
+                message: "The calling thread was not found.",
+              }),
+          ),
+        );
       const parentRun = parent.runs
         .filter(ThreadManagement.isActiveRun)
         .toSorted((left, right) => right.ordinal - left.ordinal)[0];
@@ -303,6 +306,7 @@ const make = Effect.gen(function* () {
         });
       }
       let target = input.target;
+      let usesModelRole = false;
       if (input.role !== undefined && target.override !== true) {
         const { modelRoles, providers } = yield* forwarding.call(
           scope,
@@ -318,7 +322,10 @@ const make = Effect.gen(function* () {
           (id) => providers.find((provider) => provider.providerInstanceId === id)?.driverKind,
         );
         if (isOrchestratorMcpFailure(choice)) return yield* choice;
-        if (choice !== undefined) target = { ...target, ...choice };
+        if (choice !== undefined) {
+          target = { ...target, ...choice };
+          usesModelRole = true;
+        }
       }
       // Outside a configured role, the provider and model inherit. Another
       // provider there has no model to inherit, so the caller names one.
@@ -342,7 +349,10 @@ const make = Effect.gen(function* () {
       const options =
         target.options ??
         (instanceId === inherited.instanceId && model === inherited.model
-          ? inherited.options
+          ? parent.providerThreads?.find(({ id }) => id === parent.thread.activeProviderThreadId)
+              ?.driver === "codex" || inherited.instanceId === "codex"
+            ? withoutCodexSpeed(inherited.options)
+            : inherited.options
           : undefined);
       // Modes asked for are checked against this thread. Omitted ones are left
       // to the other side, which inherits this thread's modes capped by the
@@ -367,6 +377,7 @@ const make = Effect.gen(function* () {
       const key = input.clientRequestId ?? (yield* random.uuidV4());
       const task = taskPrompt(input);
       const title = input.title ?? parent.thread.title;
+      const role = delegatedTaskRole(input.role, false);
       const launched = yield* forwarding.call(
         scope,
         ProjectToolkit.tools.t3_thread_launch,
@@ -374,6 +385,7 @@ const make = Effect.gen(function* () {
         {
           projectId,
           title,
+          ...(usesModelRole ? { role } : {}),
           modelSelection: { instanceId, model, ...(options === undefined ? {} : { options }) },
           ...(runtimeMode === undefined ? {} : { runtimeMode }),
           ...(interactionMode === undefined ? {} : { interactionMode }),
@@ -384,7 +396,7 @@ const make = Effect.gen(function* () {
             environmentId: hereId,
             threadId: parent.thread.id,
             title: parent.thread.title,
-            role: delegatedTaskRole(input.role, false),
+            role,
             ...(input.enableTools === undefined ? {} : { enableTools: input.enableTools }),
           },
         },

@@ -490,9 +490,11 @@ describe("OrchestratorMcpService provider resolution", () => {
   it("checks option selections independently for choices on the same model", () => {
     const model = "gpt-6.1-sol";
     const role: ModelRole = {
-      id: "builder",
+      id: "implementor-complex",
       name: "Builder",
       description: "",
+      role: "implementor",
+      level: "complex",
       targets: [
         {
           providerInstanceId: codexInstanceId,
@@ -503,6 +505,16 @@ describe("OrchestratorMcpService provider resolution", () => {
           providerInstanceId: codexInstanceId,
           model,
           options: [{ id: "reasoningEffort", value: "invalid" }],
+        },
+        {
+          providerInstanceId: codexInstanceId,
+          model,
+          options: [{ id: "serviceTier", value: "fast" }],
+        },
+        {
+          providerInstanceId: codexInstanceId,
+          model,
+          options: [{ id: "serviceTier", value: "ultrafast" }],
         },
       ],
     };
@@ -528,6 +540,15 @@ describe("OrchestratorMcpService provider resolution", () => {
                   { id: "high", label: "High" },
                 ],
               },
+              {
+                id: "serviceTier",
+                label: "Speed",
+                type: "select",
+                options: [
+                  { id: "default", label: "Normal" },
+                  { id: "priority", label: "Fast" },
+                ],
+              },
             ],
           },
         },
@@ -540,8 +561,21 @@ describe("OrchestratorMcpService provider resolution", () => {
       modelRoleStatusNow,
     );
     assert.deepEqual(statuses[0]!.targets[0], { ...role.targets[0], unavailableReason: null });
+    assert.deepEqual(statuses[0]!.targets[1], { ...role.targets[2]!, unavailableReason: null });
+    assert.deepEqual(
+      roleDefaultTarget(
+        statuses,
+        "implementor",
+        "complex",
+        { model, options: [{ id: "serviceTier", value: "priority" }] },
+        () => provider.driver,
+      ),
+      role.targets[2],
+    );
+    // Ultra fast falls back to Fast on a model that only offers Fast.
+    assert.deepEqual(statuses[0]!.targets[2], { ...role.targets[3]!, unavailableReason: null });
     assert.equal(
-      statuses[0]!.targets[1]!.unavailableReason,
+      statuses[0]!.targets[3]!.unavailableReason,
       `Model ${model} on provider codex rejected options: Option reasoningEffort must be one of: medium, high.`,
     );
   });
@@ -1572,7 +1606,7 @@ describe("OrchestratorMcpService provider resolution", () => {
           {
             name: "partial override",
             target: { options: override },
-            expected: { ...inherited, options: [...override, inherited.options[1]] },
+            expected: { ...inherited, options: override },
           },
           {
             name: "clear with array",
@@ -1653,7 +1687,7 @@ describe("OrchestratorMcpService provider resolution", () => {
           yield* Effect.gen(function* () {
             const service = yield* OrchestratorMcpService.OrchestratorMcpService;
             const capabilities = yield* service.capabilities(scope);
-            assert.deepEqual(capabilities.inheritedOptions, inherited.options);
+            assert.deepEqual(capabilities.inheritedOptions, [inherited.options[0]]);
             yield* service.delegateTask(scope, {
               task: "Review the change.",
               target: yield* decodeTarget(testCase.target),
