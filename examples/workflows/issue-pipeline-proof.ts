@@ -3,7 +3,7 @@ import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
 import * as NodeUtil from "node:util";
 
-const { agent, ask, every, issues, start, step, stop, Tick, workflow } = T3;
+const { agent, ask, every, issues, runs, skip, start, step, stop, Tick, workflow } = T3;
 
 const repository = "tannerpolley/t3code-sandbox";
 const prefix = "https://github.com/" + repository + "/issues/";
@@ -19,9 +19,29 @@ const holds = new Set(["needs you", "needs orchestrator"]);
 const fixtureTitle = "[#691 proof] ";
 const model = (name: string) => ({ instanceId: "codex", model: name });
 
+const privateFixture = () =>
+  Effect.tryPromise(async () => {
+    const repo = JSON.parse(
+      await gh("repo", "view", repository, "--json", "isPrivate,defaultBranchRef"),
+    );
+    if (
+      !repo.isPrivate ||
+      (await git(project, "remote", "get-url", "--push", "origin")) !==
+        `https://github.com/${repository}.git`
+    ) {
+      throw new Error("Expected origin to point to the private fixture repository");
+    }
+    return repo.defaultBranchRef.name;
+  });
+
+const handoff = Effect.fn(function* (name: string, title: string, reason: string) {
+  yield* ask(name, { title, choices: ["Hold"], data: { reason } });
+  return yield* stop(reason);
+});
+
 const worker = workflow(
   "issue-pipeline-proof",
-  { version: 2, payload: Schema.String, concurrency: 1 },
+  { version: 3, payload: Schema.String, concurrency: 1 },
   Effect.fn(function* (url) {
     const key = url.slice(prefix.length);
     if (!url.startsWith(prefix) || !/^\d+$/.test(key)) return yield* stop("Outside fixture scope");
@@ -32,10 +52,18 @@ const worker = workflow(
       detail.state.name !== "Todo" ||
       detail.labels.some(({ name }) => holds.has(name.toLowerCase()))
     ) {
-      return yield* stop("Fixture is no longer eligible");
+      return yield* skip("Fixture is no longer eligible");
     }
 
-    yield* step("in-progress", { returns: Schema.Void }, issues.setState(issue, "In progress"));
+    const target = yield* step(
+      "in-progress",
+      { returns: Schema.String },
+      Effect.gen(function* () {
+        const branch = yield* privateFixture();
+        yield* issues.setState(issue, "In progress");
+        return branch;
+      }),
+    );
     if (detail.title === fixtureTitle + "Hold a queued workflow") {
       yield* ask("hold-fixture", { title: "Stop this queued proof fixture?", choices: ["Hold"] });
       return yield* stop("Held fixture");
@@ -44,23 +72,6 @@ const worker = workflow(
     const branch = "t3-workflow-proof-691-" + key;
     const file = "docs/workflow-proof-691-" + key + ".txt";
     const expected = "workflow proof";
-    const target = yield* step(
-      "default-branch",
-      { returns: Schema.String },
-      Effect.tryPromise(async () => {
-        const repo = JSON.parse(
-          await gh("repo", "view", repository, "--json", "isPrivate,defaultBranchRef"),
-        );
-        if (
-          !repo.isPrivate ||
-          (await git(project, "remote", "get-url", "--push", "origin")) !==
-            `https://github.com/${repository}.git`
-        ) {
-          throw new Error("Expected origin to point to the private fixture repository");
-        }
-        return repo.defaultBranchRef.name;
-      }),
-    );
 
     const implement = yield* agent("implement", {
       project,
@@ -133,7 +144,7 @@ ${snapshot.diff}`,
       return yield* stop("Review did not pass");
     }
 
-    const head = yield* step(
+    const checked = yield* step.try(
       "checks",
       { returns: Schema.String },
       Effect.tryPromise(async () => {
@@ -151,45 +162,58 @@ ${snapshot.diff}`,
       }),
     );
 
-    const pr = yield* step(
+    if (checked.outcome === "failed") {
+      return yield* handoff("checks-blocked", "Fixture checks failed", checked.reason);
+    }
+    const head = checked.value;
+
+    const opened = yield* step.try(
       "open-pr",
       { returns: Schema.String },
-      Effect.tryPromise(async () => {
-        const existing = JSON.parse(
-          await gh(
-            "pr",
-            "list",
-            "-R",
-            repository,
-            "--state",
-            "all",
-            "--base",
-            target,
-            "--head",
-            branch,
-            "--json",
-            "url,isCrossRepository",
-          ),
-        );
-        const sameRepository = existing.find((pr) => !pr.isCrossRepository);
-        if (sameRepository) return sameRepository.url;
-        await git(project, "push", "origin", head + ":refs/heads/" + branch);
-        return gh(
-          "pr",
-          "create",
-          "-R",
-          repository,
-          "--base",
-          target,
-          "--head",
-          branch,
-          "--title",
-          "test: prove upstream Workflows on issue #" + key,
-          "--body",
-          "Private fixture for the upstream workflow proof.",
-        );
-      }),
+      privateFixture().pipe(
+        Effect.andThen(
+          Effect.tryPromise(async () => {
+            const existing = JSON.parse(
+              await gh(
+                "pr",
+                "list",
+                "-R",
+                repository,
+                "--state",
+                "all",
+                "--base",
+                target,
+                "--head",
+                branch,
+                "--json",
+                "url,isCrossRepository",
+              ),
+            );
+            const sameRepository = existing.find((pr) => !pr.isCrossRepository);
+            if (sameRepository) return sameRepository.url;
+            await git(project, "push", "origin", head + ":refs/heads/" + branch);
+            return gh(
+              "pr",
+              "create",
+              "-R",
+              repository,
+              "--base",
+              target,
+              "--head",
+              branch,
+              "--title",
+              "test: prove upstream Workflows on issue #" + key,
+              "--body",
+              "Private fixture for the upstream workflow proof.",
+            );
+          }),
+        ),
+      ),
     );
+    if (opened.outcome === "failed") {
+      return yield* handoff("pr-blocked", "Fixture PR could not be opened", opened.reason);
+    }
+    const pr = opened.value;
 
     const answer = yield* ask("merge", {
       title: "Merge the private fixture PR?",
@@ -198,31 +222,43 @@ ${snapshot.diff}`,
     });
     if (Option.isNone(answer) || answer.value.choice !== "Merge") return yield* stop("Merge held");
 
-    yield* step(
+    const merged = yield* step.try(
       "merge-reviewed-head",
       { returns: Schema.Void },
-      Effect.tryPromise(async () => {
-        const read = async () =>
-          JSON.parse(await gh("pr", "view", pr, "--json", "state,headRefOid"));
-        let current = await read();
-        if (current.headRefOid !== head) throw new Error("Fixture PR head changed after checks");
-        if (current.state === "OPEN") {
-          await gh("pr", "merge", pr, "--squash", "--match-head-commit", head);
-          current = await read();
-        }
-        if (current.state !== "MERGED" || current.headRefOid !== head) {
-          throw new Error("Fixture PR merge was not verified");
-        }
-      }),
+      privateFixture().pipe(
+        Effect.andThen(
+          Effect.tryPromise(async () => {
+            const read = async () =>
+              JSON.parse(await gh("pr", "view", pr, "--json", "state,headRefOid"));
+            let current = await read();
+            if (current.headRefOid !== head)
+              throw new Error("Fixture PR head changed after checks");
+            if (current.state === "OPEN") {
+              await gh("pr", "merge", pr, "--squash", "--match-head-commit", head);
+              current = await read();
+            }
+            if (current.state !== "MERGED" || current.headRefOid !== head) {
+              throw new Error("Fixture PR merge was not verified");
+            }
+          }),
+        ),
+      ),
     );
-    yield* step("done", { returns: Schema.Void }, issues.setState(issue, "Done"));
+    if (merged.outcome === "failed") {
+      return yield* handoff("merge-blocked", "Fixture PR could not be merged", merged.reason);
+    }
+    yield* step(
+      "done",
+      { returns: Schema.Void },
+      privateFixture().pipe(Effect.andThen(issues.setState(issue, "Done"))),
+    );
     return { pr, head };
   }),
 );
 
 workflow(
   "issue-pipeline-proof-poll",
-  { version: 2, payload: Tick, triggers: [every("1 minute")], concurrency: 1 },
+  { version: 3, payload: Tick, triggers: [every("1 minute")], concurrency: 1 },
   Effect.fn(function* () {
     return yield* step(
       "find-and-start",
@@ -239,7 +275,10 @@ workflow(
             detail.labels.some(({ name }) => holds.has(name.toLowerCase()))
           )
             continue;
-          const { runId } = yield* start(worker, row.url, { key: row.url, subject: row });
+          const [previous] = yield* runs({ workflow: worker, subject: row });
+          if (previous && previous.status !== "skipped") continue;
+          const key = previous ? row.url + "/" + previous.id : row.url;
+          const { runId } = yield* start(worker, row.url, { key, subject: row });
           selected.push(runId);
         }
         return selected;
