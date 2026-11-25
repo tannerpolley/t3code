@@ -25,7 +25,20 @@ it.effect.each([
   { name: "closed issue", closed: true, count: 0 },
   { name: "idle worker on an open issue", count: 1 },
   { name: "archived worker with pending work", archived: true, run: "waiting", count: 1 },
-])("counts slots for $name", ({ archived, run, merged, closed, count }) =>
+  {
+    name: "archived worker with an obsolete provider task",
+    archived: true,
+    roster: "old",
+    count: 0,
+  },
+  {
+    name: "archived worker with a current provider task",
+    archived: true,
+    roster: "current",
+    count: 1,
+  },
+  { name: "worker waiting for a merged PR notification", merged: true, watch: true, count: 1 },
+])("counts slots for $name", ({ archived, run, merged, closed, roster, watch, count }) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
     const store = yield* IssueWorkStore.IssueWorkStore;
@@ -43,7 +56,9 @@ it.effect.each([
             {
               host: issue.host,
               repository: issue.repository,
+              source: "agent",
               snapshot: { state: "merged", headBranch: "feature" },
+              ...(watch ? { watch: { passed: true, checksPending: false } } : {}),
             },
           ]
         : [],
@@ -56,7 +71,16 @@ it.effect.each([
     if (run !== undefined)
       yield* sql`INSERT INTO orchestration_v2_projection_runs(run_id, thread_id, ordinal, provider, status, requested_at, payload_json)
         VALUES ('run', 'worker', 1, 'codex', ${run}, '2026-11-24', '{}')`;
+    if (roster !== undefined) {
+      const pending = JSON.stringify({ pendingBackgroundTasks: [{ taskId: "command" }] });
+      yield* sql`UPDATE orchestration_v2_projection_threads SET active_provider_thread_id = 'current'
+        WHERE thread_id = 'worker'`;
+      yield* sql`INSERT INTO orchestration_v2_projection_provider_threads(provider_thread_id, thread_id, provider, status, updated_at, payload_json)
+        VALUES ('current', 'worker', 'codex', 'idle', '2026-11-24', ${roster === "current" ? pending : "{}"}),
+          ('old', 'worker', 'codex', 'idle', '2026-11-24', ${roster === "old" ? pending : "{}"})`;
+    }
     assert.equal(yield* store.slotsInUse(root), count);
+    if (watch) assert.isTrue(yield* store.workerRetainsSlot(ThreadId.make("worker"), true));
   }).pipe(Effect.provide(dependencies)),
 );
 

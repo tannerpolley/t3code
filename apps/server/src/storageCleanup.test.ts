@@ -3889,6 +3889,7 @@ describe("storage cleanup reports and local file policies", () => {
     "was removed explicitly with unmerged commits",
     "received a merge update",
     "is visible with a merged pull request",
+    "is settled with a merged pull request",
     "interrupted",
     "cancelled",
     "failed",
@@ -3925,6 +3926,12 @@ describe("storage cleanup reports and local file policies", () => {
           yield* command(slot, ["commit", "-am", "issue work"]);
         }
         const head = (yield* command(slot, ["rev-parse", "HEAD"])).stdout.trim();
+        const settled = scenario === "is settled with a merged pull request";
+        const visible = settled || scenario === "is visible with a merged pull request";
+        if (settled) {
+          yield* command(repo, ["merge", "--ff-only", "feature"]);
+          yield* command(repo, ["push", "origin", "main"]);
+        }
         const merged: GitManager.GitBranchPullRequest = {
           number: 2,
           title: "Merged",
@@ -3940,13 +3947,9 @@ describe("storage cleanup reports and local file policies", () => {
           shell({
             branch: "feature",
             worktreePath: slot,
-            archivedAt:
-              unsettledStatus === null && scenario !== "is visible with a merged pull request"
-                ? at(-DAY_MS)
-                : null,
-            status:
-              unsettledStatus ??
-              (scenario === "is visible with a merged pull request" ? "completed" : "idle"),
+            archivedAt: unsettledStatus === null && !visible ? at(-DAY_MS) : null,
+            settledAt: settled ? at(-DAY_MS) : null,
+            status: unsettledStatus ?? (visible ? "completed" : "idle"),
             linkedIssue: {
               host: "github.com",
               repository: "owner/project",
@@ -3978,16 +3981,16 @@ describe("storage cleanup reports and local file policies", () => {
           expect((yield* command(slot, ["branch", "--show-current"])).stdout).toBe("");
           return;
         }
-        if (unsettledStatus !== null || scenario === "is visible with a merged pull request") {
-          for (const pullRequest of [null, merged]) {
-            if (pullRequest !== null) setBranchPullRequest(pullRequest);
-            yield* service.runNow;
-            expect(archivedThreads).toEqual([]);
-            expect(getThreads()[0]).toMatchObject({ worktreePath: slot, branch: "feature" });
-            expect((yield* command(slot, ["branch", "--show-current"])).stdout.trim()).toBe(
-              "feature",
-            );
-          }
+        if (unsettledStatus !== null || visible) {
+          yield* service.runNow;
+          expect(getThreads()[0]).toMatchObject({ worktreePath: slot, branch: "feature" });
+          setBranchPullRequest(merged);
+          expect((yield* service.runNow).entries[0]?.reason).toBe(
+            "Returned to the issue worktree pool",
+          );
+          expect(getThreads()[0]?.worktreePath).toBeNull();
+          expect(archivedThreads).toEqual([]);
+          expect((yield* command(slot, ["branch", "--show-current"])).stdout).toBe("");
           return;
         }
         if (scenario === "was removed explicitly with unmerged commits") {

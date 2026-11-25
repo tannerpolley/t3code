@@ -1208,8 +1208,10 @@ const make = Effect.gen(function* () {
         slot && maintainIssueSlots && thread.linkedIssue !== undefined && issueSlots !== undefined;
       let releaseSlotBase: string | null = null;
       let preserveSlotBranch = explicit;
+      let slotBranchMerged = false;
       const workerRetainsSlot = (worker: OrchestrationV2ThreadShell) =>
-        issueWork?.workerRetainsSlot(worker.id) ?? Effect.succeed(worker.archivedAt === null);
+        issueWork?.workerRetainsSlot(worker.id, slotBranchMerged) ??
+        Effect.succeed(worker.archivedAt === null && !slotBranchMerged);
       const unbindSlot = Effect.fnUntraced(function* (preserveBranch: boolean, archive: boolean) {
         // Release the worker last so an interrupted sweep can find its remaining descendants.
         const children = Map.groupBy(
@@ -1799,7 +1801,7 @@ const make = Effect.gen(function* () {
             removalReason = "work is on the default branch";
           }
           if (
-            !eligible &&
+            (!eligible || (releaseSlot && !explicit && !deleted && thread.archivedAt === null)) &&
             remote !== null &&
             (slot || retainedIssue || settings.worktreeOnMerge) &&
             thread.branch !== null
@@ -1808,14 +1810,18 @@ const make = Effect.gen(function* () {
               { cwd: worktreePath, branch: thread.branch },
               { refresh: true, includeHeadRepository: true, useLocalBranchName: releaseSlot },
             );
-            eligible = storageCleanupPullRequestMerged(pullRequest, {
+            const merged = storageCleanupPullRequestMerged(pullRequest, {
               branch: thread.branch,
               defaultBranch: branch,
               headSha: head.commitSha,
               integrated: slot || retainedIssue ? false : integrated,
             });
-            issueMerged = retainedIssue && eligible;
-            if (eligible) removalReason = "pull request was merged";
+            slotBranchMerged = releaseSlot && merged;
+            issueMerged = retainedIssue && merged;
+            if (merged) {
+              eligible = true;
+              removalReason = "pull request was merged";
+            }
           }
           // Squash and rebase merges leave a subagent's commits off the default branch, so
           // its work counts as shipped when a parent's merged pull request head contains it.
