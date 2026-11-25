@@ -62,7 +62,6 @@ import {
   getCodexServiceTierOptionValue,
   getModelSelectionStringOptionValue,
   modelSelectionsEqual,
-  offeredCodexServiceTier,
   resolveCodexServiceTier,
   resolveSelectableModel,
 } from "@t3tools/shared/model";
@@ -922,6 +921,14 @@ function codexCyberAccess(
 function codexTierDescriptor(models: ReadonlyArray<ServerProviderModel>, model: string) {
   const slug = resolveSelectableModel(CODEX_PROVIDER, model, models);
   return getCodexServiceTierDescriptor(models.find((entry) => entry.slug === slug)?.capabilities);
+}
+
+function configuredCodexServiceTier(
+  descriptor: ReturnType<typeof codexTierDescriptor>,
+  configured: string | null | undefined,
+) {
+  const tier = configured ?? "default";
+  return resolveCodexServiceTier(descriptor, tier, null) ?? tier;
 }
 
 export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTurnStartParams")(
@@ -8082,6 +8089,15 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           );
         });
 
+        const readCodexConfig = (cwd: string | null) =>
+          client.request("config/read", { cwd, includeLayers: false }).pipe(
+            Effect.map((response) => response.config),
+            Effect.catch(() =>
+              Effect.logDebug("Codex config read failed.").pipe(Effect.as(undefined)),
+            ),
+            withAppServerDeadline("config/read"),
+          );
+
         const startNativeTurn = Effect.fn("CodexAdapterV2.startNativeTurn")(
           function* (
             turnInput: ProviderAdapter.ProviderAdapterV2TurnInput,
@@ -8095,15 +8111,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             }
             const mcpSession = yield* mcpSessions.read(turnInput.threadId);
             const models = adapterOptions.models === undefined ? [] : yield* adapterOptions.models;
-            const codexConfig = yield* client
-              .request("config/read", { cwd: turnInput.runtimePolicy.cwd, includeLayers: false })
-              .pipe(
-                Effect.map((response) => response.config),
-                Effect.catch(() =>
-                  Effect.logDebug("Codex config read failed.").pipe(Effect.as(undefined)),
-                ),
-                withAppServerDeadline("config/read"),
-              );
+            const codexConfig = yield* readCodexConfig(turnInput.runtimePolicy.cwd);
             const configuredReasoningSummary = codexConfig?.model_reasoning_summary ?? undefined;
             const selectedTier = getCodexServiceTierOptionValue(turnInput.modelSelection);
             let serviceTier = selectedTier;
@@ -8113,9 +8121,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               serviceTier = resolveCodexServiceTier(descriptor, selectedTier, defaultSpeed);
               // turn/start persists its tier, so restore the config when an override is cleared.
               if (serviceTier === undefined && codexConfig !== undefined) {
-                const configured = codexConfig.service_tier ?? "default";
-                serviceTier =
-                  offeredCodexServiceTier(descriptor?.options ?? [], configured) ?? configured;
+                serviceTier = configuredCodexServiceTier(descriptor, codexConfig.service_tier);
               }
             }
             const turnStartParams = yield* buildCodexTurnStartParams({
@@ -8447,16 +8453,38 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
         ) {
           if (adapterOptions.resolveRuntime !== undefined || modelSelection === undefined) return;
           const selectedTier = getCodexServiceTierOptionValue(modelSelection);
-          if (selectedTier === undefined) return;
-          const serviceTier =
-            adapterOptions.defaultSpeed === undefined || adapterOptions.models === undefined
-              ? selectedTier
-              : resolveCodexServiceTier(
-                  codexTierDescriptor(yield* adapterOptions.models, modelSelection.model),
-                  selectedTier,
-                  null,
-                );
-          if (serviceTier === undefined) return;
+          const active =
+            (yield* findActiveTurnByNativeThreadId(threadId)) ?? goalHolds.get(threadId)?.context;
+          if (
+            selectedTier === undefined &&
+            (active === undefined || adapterOptions.defaultSpeed === undefined)
+          ) {
+            return;
+          }
+          let serviceTier = selectedTier;
+          if (adapterOptions.defaultSpeed !== undefined) {
+            const models = adapterOptions.models === undefined ? [] : yield* adapterOptions.models;
+            const descriptor = codexTierDescriptor(models, modelSelection.model);
+            serviceTier = resolveCodexServiceTier(
+              descriptor,
+              selectedTier,
+              yield* adapterOptions.defaultSpeed,
+            );
+            if (serviceTier === undefined && active !== undefined) {
+              const config = yield* readCodexConfig(active.input.runtimePolicy.cwd).pipe(
+                Effect.orElseSucceed(() => undefined),
+              );
+              if (config !== undefined) {
+                serviceTier = configuredCodexServiceTier(descriptor, config.service_tier);
+              }
+            }
+          }
+          if (
+            serviceTier === undefined ||
+            (selectedTier === undefined &&
+              serviceTier === (active?.appliedServiceTier ?? active?.startedServiceTier))
+          )
+            return;
           const applied = yield* client
             .request("thread/settings/update", { threadId, serviceTier })
             .pipe(
@@ -8468,6 +8496,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               ),
             );
           if (!applied) return;
+          const held = goalHolds.get(threadId);
+          if (held !== undefined) held.context.appliedServiceTier = serviceTier;
           for (const turn of (yield* Ref.get(activeTurns)).values()) {
             if (turn.providerThread.nativeThreadRef?.nativeId === threadId) {
               turn.appliedServiceTier = serviceTier;

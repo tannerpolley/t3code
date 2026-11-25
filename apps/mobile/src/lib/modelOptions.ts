@@ -7,6 +7,7 @@ import { msg } from "gt-react-native";
 import { m } from "../i18n/messages";
 
 import type {
+  CodexDefaultSpeed,
   ModelCapabilities,
   ModelSelection,
   ProjectId,
@@ -44,6 +45,7 @@ export type ModelOption = {
   readonly providerKey: string;
   readonly providerLabel: string;
   readonly providerDriver: string;
+  readonly codexDefaultSpeed?: CodexDefaultSpeed | null | undefined;
   readonly supportedRuntimeModes?: ReadonlyArray<RuntimeMode>;
   readonly providerIconUrl?: string | undefined;
   readonly providerBadge?: {
@@ -397,6 +399,14 @@ export function buildModelOptions(
       continue;
     }
 
+    const instanceConfig = config?.settings?.providerInstances?.[provider.instanceId]?.config;
+    const managed =
+      typeof instanceConfig === "object" &&
+      instanceConfig !== null &&
+      "setupMode" in instanceConfig &&
+      instanceConfig.setupMode === "managed";
+    const codexDefaultSpeed =
+      provider.driver === "codex" && !managed ? config?.settings?.codexDefaultSpeed : undefined;
     const providerLabel = providerDisplayLabel(provider);
     const providerBadge = providerBadgeFor(provider.instanceId);
     const updateRequired = provider.updateRequiredModels?.length
@@ -425,6 +435,7 @@ export function buildModelOptions(
         providerKey: provider.instanceId,
         providerLabel,
         providerDriver: provider.driver,
+        ...(codexDefaultSpeed === undefined ? {} : { codexDefaultSpeed }),
         providerBadge,
         ...(provider.supportedRuntimeModes === undefined
           ? {}

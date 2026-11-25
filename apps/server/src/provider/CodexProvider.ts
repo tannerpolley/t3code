@@ -35,7 +35,7 @@ import { PREFERRED_DEFAULT_CODEX_MODELS, ServerSettingsError } from "@t3tools/co
 
 import {
   codexModelFamily,
-  offeredCodexServiceTier,
+  resolveCodexServiceTier,
   createModelCapabilities,
   formatCodexModelName,
 } from "@t3tools/shared/model";
@@ -424,7 +424,7 @@ function applyConfiguredCodexServiceTier(
 ): ReadonlyArray<ServerProviderModel> {
   if (!serviceTier) return models;
   return withConfiguredSelectDefault(models, "serviceTier", (options) =>
-    offeredCodexServiceTier(options, serviceTier),
+    resolveCodexServiceTier({ options }, serviceTier, null),
   );
 }
 

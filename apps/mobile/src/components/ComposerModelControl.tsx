@@ -27,6 +27,7 @@ export function ComposerModelControl(props: {
   const descriptors = resolveProviderOptionDescriptors({
     capabilities: props.modelOption?.capabilities,
     selections: props.selection?.options,
+    codexDefaultSpeed: props.modelOption?.codexDefaultSpeed,
   });
   const promptTraits = getPromptControlledTraits(descriptors, props.prompt);
   const summary = props.provider

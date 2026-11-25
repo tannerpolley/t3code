@@ -846,12 +846,14 @@ function codexReplayPreamble(input: {
 function withConfigReadBeforeTurnStart(
   entries: ReadonlyArray<CodexReplay.CodexAppServerReplayEntry>,
   threadName = CODEX_TEST_THREAD_TITLE,
+  turnConfig: ReadonlyArray<{ readonly service_tier?: string }> = [],
 ): Array<CodexReplay.CodexAppServerReplayEntry> {
   const result: Array<CodexReplay.CodexAppServerReplayEntry> = [];
   let offset = 0;
   let clientIds = new Map<number, number>();
   let namedThreads = new Set<unknown>();
   let transcriptReads = 0;
+  let turnIndex = 0;
   let previousOutbound: { readonly method: string; readonly id: number } | undefined;
   let failedMethod: string | undefined;
   for (const entry of entries) {
@@ -894,7 +896,7 @@ function withConfigReadBeforeTurnStart(
         exchanges.push([
           "config/read",
           { cwd: params.cwd, includeLayers: false },
-          { config: {}, origins: {} },
+          { config: turnConfig[turnIndex++] ?? {}, origins: {} },
         ]);
       }
       for (const [method, requestParams, response] of exchanges) {
@@ -931,8 +933,12 @@ function withConfigReadBeforeTurnStart(
 function withConfigReads(
   transcript: CodexReplay.CodexAppServerReplayTranscript,
   threadName?: string,
+  turnConfig?: Parameters<typeof withConfigReadBeforeTurnStart>[2],
 ): CodexReplay.CodexAppServerReplayTranscript {
-  return { ...transcript, entries: withConfigReadBeforeTurnStart(transcript.entries, threadName) };
+  return {
+    ...transcript,
+    entries: withConfigReadBeforeTurnStart(transcript.entries, threadName, turnConfig),
+  };
 }
 
 function makeCodexReplayTranscript(input: {
@@ -1737,7 +1743,9 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     promptSuggestions: Effect.Effect<boolean> = Effect.succeed(false),
     onNotification: (method: string) => Effect.Effect<void> = () => Effect.void,
     models?: CodexAdapterV2.CodexAdapterV2Options["models"],
-    speedOptions?: Pick<CodexAdapterV2.CodexAdapterV2Options, "defaultSpeed" | "resolveRuntime">,
+    speedOptions?: Pick<CodexAdapterV2.CodexAdapterV2Options, "defaultSpeed" | "resolveRuntime"> & {
+      turnConfig?: Parameters<typeof withConfigReadBeforeTurnStart>[2];
+    },
   ) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -1749,8 +1757,9 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       const continuationRequests: Array<ProviderContinuationRequests.ProviderContinuationRequest> =
         [];
       const commandStopWatchers: Array<PortScanner.AgentCommandStopWatcher> = [];
+      const { turnConfig, ...adapterSpeedOptions } = speedOptions ?? {};
       const driver = yield* CodexReplay.makeReplayDriver(
-        withConfigReads(transcript),
+        withConfigReads(transcript, undefined, turnConfig),
         beforeEmitInbound === undefined ? {} : { beforeEmitInbound },
       );
       const clientFactory: CodexAdapterV2.CodexAppServerClientFactoryShape = {
@@ -1802,7 +1811,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         clientFactory,
         ...(onUsageLimits ? { onUsageLimits } : {}),
         ...(models ? { models } : {}),
-        ...speedOptions,
+        ...adapterSpeedOptions,
         digest: yield* Digest.Digest,
         fileSystem,
         idAllocator,
@@ -4440,6 +4449,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           { speed: "fast", tier: "default", options: [{ id: "serviceTier", value: "default" }] },
           { speed: "normal", tier: "priority", options: [{ id: "serviceTier", value: "fast" }] },
           { speed: null, tier: "default", options: [] },
+          { speed: null, tier: "priority", options: [], configured: "ultrafast" },
         ] as const;
         const entries = cases.flatMap(
           ({ tier }, index): Array<CodexReplay.CodexAppServerReplayEntry> => {
@@ -4512,6 +4522,9 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           ]),
           {
             defaultSpeed: Ref.get(defaultSpeed),
+            turnConfig: cases.map((item) =>
+              "configured" in item ? { service_tier: item.configured } : {},
+            ),
             ...(managed
               ? {
                   resolveRuntime: Effect.succeed({
@@ -12715,7 +12728,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                 nativeTurnId: "goal-turn-1",
                 prompt: objective,
                 sentPrompt: `This thread's goal is already set. Do not call create_goal. Start working on it now: ${objective}`,
-                turnPolicy: { serviceTier: "default" },
+                turnPolicy: { serviceTier: "priority" },
               }).slice(5),
               5,
             ),
@@ -12730,6 +12743,12 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               turnId: "goal-turn-1",
               goal: codexGoal("active", 0),
             }),
+            ...request(
+              7,
+              "thread/settings/update",
+              { threadId: nativeThreadId, serviceTier: "default" },
+              {},
+            ),
             notification("first turn done", "turn/completed", {
               threadId: nativeThreadId,
               turn: makeCodexReplayTurn({ id: "goal-turn-1", status: "completed" }),
@@ -12749,19 +12768,49 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             }),
           ],
         });
+        const settingsApplied = yield* Deferred.make<void>();
         const harness = yield* makeCodexReplayHarness(
           transcript,
           undefined,
           undefined,
           undefined,
+          (entry) =>
+            entry.label === "first turn done" ? Deferred.await(settingsApplied) : Effect.void,
           undefined,
           undefined,
           undefined,
-          undefined,
-          undefined,
+          Effect.succeed([
+            {
+              slug: CODEX_TEST_MODEL_SELECTION.model,
+              name: "Test model",
+              isCustom: false,
+              capabilities: {
+                optionDescriptors: [
+                  {
+                    id: "serviceTier",
+                    type: "select",
+                    label: "Speed",
+                    options: [{ id: "priority", label: "Fast" }],
+                  },
+                ],
+              },
+            },
+          ]),
           { defaultSpeed: Effect.succeed("normal") },
         );
-        yield* harness.runtime.startTurn(yield* goalTurnInput(harness, `/goal ${objective}`));
+        const input = yield* goalTurnInput(harness, `/goal ${objective}`);
+        yield* harness.runtime.startTurn({
+          ...input,
+          modelSelection: {
+            ...input.modelSelection,
+            options: [{ id: "serviceTier", value: "fast" }],
+          },
+        });
+        yield* harness.runtime.applyModelSelection!({
+          providerThread: harness.providerThread,
+          modelSelection: input.modelSelection,
+        });
+        yield* Deferred.succeed(settingsApplied, undefined);
         yield* harness.firstTerminal;
 
         const idAllocator = yield* IdAllocator.IdAllocatorV2;
@@ -12798,7 +12847,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               : [],
           ),
           [
-            [providerTurnId("goal-turn-1"), "default"],
+            [providerTurnId("goal-turn-1"), "priority"],
             [providerTurnId("goal-turn-2"), "default"],
           ],
         );

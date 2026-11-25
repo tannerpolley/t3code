@@ -123,6 +123,37 @@ describe("prompt-controlled reasoning", () => {
     ).toEqual({ prompt: "solve it", modelOptions: [{ id: "effort", value: "ultracode" }] });
   });
 
+  it("shows the effective environment speed while leaving an explicit speed in control", () => {
+    const capabilities = {
+      optionDescriptors: [
+        {
+          id: "serviceTier",
+          type: "select" as const,
+          label: "Speed",
+          options: [
+            { id: "default", label: "Standard" },
+            { id: "priority", label: "Fast" },
+          ],
+          currentValue: "default",
+        },
+      ],
+    };
+    expect(
+      resolveProviderOptionDescriptors({
+        capabilities,
+        selections: undefined,
+        codexDefaultSpeed: "fast",
+      })[0]?.currentValue,
+    ).toBe("priority");
+    expect(
+      resolveProviderOptionDescriptors({
+        capabilities,
+        selections: [{ id: "serviceTier", value: "default" }],
+        codexDefaultSpeed: "fast",
+      })[0]?.currentValue,
+    ).toBe("default");
+  });
+
   it("saves reasoning without pinning the Codex catalog's speed", () => {
     const reasoningChange = [
       { id: "reasoningEffort", value: "high" },

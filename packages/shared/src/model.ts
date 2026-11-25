@@ -211,7 +211,7 @@ export function getCodexServiceTierDescriptor(caps: ModelCapabilities | null | u
 }
 
 export function resolveCodexServiceTier(
-  descriptor: ReturnType<typeof getCodexServiceTierDescriptor>,
+  descriptor: { readonly options: ReadonlyArray<{ readonly id: string }> } | undefined,
   explicitTier: string | undefined,
   defaultSpeed: CodexDefaultSpeed | null | undefined,
 ): string | undefined {
@@ -227,6 +227,20 @@ export function resolveCodexServiceTier(
     (speed === "normal" ? undefined : offeredCodexServiceTier(options, "fast")) ??
     "default"
   );
+}
+
+export function withEffectiveCodexSpeed(
+  descriptors: ReadonlyArray<ProviderOptionDescriptor>,
+  selections: ReadonlyArray<ProviderOptionSelection> | null | undefined,
+  codexDefaultSpeed: CodexDefaultSpeed | null | undefined,
+): ReadonlyArray<ProviderOptionDescriptor> {
+  if (codexDefaultSpeed === undefined) return descriptors;
+  const explicit = getCodexServiceTierOptionValue({ options: selections ?? [] });
+  return descriptors.map((descriptor) => {
+    if (descriptor.type !== "select" || descriptor.id !== "serviceTier") return descriptor;
+    const tier = resolveCodexServiceTier(descriptor, explicit, codexDefaultSpeed);
+    return tier === undefined ? descriptor : { ...descriptor, currentValue: tier };
+  });
 }
 
 function resolveDescriptorChoiceValue(

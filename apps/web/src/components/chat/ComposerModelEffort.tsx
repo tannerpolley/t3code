@@ -6,11 +6,7 @@ import {
 } from "@t3tools/client-runtime/model-traits";
 import type { ProviderOptionDescriptor, RuntimeMode } from "@t3tools/contracts";
 import type { EffortDisplay } from "@t3tools/contracts/settings";
-import {
-  getCodexServiceTierOptionValue,
-  getProviderOptionCurrentLabel,
-  resolveCodexServiceTier,
-} from "@t3tools/shared/model";
+import { getProviderOptionCurrentLabel, withEffectiveCodexSpeed } from "@t3tools/shared/model";
 import { msg, T, useGT, useMessages } from "gt-react";
 import { CheckIcon, ChevronRightIcon, ChevronUpIcon, WorkflowIcon } from "lucide-react";
 import { type KeyboardEvent, type ReactNode, use, useRef, useState } from "react";
@@ -101,21 +97,11 @@ export function describeComposerEffort(
       ? { instanceId: traits.instanceId, model: traits.model, options: traits.modelOptions ?? [] }
       : null;
   const primary = visibility.primarySelectDescriptor;
-  const descriptors = visibility.descriptors.map((descriptor) => {
-    if (
-      traits.codexDefaultSpeed === undefined ||
-      descriptor.id !== "serviceTier" ||
-      descriptor.type !== "select"
-    ) {
-      return descriptor;
-    }
-    const tier = resolveCodexServiceTier(
-      descriptor,
-      getCodexServiceTierOptionValue(modelSelection),
-      traits.codexDefaultSpeed,
-    );
-    return tier === undefined ? descriptor : { ...descriptor, currentValue: tier };
-  });
+  const descriptors = withEffectiveCodexSpeed(
+    visibility.descriptors,
+    traits.modelOptions,
+    traits.codexDefaultSpeed,
+  );
   const display = buildTraitsTriggerDisplay(
     {
       descriptors,

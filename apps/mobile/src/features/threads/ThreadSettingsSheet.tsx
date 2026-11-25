@@ -2,7 +2,7 @@ import {
   getPromptControlledTraits,
   getTraitSelectChange,
 } from "@t3tools/client-runtime/model-traits";
-import { T, useGT, useLocale, useMessages } from "gt-react-native";
+import { msg, T, useGT, useLocale, useMessages } from "gt-react-native";
 import * as Dialog from "../../components/ui/Dialog";
 import { createV5StackNavigator as createNativeStackNavigator } from "../../native/createV5StackNavigator";
 import { useSheetStackOptions } from "../layout/nested-stacks";
@@ -27,7 +27,10 @@ import { AnimatedLegendList } from "@legendapp/list/reanimated";
 import {
   getProviderOptionCurrentLabel,
   getProviderOptionCurrentValue,
+  getCodexServiceTierOptionValue,
+  withoutCodexSpeed,
   modelSelectionWithoutCodexSpeed,
+  withEffectiveCodexSpeed,
 } from "@t3tools/shared/model";
 import {
   useNavigation,
@@ -74,8 +77,10 @@ import {
   withStoredThreadModelOptions,
 } from "../../lib/modelOptions";
 import { groupModelsBySubProvider } from "@t3tools/client-runtime/providerSubProviders";
-import { applyProviderOptionSelection } from "../../lib/providerOptions";
-import { resolveProviderOptionDescriptors } from "../../lib/providerOptions";
+import {
+  applyProviderOptionSelection,
+  resolveProviderOptionDescriptors,
+} from "../../lib/providerOptions";
 import {
   rememberModelOptions,
   withRememberedModelOptions,
@@ -338,6 +343,8 @@ type ThreadSettingsSessionValue = {
   readonly providerFilter: string | null;
   readonly searchQuery: string;
   readonly showLegacy: boolean;
+  readonly clearCodexSpeed: (() => void) | undefined;
+  readonly hasExplicitCodexSpeed: boolean;
   readonly applyOptionChange: (id: string, value: string | boolean) => void;
   readonly commitPendingModel: () => boolean;
   readonly isApplied: (option: ModelOption) => boolean;
@@ -526,17 +533,24 @@ function ThreadSettingsSessionProvider(
   const isDisplayed = (option: ModelOption) =>
     pendingModel ? option.key === pendingModel.key : isApplied(option);
 
-  const displayedDescriptors = pendingModel
+  const descriptors = pendingModel
     ? resolveProviderOptionDescriptors({
         capabilities: pendingModel.capabilities,
         selections: pendingModel.selection.options,
       })
     : props.optionDescriptors;
-  const promptTraits = getPromptControlledTraits(displayedDescriptors, displayedPrompt);
   const displayedModel =
     pendingModel ??
     props.providerGroups.flatMap((group) => group.models).find((option) => isApplied(option)) ??
     null;
+  const displayedModelSelection = pendingModel?.selection ?? props.selectedModel;
+  const codexDefaultSpeed = displayedModel?.codexDefaultSpeed;
+  const displayedDescriptors = withEffectiveCodexSpeed(
+    descriptors,
+    displayedModelSelection?.options,
+    codexDefaultSpeed,
+  );
+  const promptTraits = getPromptControlledTraits(displayedDescriptors, displayedPrompt);
   const runtimeModeChoices = withManagedRuntimeModeLimits(
     runtimeModeChoicesForSupportedModes(displayedModel?.supportedRuntimeModes),
     [config?.managedPolicy],
@@ -566,6 +580,18 @@ function ThreadSettingsSessionProvider(
       }
     }
     return true;
+  };
+
+  const commitOptions = (next: ReadonlyArray<ProviderOptionSelection>) => {
+    if (pendingModel) {
+      rememberModelOptions(pendingModel.selection.instanceId, pendingModel.selection.model, next);
+      setPendingModel({
+        ...pendingModel,
+        selection: { ...pendingModel.selection, options: next },
+      });
+    } else {
+      props.onUpdateOptionSelections(next);
+    }
   };
 
   const applyOptionChange = (id: string, value: string | boolean) => {
@@ -599,15 +625,7 @@ function ThreadSettingsSessionProvider(
       displayedModel?.providerDriver,
       id,
     );
-    if (pendingModel) {
-      rememberModelOptions(pendingModel.selection.instanceId, pendingModel.selection.model, next);
-      setPendingModel({
-        ...pendingModel,
-        selection: { ...pendingModel.selection, options: next },
-      });
-    } else {
-      props.onUpdateOptionSelections(next);
-    }
+    commitOptions(next);
   };
 
   const toggleProvider = (providerKey: string) => {
@@ -659,7 +677,7 @@ function ThreadSettingsSessionProvider(
     onUpdateRuntimeMode: props.onUpdateRuntimeMode,
     displayedDescriptors,
     promptTraits,
-    displayedModelSelection: pendingModel?.selection ?? props.selectedModel,
+    displayedModelSelection,
     reportedModelSelection: pendingModel ? null : (props.reportedModelSelection ?? null),
     favoriteKeys,
     favoritesLoaded,
@@ -670,6 +688,11 @@ function ThreadSettingsSessionProvider(
     providerFilter,
     searchQuery,
     showLegacy: showLegacyToggle,
+    clearCodexSpeed:
+      codexDefaultSpeed === undefined
+        ? undefined
+        : () => commitOptions(withoutCodexSpeed(displayedModelSelection?.options) ?? []),
+    hasExplicitCodexSpeed: getCodexServiceTierOptionValue(displayedModelSelection) !== undefined,
     applyOptionChange,
     commitPendingModel,
     isApplied,
@@ -1013,7 +1036,9 @@ function ThreadSettingsOptionsItem(props: {
                       : getProviderOptionCurrentLabel(
                           descriptor,
                           session.displayedModelSelection,
-                          session.reportedModelSelection,
+                          descriptor.id === "serviceTier" && session.clearCodexSpeed
+                            ? null
+                            : session.reportedModelSelection,
                         )
                   }
                   onPress={() => props.onOpenSubmenu({ kind: "descriptor", id: descriptor.id })}
@@ -1230,6 +1255,9 @@ function ThreadSettingsChoiceContent(props: {
         )
       : undefined;
 
+  const clearCodexSpeed =
+    activeDescriptor?.id === "serviceTier" ? session.clearCodexSpeed : undefined;
+
   const submenuContent =
     props.submenu.kind === "runtime"
       ? {
@@ -1248,39 +1276,58 @@ function ThreadSettingsChoiceContent(props: {
         }
       : activeDescriptor?.type === "select"
         ? {
-            rows: selectableChoices(activeDescriptor).map((choice) => ({
-              id: choice.id,
-              label: choice.label,
-              description: choice.description,
-              disabled: false,
-              selected:
-                choice.id ===
-                (session.promptTraits.ultrathinkPromptControlled &&
-                activeDescriptor.id === session.promptTraits.primarySelectDescriptor?.id
-                  ? "ultrathink"
-                  : getProviderOptionCurrentValue(
-                      activeDescriptor,
-                      session.displayedModelSelection,
-                      session.reportedModelSelection,
-                    )),
-              onPress: () => {
-                void Haptics.selectionAsync();
-                if (
-                  session.promptTraits.ultrathinkInBodyText &&
-                  activeDescriptor.id === session.promptTraits.primarySelectDescriptor?.id
-                ) {
-                  Dialog.alert(
-                    gt("Reasoning controlled by prompt"),
-                    gt(
-                      'Your prompt contains "ultrathink" in the text. Remove it to change this option.',
-                    ),
-                  );
-                  return;
-                }
-                session.applyOptionChange(activeDescriptor.id, choice.id);
-                props.onSelected();
-              },
-            })),
+            rows: [
+              ...(clearCodexSpeed
+                ? [
+                    {
+                      id: "t3:codex-default",
+                      label: m(msg("Use default")),
+                      description: undefined,
+                      disabled: false,
+                      selected: !session.hasExplicitCodexSpeed,
+                      onPress: () => {
+                        void Haptics.selectionAsync();
+                        clearCodexSpeed();
+                        props.onSelected();
+                      },
+                    },
+                  ]
+                : []),
+              ...selectableChoices(activeDescriptor).map((choice) => ({
+                id: choice.id,
+                label: choice.label,
+                description: choice.description,
+                disabled: false,
+                selected:
+                  (!clearCodexSpeed || session.hasExplicitCodexSpeed) &&
+                  choice.id ===
+                    (session.promptTraits.ultrathinkPromptControlled &&
+                    activeDescriptor.id === session.promptTraits.primarySelectDescriptor?.id
+                      ? "ultrathink"
+                      : getProviderOptionCurrentValue(
+                          activeDescriptor,
+                          session.displayedModelSelection,
+                          session.reportedModelSelection,
+                        )),
+                onPress: () => {
+                  void Haptics.selectionAsync();
+                  if (
+                    session.promptTraits.ultrathinkInBodyText &&
+                    activeDescriptor.id === session.promptTraits.primarySelectDescriptor?.id
+                  ) {
+                    Dialog.alert(
+                      gt("Reasoning controlled by prompt"),
+                      gt(
+                        'Your prompt contains "ultrathink" in the text. Remove it to change this option.',
+                      ),
+                    );
+                    return;
+                  }
+                  session.applyOptionChange(activeDescriptor.id, choice.id);
+                  props.onSelected();
+                },
+              })),
+            ],
           }
         : null;
 

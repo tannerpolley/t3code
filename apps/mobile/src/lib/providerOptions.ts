@@ -1,4 +1,5 @@
 import type {
+  CodexDefaultSpeed,
   ModelCapabilities,
   ModelSelection,
   ProviderInstanceId,
@@ -9,20 +10,23 @@ import type {
 import {
   buildProviderOptionSelectionsFromDescriptors,
   getProviderOptionDescriptors,
+  withEffectiveCodexSpeed,
   withImplicitFastModeDefault,
 } from "@t3tools/shared/model";
 
 export function resolveProviderOptionDescriptors(input: {
   readonly capabilities: ModelCapabilities | null | undefined;
   readonly selections: ReadonlyArray<ProviderOptionSelection> | null | undefined;
+  readonly codexDefaultSpeed?: CodexDefaultSpeed | null | undefined;
 }): ReadonlyArray<ProviderOptionDescriptor> {
   if (!input.capabilities) {
     return [];
   }
-  return getProviderOptionDescriptors({
+  const descriptors = getProviderOptionDescriptors({
     caps: input.capabilities,
     selections: withImplicitFastModeDefault(input.capabilities, input.selections),
   });
+  return withEffectiveCodexSpeed(descriptors, input.selections, input.codexDefaultSpeed);
 }
 
 /** Spells out the Fast off the picker shows, or a provider such as Cursor applies its own default. */
