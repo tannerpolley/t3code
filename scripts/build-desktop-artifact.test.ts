@@ -628,7 +628,7 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
       const raw = yield* fs.readFileString(
         path.join(import.meta.dirname, "..", updaterMetadata!.from),
       );
-      const config = yield* Schema.decodeUnknownEffect(
+      const config = yield* Schema.decodeEffect(
         fromYaml(Schema.Record(Schema.String, Schema.String)),
       )(raw);
       assert.deepEqual(config, { updaterCacheDirName: "t3code-updater" });

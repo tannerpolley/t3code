@@ -16,14 +16,10 @@ class ForkStagedUpdateChangedError extends Schema.TaggedError<ForkStagedUpdateCh
   {},
 ) {}
 
-class ForkLauncherNotExecutableError extends Schema.TaggedError<ForkLauncherNotExecutableError>()(
-  "ForkLauncherNotExecutableError",
-  { launcher: Schema.String },
-) {
-  override get message() {
-    return `The staged update launcher is not executable: ${this.launcher}`;
-  }
-}
+class ForkStagedUpdatePreflightError extends Schema.TaggedError<ForkStagedUpdatePreflightError>()(
+  "ForkStagedUpdatePreflightError",
+  { message: Schema.String, cause: Schema.optional(Schema.Defect()) },
+) {}
 
 const dottedVersion = /^\d+(?:\.\d+)*$/;
 const { logWarning } = makeComponentLogger("desktop-fork-staged-updates");
@@ -126,10 +122,22 @@ export const make = Effect.gen(function* () {
     install: Effect.fn("desktop.forkStagedUpdates.install")(function* (
       expectedVersion: string | null,
     ) {
-      const version = yield* detect();
+      const version = yield* detect().pipe(
+        Effect.mapError(
+          (cause) =>
+            new ForkStagedUpdatePreflightError({
+              message: "Could not read the staged AppImage.",
+              cause,
+            }),
+        ),
+      );
       if (version === null || version !== expectedVersion)
         return yield* new ForkStagedUpdateChangedError();
-      const notExecutable = () => new ForkLauncherNotExecutableError({ launcher });
+      const notExecutable = (cause?: unknown) =>
+        new ForkStagedUpdatePreflightError({
+          message: `The staged update launcher is not executable: ${launcher}`,
+          cause,
+        });
       const info = yield* fs.stat(launcher).pipe(Effect.mapError(notExecutable));
       if (info.type !== "File") return yield* notExecutable();
       yield* Effect.tryPromise({

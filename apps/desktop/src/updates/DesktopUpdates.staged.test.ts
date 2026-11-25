@@ -108,9 +108,10 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("staged AppImag
     { scenario: "replaced" },
     { scenario: "removed" },
     { scenario: "non-executable" },
+    { scenario: "unreadable" },
   ])("revalidates the staged handoff before quitting ($scenario)", ({ scenario }) =>
     Effect.gen(function* () {
-      const { fs, launcher, handoff, harness, image, stage } = yield* fixture;
+      const { fs, pending, launcher, handoff, harness, image, stage } = yield* fixture;
       yield* stage(offered);
       if (scenario !== "non-executable") yield* fs.chmod(launcher, 0o700);
       yield* Effect.gen(function* () {
@@ -121,6 +122,10 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("staged AppImag
         const replacement = "0.1.0-v2.12.11";
         if (scenario === "replaced") yield* stage(replacement);
         if (scenario === "removed") yield* fs.remove(image(offered));
+        if (scenario === "unreadable") {
+          yield* fs.rename(pending, `${pending}-original`);
+          yield* fs.writeFileString(pending, "The staged directory is no longer readable.");
+        }
 
         const result = yield* updates.installPrepared(offered);
         if (scenario === "ready") {
@@ -132,8 +137,13 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("staged AppImag
           ]);
           assert.isTrue(yield* Ref.get(state.quitting));
         } else {
-          assert.equal(result.failed, scenario === "non-executable");
-          assert.equal(result.accepted, scenario === "non-executable");
+          const failed = scenario === "non-executable" || scenario === "unreadable";
+          assert.equal(result.failed, failed);
+          assert.equal(result.accepted, failed);
+          if (scenario === "unreadable") {
+            assert.equal(result.state.errorContext, "install");
+            assert.include(result.state.message ?? "", "Could not read the staged AppImage");
+          }
           assert.equal(
             result.state.downloadedVersion,
             scenario === "removed" ? null : scenario === "replaced" ? replacement : offered,

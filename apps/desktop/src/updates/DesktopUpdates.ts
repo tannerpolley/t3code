@@ -1003,8 +1003,14 @@ export const make = Effect.gen(function* () {
                 Effect.andThen(checkForUpdates("staged-build-changed")),
                 Effect.as({ accepted: false, completed: false, failed: false }),
               ),
-            ForkLauncherNotExecutableError: (error) =>
+            ForkStagedUpdatePreflightError: (error) =>
               recoverFailedInstall(error.message).pipe(
+                Effect.andThen(
+                  logUpdaterError(error.message, {
+                    errorTag: error._tag,
+                    cause: describeUpdateErrorCause(error.cause),
+                  }),
+                ),
                 Effect.as({ accepted: true, completed: false, failed: true }),
               ),
             ElectronUpdaterQuitAndInstallError: Effect.fn("desktop.updates.handleInstallFailure")(
