@@ -1,5 +1,6 @@
 import {
   type CodexDefaultSpeed,
+  type CodexRoleSpeed,
   type CustomModelSetting,
   MODEL_SLUG_ALIASES_BY_PROVIDER,
   ModelCapabilities,
@@ -181,27 +182,43 @@ export function getCodexServiceTierOptionValue(
   );
 }
 
+export function codexRoleSpeedFromSelection(selection: ModelSelection): CodexRoleSpeed | undefined {
+  const tier = getCodexServiceTierOptionValue(selection);
+  return tier === undefined
+    ? undefined
+    : { instanceId: selection.instanceId, model: selection.model, tier };
+}
+
+export function codexRoleTierForModel(
+  speed: CodexRoleSpeed | undefined,
+  selection: Pick<ModelSelection, "instanceId" | "model"> | null | undefined,
+  catalog: ReadonlyArray<SelectableModelOption>,
+) {
+  if (!speed || !selection || speed.instanceId !== selection.instanceId) return undefined;
+  const model = resolveSelectableModel(DEFAULT_PROVIDER_DRIVER_KIND, selection.model, catalog);
+  return speed.model === selection.model ||
+    (model !== null &&
+      model === resolveSelectableModel(DEFAULT_PROVIDER_DRIVER_KIND, speed.model, catalog))
+    ? speed.tier
+    : undefined;
+}
+
 export function resolveCodexSpeed(input: {
-  descriptor?: Pick<SelectProviderOptionDescriptor, "options" | "currentValue"> | undefined;
+  descriptor?: Pick<SelectProviderOptionDescriptor, "options"> | undefined;
   threadTier?: string | undefined;
   roleTier?: string | undefined;
   defaultSpeed?: CodexDefaultSpeed | null | undefined;
-  /** The effective CLI tier for the working directory. An omitted value uses the catalog snapshot. */
-  configuredTier?: string | null | undefined;
   /** A completed or running turn keeps the tier already used, even if the catalog changes. */
   recordedTier?: string | null | undefined;
-}): { tier: string; speed: "standard" | "fast" | "ultrafast" | undefined } {
+}): { tier: string | undefined; speed: "standard" | "fast" | "ultrafast" | undefined } {
   const options = input.descriptor?.options ?? [];
   const offered = (tier: string | null | undefined) => offeredCodexServiceTier(options, tier);
-  const nativeTier = options.find((option) => option.isDefault)?.id;
-  const configuredTier =
-    input.configuredTier === undefined ? input.descriptor?.currentValue : input.configuredTier;
   const tier =
     input.recordedTier ??
     offered(input.threadTier) ??
     offered(input.roleTier) ??
     (input.defaultSpeed == null
-      ? (offered(configuredTier) ?? offered(nativeTier) ?? "default")
+      ? undefined
       : input.defaultSpeed === "normal"
         ? "default"
         : ((input.defaultSpeed === "ultrafast" ? offered("ultrafast") : undefined) ??

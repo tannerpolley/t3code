@@ -62,6 +62,7 @@ import {
   dynamicToolTitle,
 } from "@t3tools/shared/toolActivity";
 import {
+  codexRoleTierForModel,
   getCodexServiceTierDescriptor,
   getCodexServiceTierOptionValue,
   getModelSelectionStringOptionValue,
@@ -978,7 +979,7 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
     readonly orchestration?: McpProviderSession.McpOrchestrationPolicy;
     /** ChatGPT token sharing does not accept service tiers. */
     readonly omitServiceTier?: boolean;
-    readonly serviceTier?: string | undefined;
+    readonly serviceTier?: string | null | undefined;
     readonly appContext?: ProviderAdapter.ProviderAdapterV2TurnInput["appContext"];
     /** Set only for a model that offers Cyber Access; custom models never do. */
     readonly cyberAccess?: { readonly defaultProgram: string | undefined } | undefined;
@@ -1012,7 +1013,9 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
     const serviceTier =
       input.omitServiceTier === true
         ? undefined
-        : (input.serviceTier ?? getCodexServiceTierOptionValue(input.modelSelection));
+        : input.serviceTier === null
+          ? undefined
+          : (input.serviceTier ?? getCodexServiceTierOptionValue(input.modelSelection));
     // A chosen program goes as is, even one the model lacks, so Codex rejects it visibly.
     const cyberAccessProgram =
       input.cyberAccess === undefined
@@ -5769,6 +5772,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 threadId: goalHold.context.projectionThreadId,
                 providerTurn: goalHold.completedTurn,
               });
+              // shortcut: Codex starts goal continuations using its current settings before T3 can choose a tier.
               const next = yield* registerRootTurn({
                 turnInput: {
                   ...goalHold.context.input,
@@ -8423,14 +8427,16 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           const serviceTier =
             adapterOptions.defaultSpeed === undefined
               ? undefined
-              : resolveCodexSpeed({
+              : (resolveCodexSpeed({
                   descriptor: codexServiceTierDescriptor(models, turnInput.modelSelection.model),
-                  // A worker's selected role options seed its saved model selection.
                   threadTier: getCodexServiceTierOptionValue(turnInput.modelSelection),
+                  roleTier: codexRoleTierForModel(
+                    turnInput.appThread.codexRoleSpeed,
+                    turnInput.modelSelection,
+                    models,
+                  ),
                   defaultSpeed,
-                  configuredTier:
-                    codexConfig === undefined ? undefined : (codexConfig.service_tier ?? null),
-                }).tier;
+                }).tier ?? null);
           const configuredReasoningSummary = codexConfig?.model_reasoning_summary ?? undefined;
           const turnStartParams = yield* buildCodexTurnStartParams({
             cyberAccess: codexCyberAccess(models, turnInput.modelSelection.model),

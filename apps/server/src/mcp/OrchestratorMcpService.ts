@@ -77,6 +77,7 @@ import {
   SECRET_REQUEST_UNSAVED_NOTE,
 } from "@t3tools/contracts";
 import {
+  codexRoleSpeedFromSelection,
   getProviderOptionCurrentValue,
   withLegacyUltracodeEffort,
   withoutCodexSpeed,
@@ -3170,6 +3171,10 @@ const make = Effect.gen(function* () {
               });
             })
           : undefined;
+      const codexRoleSpeed =
+        roleDefault !== undefined && target.driver === "codex"
+          ? codexRoleSpeedFromSelection(target.modelSelection)
+          : undefined;
       const taskCommand = {
         type: "delegated_task.request",
         ...(linkedIssue === undefined ? {} : { issue: linkedIssue }),
@@ -3185,6 +3190,7 @@ const make = Effect.gen(function* () {
         ...(input.enableTools === undefined ? {} : { enableTools: input.enableTools }),
         ...(input.title === undefined ? {} : { title: input.title }),
         modelSelection: target.modelSelection,
+        ...(codexRoleSpeed === undefined ? {} : { codexRoleSpeed }),
         runtimeMode,
         interactionMode,
         // Managed issue results advance repository work and can unlock other issues.

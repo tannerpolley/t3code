@@ -1,6 +1,8 @@
 import type { CodexDefaultSpeed } from "@t3tools/contracts";
 import { msg } from "gt-react";
 
+export const CODEX_DEFAULT_SPEED_LABEL = msg("Codex default");
+
 export const CODEX_SPEED_LABELS = {
   normal: msg("Normal", { $context: "model speed tier" }),
   fast: msg("Fast", { $context: "response speed" }),

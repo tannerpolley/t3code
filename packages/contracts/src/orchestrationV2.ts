@@ -150,6 +150,13 @@ export type OrchestrationV2LinkOrigin = typeof OrchestrationV2LinkOrigin.Type;
 export const linkOriginIsFenced = (origin: OrchestrationV2LinkOrigin) =>
   origin.access !== "full-access";
 
+const CodexRoleSpeed = Schema.Struct({
+  instanceId: ProviderInstanceId,
+  model: TrimmedNonEmptyString,
+  tier: TrimmedNonEmptyString,
+});
+export type CodexRoleSpeed = typeof CodexRoleSpeed.Type;
+
 /**
  * The thread in a linked environment that delegated this one, when it did:
  * this thread is that parent's subagent, run here instead of there.
@@ -585,6 +592,7 @@ export const OrchestrationV2AppThread = Schema.Struct({
   title: TrimmedNonEmptyString,
   providerInstanceId: ProviderInstanceId,
   modelSelection: ModelSelection,
+  codexRoleSpeed: Schema.optional(CodexRoleSpeed),
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
   branch: Schema.NullOr(GitRefName),
@@ -3671,6 +3679,7 @@ export const OrchestrationV2Command = Schema.Union([
     title: TrimmedNonEmptyString,
     titleRenamed: Schema.optional(Schema.Boolean),
     modelSelection: ModelSelection,
+    codexRoleSpeed: Schema.optional(CodexRoleSpeed),
     runtimeMode: RuntimeMode,
     interactionMode: ProviderInteractionMode,
     branch: Schema.NullOr(GitRefName),
@@ -4190,6 +4199,7 @@ export const OrchestrationV2Command = Schema.Union([
     task: TrimmedNonEmptyString,
     title: Schema.optional(TrimmedNonEmptyString),
     modelSelection: ModelSelection,
+    codexRoleSpeed: Schema.optional(CodexRoleSpeed),
     runtimeMode: RuntimeMode,
     interactionMode: ProviderInteractionMode,
     workspaceStrategy: Schema.optional(OrchestrationV2ThreadLaunchWorkspaceStrategy),

@@ -13751,7 +13751,7 @@
   "7b44f2dcd82a0ea1": "Diese Sitzung hat keine Berechtigung, Anbieter auf {environment} zu verwalten.",
   "7aa202a739c5f90d": "Gilt ab dem nächsten Zug für Codex-Threads und Worker mit der Standardeinstellung. Modelle verwenden die schnellste verfügbare Stufe bis zur gewählten Geschwindigkeit.",
   "e2a5cf66eeec090e": "Standardgeschwindigkeit",
-  "d19249179ab508d3": "Codex-Konfiguration verwenden",
   "afecbf6b765a2fb0": "Ultraschnell",
-  "3c8f3dd37881c169": "Codex Geschwindigkeit Standard schnell ultraschnell Dienststufe"
+  "3c8f3dd37881c169": "Codex Geschwindigkeit Standard schnell ultraschnell Dienststufe",
+  "1becfb4db7ffe135": "Codex-Standard"
 }

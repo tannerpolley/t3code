@@ -45,9 +45,9 @@ it.each<{
     expected: { tier: "ultrafast", speed: "ultrafast" },
   },
   {
-    name: "unsupported project CLI tier falls back to native Normal despite a Fast home snapshot",
-    input: { descriptor: fastDescriptor, configuredTier: "ultrafast" },
-    expected: { tier: "default", speed: "standard" },
+    name: "leaves the tier to Codex when T3 is unset, even with a Fast catalog default",
+    input: { descriptor: fastDescriptor },
+    expected: { tier: undefined, speed: undefined },
   },
   {
     name: "advertised model with no controls still has Normal speed",
@@ -55,29 +55,27 @@ it.each<{
     expected: { tier: "default", speed: "standard" },
   },
   {
-    name: "Normal thread choice outranks the role, environment, and CLI",
+    name: "Normal thread choice outranks the role and environment",
     input: {
       descriptor: fastDescriptor,
       threadTier: "default",
       roleTier: "fast",
       defaultSpeed: "ultrafast",
-      configuredTier: "priority",
     },
     expected: { tier: "default", speed: "standard" },
   },
   {
-    name: "Fast role alias outranks the environment and CLI",
+    name: "clearing a thread choice restores its Fast role over the environment",
     input: {
       descriptor: fastDescriptor,
       roleTier: "fast",
       defaultSpeed: "normal",
-      configuredTier: "default",
     },
     expected: { tier: "priority", speed: "fast" },
   },
   {
     name: "Ultra fast falls back to Fast on the model",
-    input: { descriptor: fastDescriptor, defaultSpeed: "ultrafast", configuredTier: "default" },
+    input: { descriptor: fastDescriptor, defaultSpeed: "ultrafast" },
     expected: { tier: "priority", speed: "fast" },
   },
   {

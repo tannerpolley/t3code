@@ -41,7 +41,7 @@ on the selected environment and applies on the next turn. A thread or worker wit
 its own speed keeps that choice. Models fall back from Ultra fast to Fast, then
 to Normal, according to the speeds they support.
 
-Choose **Use Codex config** to follow the default in your Codex CLI configuration.
+Choose **Codex default** to let Codex apply its own configuration.
 
 ## Allow more time for provider checks
 

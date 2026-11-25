@@ -13744,7 +13744,7 @@
   "7b44f2dcd82a0ea1": "Esta sesión no tiene permiso para gestionar proveedores en {environment}.",
   "7aa202a739c5f90d": "Se aplica en el siguiente turno a los hilos y agentes de Codex que usan la velocidad predeterminada. Los modelos usan la velocidad más rápida disponible hasta la que elijas.",
   "e2a5cf66eeec090e": "Velocidad predeterminada",
-  "d19249179ab508d3": "Usar la configuración de Codex",
   "afecbf6b765a2fb0": "Ultrarrápida",
-  "3c8f3dd37881c169": "Codex velocidad normal rápida ultrarrápida nivel de servicio"
+  "3c8f3dd37881c169": "Codex velocidad normal rápida ultrarrápida nivel de servicio",
+  "1becfb4db7ffe135": "Predeterminado de Codex"
 }

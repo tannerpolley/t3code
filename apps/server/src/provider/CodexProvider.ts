@@ -38,7 +38,6 @@ import {
   codexModelFamily,
   createModelCapabilities,
   formatCodexModelName,
-  resolveCodexSpeed,
 } from "@t3tools/shared/model";
 import { resolveSpawnCommand } from "@t3tools/shared/shell";
 import { codexAppServerArgs, resolveCodexLaunchArgs } from "./codexLaunchArgs.ts";
@@ -163,7 +162,6 @@ export interface CodexAppServerProviderSnapshot {
   readonly rateLimits?: CodexRateLimitsProbe;
   readonly version: string | undefined;
   readonly models: ReadonlyArray<ServerProviderModel> | undefined;
-  readonly serviceTier?: string | undefined;
   /** Undefined when `config/read` failed, so T3 cannot know Codex's default program. */
   readonly daybreakEnabled?: boolean | undefined;
   readonly cyberAccessProgramsUnavailable?: boolean | undefined;
@@ -415,28 +413,6 @@ function withConfiguredSelectDefault(
         options: descriptor.options.map(({ isDefault: _isDefault, ...option }) =>
           option.id === value ? { ...option, isDefault: true } : option,
         ),
-      };
-    }),
-  );
-}
-
-function applyConfiguredCodexServiceTier(
-  models: ReadonlyArray<ServerProviderModel>,
-  serviceTier: string | undefined,
-): ReadonlyArray<ServerProviderModel> {
-  return mapCodexOptionDescriptors(models, (descriptors) =>
-    descriptors.map((descriptor) => {
-      if (descriptor.id !== "serviceTier" || descriptor.type !== "select") return descriptor;
-      const options = descriptor.options.some((option) => option.isDefault)
-        ? descriptor.options
-        : descriptor.options.map((option) =>
-            option.id === descriptor.currentValue ? { ...option, isDefault: true } : option,
-          );
-      return {
-        ...descriptor,
-        options,
-        currentValue: resolveCodexSpeed({ descriptor: { options }, configuredTier: serviceTier })
-          .tier,
       };
     }),
   );
@@ -986,7 +962,6 @@ const probeCodexAppServerProvider = Effect.fn("probeCodexAppServerProvider")(fun
           ),
     skills: skillsAndPlugins.skills,
     ...(skillsAndPlugins.plugins ? { plugins: skillsAndPlugins.plugins } : {}),
-    serviceTier: config?.service_tier ?? undefined,
     daybreakEnabled: config === undefined ? undefined : cyberAccess?.daybreak === true,
     // An unread config cannot rule out an API key with the programs turned off.
     cyberAccessProgramsUnavailable:
@@ -1323,7 +1298,6 @@ export const checkCodexProviderStatus = Effect.fn("checkCodexProviderStatus")(fu
     models: pipe(
       appendCustomCodexModels(snapshot.models ?? [], codexSettings.customModels),
       applyPreferredCodexDefaultModel,
-      (models) => applyConfiguredCodexServiceTier(models, snapshot.serviceTier),
       (models) => applyConfiguredCodexCyberAccess(models, snapshot),
     ),
     skills: snapshot.skills,

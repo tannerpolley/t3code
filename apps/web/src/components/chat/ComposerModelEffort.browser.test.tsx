@@ -101,6 +101,7 @@ it("shows Normal for a Codex model with no selectable traits", async () => {
   await using screen = await render(<p role="status">{display.suffix}</p>, { router: false }); // no routes involved
   await expect.element(screen.getByRole("status")).toHaveTextContent("Normal");
   expect(display.detail).toBe("Normal");
+  expect(describeComposerEffort(traits, "bars", "sm").detail).toBe("Codex default");
 });
 
 it("draws an agent's reasoning as bars and keeps its mode out of the levels", async () => {

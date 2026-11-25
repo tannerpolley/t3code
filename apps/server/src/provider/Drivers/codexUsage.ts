@@ -475,6 +475,7 @@ function codexRequestRecord(
     totals,
     reportedCostUsd: null,
     speed,
+    // shortcut: A turn without its own settings event can inherit the previous usage tier.
     ...(!sawThreadSettings &&
     state.modelProvider === "openai" &&
     state.sessionId.length > 0 &&

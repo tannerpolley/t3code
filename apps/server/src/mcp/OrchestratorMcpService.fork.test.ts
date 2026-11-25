@@ -490,9 +490,11 @@ describe("OrchestratorMcpService provider resolution", () => {
   it("checks option selections independently for choices on the same model", () => {
     const model = "gpt-6.1-sol";
     const role: ModelRole = {
-      id: "builder",
+      id: "implementor-complex",
       name: "Builder",
       description: "",
+      role: "implementor",
+      level: "complex",
       targets: [
         {
           providerInstanceId: codexInstanceId,
@@ -560,6 +562,16 @@ describe("OrchestratorMcpService provider resolution", () => {
     );
     assert.deepEqual(statuses[0]!.targets[0], { ...role.targets[0], unavailableReason: null });
     assert.deepEqual(statuses[0]!.targets[1], { ...role.targets[2]!, unavailableReason: null });
+    assert.deepEqual(
+      roleDefaultTarget(
+        statuses,
+        "implementor",
+        "complex",
+        { model, options: [{ id: "serviceTier", value: "priority" }] },
+        () => provider.driver,
+      ),
+      role.targets[2],
+    );
     assert.equal(
       statuses[0]!.targets[2]!.unavailableReason,
       `Model ${model} on provider codex rejected options: Option reasoningEffort must be one of: medium, high.`,

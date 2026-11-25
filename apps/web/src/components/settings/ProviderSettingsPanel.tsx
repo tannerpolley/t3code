@@ -113,7 +113,7 @@ import { CodexSetupSection, CodexManagedRuntimeFields } from "./CodexSetupSectio
 import { readCodexSetupMode } from "./CodexSetupSection.logic";
 import { providerClients } from "./providerDriverMeta";
 import { useSearchableSetting } from "./settingsSearch";
-import { CODEX_SPEED_LABELS } from "./codexSpeedCopy";
+import { CODEX_DEFAULT_SPEED_LABEL, CODEX_SPEED_LABELS } from "./codexSpeedCopy";
 import { CompactIdleThreadsRow } from "./SettingsPanels";
 import {
   backgroundActivityOverrideSettings,
@@ -1124,12 +1124,12 @@ export function EnvironmentProviderSettings({
                   <SelectTrigger size="sm" aria-label={gt("Default speed")}>
                     <SelectValue>
                       {settings.codexDefaultSpeed == null
-                        ? gt("Use Codex config")
+                        ? messages(CODEX_DEFAULT_SPEED_LABEL)
                         : messages(CODEX_SPEED_LABELS[settings.codexDefaultSpeed])}
                     </SelectValue>
                   </SelectTrigger>
                   <SelectPopup align="end" alignItemWithTrigger={false}>
-                    <SelectItem value="config">{gt("Use Codex config")}</SelectItem>
+                    <SelectItem value="config">{messages(CODEX_DEFAULT_SPEED_LABEL)}</SelectItem>
                     {CodexDefaultSpeed.literals.map((speed) => (
                       <SelectItem key={speed} value={speed}>
                         {messages(CODEX_SPEED_LABELS[speed])}

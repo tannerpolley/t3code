@@ -6,12 +6,14 @@ import {
 } from "@t3tools/client-runtime/model-traits";
 import type {
   CodexDefaultSpeed,
+  CodexRoleSpeed,
   ModelSelection,
   ProviderOptionDescriptor,
   RuntimeMode,
 } from "@t3tools/contracts";
 import type { EffortDisplay } from "@t3tools/contracts/settings";
 import {
+  codexRoleTierForModel,
   getCodexServiceTierDescriptor,
   getCodexServiceTierOptionValue,
   getProviderOptionCurrentLabel,
@@ -24,7 +26,7 @@ import { type KeyboardEvent, type ReactNode, use, useRef, useState } from "react
 
 import { m, type MessageResolver } from "~/i18n/messages";
 import { cn } from "~/lib/utils";
-import { CODEX_SPEED_LABELS } from "../settings/codexSpeedCopy";
+import { CODEX_DEFAULT_SPEED_LABEL, CODEX_SPEED_LABELS } from "../settings/codexSpeedCopy";
 import {
   Menu,
   MenuPopup,
@@ -52,6 +54,7 @@ type BooleanDescriptor = Extract<ProviderOptionDescriptor, { type: "boolean" }>;
 
 export interface ComposerCodexSpeed {
   defaultSpeed?: CodexDefaultSpeed | null | undefined;
+  roleSpeed?: CodexRoleSpeed | undefined;
   activeTurn?: { tier: string; selection: ModelSelection } | undefined;
 }
 
@@ -129,6 +132,7 @@ export function describeComposerEffort(
     ? resolveCodexSpeed({
         descriptor,
         threadTier: getCodexServiceTierOptionValue(modelSelection),
+        roleTier: codexRoleTierForModel(codexSpeed?.roleSpeed, modelSelection, traits.models),
         defaultSpeed: codexSpeed?.defaultSpeed,
         recordedTier,
       })
@@ -182,11 +186,19 @@ export function describeComposerEffort(
     : display.speedLabel === "Ultrafast";
   const fast =
     ultra || (effectiveSpeed ? effectiveSpeed.speed === "fast" : display.speedLabel === "Fast");
-  const speedLabel = effectiveSpeed?.speed
-    ? resolve(
-        CODEX_SPEED_LABELS[effectiveSpeed.speed === "standard" ? "normal" : effectiveSpeed.speed],
-      )
-    : descriptor?.options.find(({ id }) => id === effectiveSpeed?.tier)?.label;
+  const speedLabel =
+    effectiveSpeed === undefined
+      ? undefined
+      : effectiveSpeed.tier === undefined
+        ? resolve(CODEX_DEFAULT_SPEED_LABEL)
+        : effectiveSpeed.speed
+          ? resolve(
+              CODEX_SPEED_LABELS[
+                effectiveSpeed.speed === "standard" ? "normal" : effectiveSpeed.speed
+              ],
+            )
+          : (descriptor?.options.find(({ id }) => id === effectiveSpeed.tier)?.label ??
+            effectiveSpeed.tier);
   const detail = [display.label, speedLabel].filter(Boolean).join(" · ");
   // Agent options such as modes live in the picker; the trigger adds only the context window.
   const contextWindow =

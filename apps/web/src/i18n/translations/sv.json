@@ -13757,7 +13757,7 @@
   "7b44f2dcd82a0ea1": "Den här sessionen saknar behörighet att hantera leverantörer på {environment}.",
   "7aa202a739c5f90d": "Gäller från nästa tur för Codex-trådar och agenter som använder standarden. Modellerna använder den snabbaste hastighet de har stöd för, upp till ditt val.",
   "e2a5cf66eeec090e": "Standardhastighet",
-  "d19249179ab508d3": "Använd Codex-konfigurationen",
   "afecbf6b765a2fb0": "Ultrasnabb",
-  "3c8f3dd37881c169": "Codex hastighet normal snabb ultrasnabb tjänstenivå"
+  "3c8f3dd37881c169": "Codex hastighet normal snabb ultrasnabb tjänstenivå",
+  "1becfb4db7ffe135": "Codex standard"
 }

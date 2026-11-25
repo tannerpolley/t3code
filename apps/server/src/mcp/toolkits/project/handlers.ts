@@ -1,5 +1,6 @@
 import {
   CommandId,
+  type CodexRoleSpeed,
   MessageId,
   type ModelRoleLevel,
   ThreadId,
@@ -12,6 +13,7 @@ import {
   type ServerProvider,
   T3_PROJECT_FILE_NAME,
 } from "@t3tools/contracts";
+import { codexRoleSpeedFromSelection } from "@t3tools/shared/model";
 import * as Digest from "effect/crypto/Digest";
 import * as Effect from "effect/Effect";
 import * as Hex from "effect/encoding/Hex";
@@ -544,11 +546,16 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
                 Effect.orElseSucceed(() => runtimeMode),
               )
             : runtimeMode;
+        let codexRoleSpeed: CodexRoleSpeed | undefined;
         if (!replaying) {
           const providers = yield* (yield* ProviderRegistry.ProviderRegistry).getProviders;
           const provider = providers.find(
             (provider) => provider.instanceId === modelSelection.instanceId,
           );
+          const peerRole =
+            linkOrigin !== undefined && input.delegatedFrom !== undefined && role !== undefined;
+          if ((roleModel !== undefined || peerRole) && provider?.driver === "codex")
+            codexRoleSpeed = codexRoleSpeedFromSelection(modelSelection);
           if (
             linkOrigin !== undefined &&
             input.delegatedFrom?.enableTools?.length &&
@@ -571,6 +578,7 @@ export const layer = McpToolAccess.toLayer(ProjectToolkit, {
           ...(input.generateTitle === undefined ? {} : { generateTitle: input.generateTitle }),
           ...(input.generateTitle === true ? {} : { titleRenamed: true }),
           modelSelection,
+          ...(codexRoleSpeed === undefined ? {} : { codexRoleSpeed }),
           runtimeMode: startedRuntimeMode,
           interactionMode,
           workspaceStrategy: strategy ?? { type: "root" },

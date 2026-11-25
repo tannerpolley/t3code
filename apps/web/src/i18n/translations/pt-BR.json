@@ -13749,7 +13749,7 @@
   "7b44f2dcd82a0ea1": "Esta sessão não tem permissão para gerenciar provedores em {environment}.",
   "7aa202a739c5f90d": "Aplica-se no próximo turno às conversas e aos agentes do Codex que usam o padrão. Os modelos usam a maior velocidade compatível até o limite escolhido.",
   "e2a5cf66eeec090e": "Velocidade padrão",
-  "d19249179ab508d3": "Usar a configuração do Codex",
   "afecbf6b765a2fb0": "Ultrarrápida",
-  "3c8f3dd37881c169": "Codex velocidade normal rápida ultrarrápida nível de serviço"
+  "3c8f3dd37881c169": "Codex velocidade normal rápida ultrarrápida nível de serviço",
+  "1becfb4db7ffe135": "Padrão do Codex"
 }

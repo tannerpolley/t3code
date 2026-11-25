@@ -107,7 +107,8 @@ const make = Effect.gen(function* () {
       )
         continue;
       const { speed } = resolveCodexSpeed({
-        recordedTier: match.service_tier ?? getCodexServiceTierOptionValue(selection.value),
+        recordedTier:
+          match.service_tier ?? getCodexServiceTierOptionValue(selection.value) ?? "default",
       });
       if (speed !== undefined) resolved.set(request, speed);
     }

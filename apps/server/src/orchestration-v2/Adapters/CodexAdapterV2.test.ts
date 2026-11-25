@@ -4838,22 +4838,19 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     },
     { name: "Normal fallback", parent: null, speed: "ultrafast", offered: [], expected: "default" },
     {
-      name: "native model default with no environment or CLI override",
+      name: "Codex default with no selection",
       parent: null,
       speed: null,
       offered: ["priority", "flex"],
-      nativeDefault: "flex",
-      expected: "flex",
+      expected: undefined,
     },
     {
-      name: "native model default when the CLI tier is unsupported",
+      name: "Codex default with a CLI tier",
       parent: null,
       speed: null,
       offered: ["priority"],
-      nativeDefault: "default",
-      catalogCurrent: "priority",
-      config: { service_tier: "ultrafast" },
-      expected: "default",
+      config: { service_tier: "priority" },
+      expected: undefined,
     },
     {
       name: "explicit Normal",
@@ -4868,8 +4865,19 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       parent: ThreadId.make("parent"),
       speed: "ultrafast",
       offered: ["priority", "ultrafast"],
-      explicit: "fast",
+      roleTier: "fast",
       expected: "priority",
+    },
+    {
+      name: "clearing a worker override restores its saved role speed on the next turn",
+      parent: ThreadId.make("parent"),
+      speed: "normal",
+      offered: ["priority", "ultrafast"],
+      explicit: "ultrafast",
+      roleTier: "fast",
+      expected: "ultrafast",
+      nextSpeed: "normal",
+      nextTier: "priority",
     },
   ] as const)("resolves Codex speed for $name", (test) =>
     Effect.gen(function* () {
@@ -4889,7 +4897,10 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         ...turn,
         frame: {
           ...turn.frame,
-          params: { ...turn.frame.params, serviceTier: test.expected },
+          params: {
+            ...turn.frame.params,
+            ...(test.expected === undefined ? {} : { serviceTier: test.expected }),
+          },
         },
       };
       const defaultSpeed = yield* Ref.make<CodexDefaultSpeed | null>(test.speed);
@@ -4913,7 +4924,10 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             frame: {
               ...turn.frame,
               id: 4,
-              params: { ...turn.frame.params, serviceTier: "default" },
+              params: {
+                ...turn.frame.params,
+                serviceTier: "nextTier" in test ? test.nextTier : "default",
+              },
             },
           },
           {
@@ -4941,19 +4955,10 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                     {
                       id: "serviceTier",
                       label: "Service Tier",
-                      ...("nativeDefault" in test
-                        ? {
-                            currentValue:
-                              "catalogCurrent" in test ? test.catalogCurrent : test.nativeDefault,
-                          }
-                        : {}),
                       type: "select",
                       options: ["default", ...test.offered].map((id) => ({
                         id,
                         label: id,
-                        ...("nativeDefault" in test && test.nativeDefault === id
-                          ? { isDefault: true }
-                          : {}),
                       })),
                     },
                   ],
@@ -4984,35 +4989,42 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         ...input.modelSelection,
         ...("explicit" in test ? { options: [{ id: "serviceTier", value: test.explicit }] } : {}),
       };
-      yield* harness.runtime.startTurn({
-        ...input,
-        modelSelection,
-        appThread:
-          test.parent === null
-            ? input.appThread
-            : {
-                ...input.appThread,
-                createdBy: "agent",
-                role: "implementor",
-                lineage: {
-                  parentThreadId: test.parent,
-                  relationshipToParent: "subagent",
-                  rootThreadId: test.parent,
-                },
+      const appThread: OrchestrationV2AppThread =
+        test.parent === null
+          ? input.appThread
+          : {
+              ...input.appThread,
+              createdBy: "agent",
+              role: "implementor",
+              ...("roleTier" in test
+                ? {
+                    codexRoleSpeed: {
+                      instanceId: modelSelection.instanceId,
+                      model: modelSelection.model,
+                      tier: test.roleTier,
+                    },
+                  }
+                : {}),
+              lineage: {
+                parentThreadId: test.parent,
+                relationshipToParent: "subagent",
+                rootThreadId: test.parent,
               },
-      });
+            };
+      yield* harness.runtime.startTurn({ ...input, modelSelection, appThread });
       if ("nextSpeed" in test) {
         yield* harness.firstTerminal;
         yield* Ref.set(defaultSpeed, test.nextSpeed);
-        yield* harness.runtime.startTurn(
-          makeCodexTestTurnInput({
+        yield* harness.runtime.startTurn({
+          ...makeCodexTestTurnInput({
             threadId: harness.threadId,
             providerThread: harness.providerThread,
             now: yield* DateTime.now,
             attemptId: RunAttemptId.make("next-speed-attempt"),
             text: "work",
           }),
-        );
+          appThread,
+        });
       }
     }).pipe(
       Effect.provide(

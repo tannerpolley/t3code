@@ -3942,6 +3942,7 @@ export default function ChatView(props: ChatViewProps) {
                                 reportedModelSelection={reportedModelSelection}
                                 codexSpeed={{
                                   defaultSpeed: serverConfig?.settings?.codexDefaultSpeed,
+                                  roleSpeed: serverProjection?.thread.codexRoleSpeed,
                                   activeTurn:
                                     activeCodexTurn?.serviceTier && activeCodexSelection
                                       ? {

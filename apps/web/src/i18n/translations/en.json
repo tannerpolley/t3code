@@ -13760,7 +13760,7 @@
   "7b44f2dcd82a0ea1": "This session lacks permission to manage providers on {environment}.",
   "7aa202a739c5f90d": "Applies on the next turn to Codex threads and workers using the default. Models use the fastest supported speed up to your choice.",
   "e2a5cf66eeec090e": "Default speed",
-  "d19249179ab508d3": "Use Codex config",
   "afecbf6b765a2fb0": "Ultra fast",
-  "3c8f3dd37881c169": "Codex speed normal fast ultra fast service tier"
+  "3c8f3dd37881c169": "Codex speed normal fast ultra fast service tier",
+  "1becfb4db7ffe135": "Codex default"
 }
