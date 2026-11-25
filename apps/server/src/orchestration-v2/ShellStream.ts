@@ -9,6 +9,8 @@ import type {
   OrchestrationV2ShellStreamItem,
   OrchestrationV2StoredEvent,
   ProjectId,
+  SidebarLayoutError,
+  SidebarLayoutRecord,
   ThreadId,
 } from "@t3tools/contracts";
 import {
@@ -423,6 +425,7 @@ export const loadSubscriberShellSnapshot = Effect.fn("ShellStream.loadSubscriber
     ) => Effect.Effect<Effect.Effect<OrchestrationV2ThreadShellSnapshot, E3>, E2>;
     readonly listProjects: Effect.Effect<ReadonlyArray<OrchestrationProjectShell>, E4>;
     readonly latestSequence: Effect.Effect<number, E5>;
+    readonly readSidebarLayout: Effect.Effect<SidebarLayoutRecord | null, SidebarLayoutError>;
     readonly options: ShellSubscriberOptions;
   }) {
     const trims = input.options.omitIdleSubagents || input.options.omitOlderSettled;
@@ -430,10 +433,19 @@ export const loadSubscriberShellSnapshot = Effect.fn("ShellStream.loadSubscriber
       .withTransaction(
         Effect.gen(function* () {
           const index = trims ? yield* input.listShellIndex : null;
+          const layout = input.options.omitOlderSettled
+            ? yield* input.readSidebarLayout.pipe(Effect.orElseSucceed(() => null))
+            : null;
+          const ranks = layout?.layout.threadRanks;
+          const options =
+            ranks === undefined
+              ? input.options
+              : { ...input.options, placedThreadIds: new Set(Object.keys(ranks)) };
           return {
             index,
+            options,
             decodeThreads: yield* input.readThreads(
-              index === null ? undefined : shellSubscriberThreadIds(index, input.options),
+              index === null ? undefined : shellSubscriberThreadIds(index, options),
             ),
             projects: yield* input.listProjects,
             snapshotSequence: yield* input.latestSequence,
@@ -448,7 +460,7 @@ export const loadSubscriberShellSnapshot = Effect.fn("ShellStream.loadSubscriber
     });
     const facts = shellTrimFacts(read.index ?? base.threads);
     return {
-      snapshot: trimShellSnapshot(base, facts, { ...input.options, now: yield* DateTime.now }),
+      snapshot: trimShellSnapshot(base, facts, { ...read.options, now: yield* DateTime.now }),
       subagentThreadIds: facts.subagentThreadIds,
     };
   },

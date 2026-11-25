@@ -1344,6 +1344,14 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const [collapseOverrides, setCollapseOverrides] = useState<ReadonlyMap<string, boolean>>(
     () => new Map(),
   );
+  const clearCollapseOverride = (id: string) => {
+    setCollapseOverrides((previous) => {
+      if (!previous.has(id)) return previous;
+      const next = new Map(previous);
+      next.delete(id);
+      return next;
+    });
+  };
   const [sectionNameDialog, setSectionNameDialog] = useState<{
     environmentId: EnvironmentId;
     sectionId?: string;
@@ -1523,6 +1531,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           type: "expandProjects",
           projectIds: sectionProjectIds(group, environmentId),
           expanded,
+        }).then((saved) => {
+          if (saved) clearCollapseOverride(sidebarFolderRowId(group.projectKey));
         });
       } else if (memberWithSavedExpansion) {
         setCollapseOverrides((previous) =>
@@ -1559,13 +1569,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     if (!folder || folder !== projectFolderByThreadKey.get(overKey)) return null;
     const active = threadByKey.get(activeKey);
     const over = threadByKey.get(overKey);
-    if (
-      !active ||
-      !over ||
-      active.environmentId !== over.environmentId ||
-      !canWriteLayout(active.environmentId)
-    )
-      return null;
+    if (!active || !over || !canWriteLayout(active.environmentId)) return null;
     return { folder, active, over };
   };
   const openSectionMenu = async (
@@ -3909,16 +3913,12 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                                 }
                                 onToggle={() => {
                                   if (canWriteLayout(row.environmentId)) {
-                                    setCollapseOverrides((previous) => {
-                                      if (!previous.has(row.id)) return previous;
-                                      const next = new Map(previous);
-                                      next.delete(row.id);
-                                      return next;
-                                    });
                                     void changeLayout(row.environmentId, {
                                       type: "collapse",
                                       sectionId: row.section.id,
                                       collapsed: !row.collapsed,
+                                    }).then((saved) => {
+                                      if (saved) clearCollapseOverride(row.id);
                                     });
                                   } else {
                                     setCollapseOverrides((previous) =>

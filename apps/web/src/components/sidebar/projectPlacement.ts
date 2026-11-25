@@ -46,7 +46,7 @@ export function projectThreadPlacement<T extends PlacedThread>(
   over: T,
   layouts: Layouts,
 ) {
-  if (moved === over || moved.environmentId !== over.environmentId) return null;
+  if (moved === over) return null;
   const from = threads.indexOf(moved);
   const to = threads.indexOf(over);
   if (from < 0 || to < 0) return null;
@@ -185,7 +185,7 @@ export function projectSectionRows<
     );
   for (const folder of folders
     .filter((folder) => !claimed.has(folder))
-    .toSorted((a, b) => order(a) - order(b) || compare(a.group.projectKey, b.group.projectKey))) {
+    .toSorted((a, b) => order(a) - order(b))) {
     rows.push({ kind: "folder", folder, depth: 0 });
   }
   return rows;

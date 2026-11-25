@@ -791,7 +791,7 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   Layer.provideMerge(MilestoneHub.layer),
   Layer.provideMerge(Layer.merge(layerTaskFolders, LayoutCommandApprovalWrites.layer)),
   Layer.provideMerge(RuntimeLayer.layerEventInfrastructure),
-  Layer.provideMerge(Layer.merge(ProjectStore.layer, ThreadSearch.layer)),
+  Layer.provideMerge(Layer.mergeAll(ProjectStore.layer, ThreadSearch.layer, SidebarLayout.layer)),
   Layer.provideMerge(SecretCheck.layer),
   Layer.provideMerge(SecretResolver.layer),
   // Above the settings it writes when a theme is applied.
@@ -801,7 +801,6 @@ const layerRuntimeCoreDependenciesBase = Layer.mergeAll(
   Layer.provideMerge(layerGit),
   Layer.provideMerge(layerVcs),
   Layer.provideMerge(Layer.mergeAll(layerTerminal, layerPreview, layerDevice)),
-  Layer.provideMerge(SidebarLayout.layer),
   Layer.provideMerge(layerPersistence),
   Layer.provideMerge(Layer.mergeAll(Keybindings.layer, UsageLimitSources.layer)),
   Layer.provideMerge(ProviderRegistry.layer),

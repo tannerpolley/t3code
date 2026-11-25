@@ -108,6 +108,8 @@ export class SidebarLayoutService extends Context.Service<
   }
 >()("t3/sidebarLayout/SidebarLayoutService") {}
 
+const isSidebarLayoutError = Schema.is(SidebarLayoutError);
+
 const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   // Preserve the fork's table and keep its schema outside the upstream migration ledger.
@@ -178,7 +180,7 @@ const make = Effect.gen(function* () {
       mutex.withPermits(1)(
         sql.withTransaction(write).pipe(
           Effect.mapError((cause) =>
-            cause instanceof SidebarLayoutError
+            isSidebarLayoutError(cause)
               ? cause
               : new SidebarLayoutError({ reason: "write", cause }),
           ),

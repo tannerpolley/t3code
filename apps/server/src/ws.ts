@@ -1204,11 +1204,6 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
       },
     );
     const loadSnapshot = Effect.fn("ws.orchestrationV2.loadShellSnapshot")(function* () {
-      const layout =
-        input.omitOlderSettled && sidebarLayout
-          ? yield* sidebarLayout.get.pipe(Effect.orElseSucceed(() => null))
-          : null;
-      const placedThreadIds = layout?.layout.threadRanks;
       const forSubscriber = yield* loadSubscriberShellSnapshot({
         sql,
         listShellIndex: threadManagement.listActiveShellIndex(),
@@ -1219,12 +1214,10 @@ export const subscribeOrchestrationV2Shell = Effect.fn("ws.orchestrationV2.subsc
           }),
         listProjects: projects.listShells(),
         latestSequence: applicationEvents.latestApplicationSequence,
+        readSidebarLayout: sidebarLayout?.get ?? Effect.succeed(null),
         options: {
           omitIdleSubagents: input.omitIdleSubagents === true,
           omitOlderSettled: input.omitOlderSettled === true,
-          ...(placedThreadIds === undefined
-            ? {}
-            : { placedThreadIds: new Set(Object.keys(placedThreadIds)) }),
         },
       });
       subagentThreadIds = forSubscriber.subagentThreadIds;

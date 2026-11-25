@@ -13,6 +13,7 @@ import {
   DEFAULT_CLIENT_SETTINGS,
   EMPTY_SIDEBAR_LAYOUT,
   type SidebarLayoutRecord,
+  type SidebarLayoutMutation,
   EnvironmentId,
   type LocalApi,
   ProjectId,
@@ -33,6 +34,7 @@ import { __setClientSettingsForTests, getClientSettings } from "../hooks/useSett
 import { useThreadRouteTarget } from "../hooks/useThreadRouteTarget";
 import { useProjects, useServerConfigs, useQuietThreadShells } from "../state/entities";
 import { useConnectedEnvironmentIds, usePrimaryEnvironmentId } from "../state/environments";
+import * as session from "../state/session";
 import { readEnvironmentScope, useEnvironmentScope } from "../state/session";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
 import { useTerminalUiStateStore } from "../terminalUiStateStore";
@@ -41,7 +43,6 @@ import type { Project } from "../types";
 import Sidebar from "./Sidebar";
 import { THREAD_JUMP_HINT_SHOW_DELAY_MS } from "./Sidebar.logic";
 import { SortableThreadRow } from "./sidebar/SidebarThreadRow";
-import { projectThreadPlacement } from "./sidebar/projectPlacement";
 import { SidebarProvider } from "./ui/sidebar";
 
 vi.mock(import("../state/olderSettledShelf"), async (original) => {
@@ -204,6 +205,11 @@ describe("sidebar project folder new thread", () => {
 
 it("keeps a placed project row in keyboard order after sending, settling and remounting", async () => {
   using stack = new DisposableStack();
+  const style = document.createElement("style");
+  style.textContent = appCss;
+  document.head.append(style);
+  stack.defer(() => style.remove());
+  using _operate = vi.spyOn(session, "useEnvironmentScope").mockReturnValue(true);
   const previousSettings = getClientSettings();
   stack.defer(() => __setClientSettingsForTests(previousSettings));
   __setClientSettingsForTests({ ...DEFAULT_CLIENT_SETTINGS, boringSidebarEnabled: true });
@@ -243,9 +249,17 @@ it("keeps a placed project row in keyboard order after sending, settling and rem
       ],
     },
   };
+  const change = vi.fn(async (_environmentId: EnvironmentId, mutation: SidebarLayoutMutation) => {
+    if (mutation.type !== "placeThreads") throw new Error("Expected a thread placement");
+    record = {
+      revision: record.revision + 1,
+      layout: { ...record.layout, threadRanks: mutation.ranks },
+    };
+    return true;
+  });
   using _layout = vi.spyOn(sidebarLayout, "useSidebarLayout").mockImplementation(() => ({
     byEnvironment: new Map([[environmentId, { environmentId, record, writable: true }]]),
-    change: async () => true,
+    change,
   }));
   const tree = () => (
     <SidebarProvider>
@@ -267,10 +281,39 @@ it("keeps a placed project row in keyboard order after sending, settling and rem
 
   {
     await using screen = await render(tree());
-    const map = new Map([[environmentId, record.layout]]);
-    const ranks = projectThreadPlacement([first, last, moved], moved, last, map);
-    expect(ranks).not.toBeNull();
-    record = { revision: 2, layout: { ...record.layout, threadRanks: ranks! } };
+    const row = (threadId: ThreadId) =>
+      screen.container.querySelector<HTMLElement>(
+        `[data-sidebar-row="${CSS.escape(scopedThreadKey(scopeThreadRef(environmentId, threadId)))}"]`,
+      )!;
+    const source = row(moved.id);
+    const target = row(last.id);
+    const sourceRect = source.getBoundingClientRect();
+    const targetRect = target.getBoundingClientRect();
+    const x = sourceRect.x + sourceRect.width / 2;
+    const sourceY = sourceRect.y + sourceRect.height / 2;
+    const targetY = targetRect.y + targetRect.height / 2;
+    const pointer = (type: string, y: number) =>
+      new PointerEvent(type, {
+        bubbles: true,
+        cancelable: true,
+        pointerId: 1,
+        isPrimary: true,
+        button: 0,
+        buttons: type === "pointerup" ? 0 : 1,
+        clientX: x,
+        clientY: y,
+      });
+    await act(() => source.dispatchEvent(pointer("pointerdown", sourceY)));
+    await act(() => document.dispatchEvent(pointer("pointermove", sourceY - 10)));
+    await act(() => document.dispatchEvent(pointer("pointermove", targetY)));
+    await vi.waitFor(() =>
+      expect(target.closest("li")?.style.transform).toMatch(/translate3d\(0px, [1-9]/),
+    );
+    await act(() => document.dispatchEvent(pointer("pointerup", targetY)));
+    expect(change).toHaveBeenCalledExactlyOnceWith(environmentId, {
+      type: "placeThreads",
+      ranks: { [moved.id]: expect.any(String) },
+    });
     await screen.rerender(tree());
     await checkPlacement(screen);
     const sent = {

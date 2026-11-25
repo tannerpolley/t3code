@@ -34,6 +34,7 @@ import * as HttpApiBuilder from "effect/http-api/HttpApiBuilder";
 import * as ServerEnvironment from "../environment/ServerEnvironment.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import * as SidebarLayout from "../sidebarLayout.ts";
 
 import * as OrchestrationEventStore from "../persistence/OrchestrationEventStore.ts";
 import { ProjectEnrichmentService } from "../project/ProjectEnrichmentService.ts";
@@ -140,6 +141,7 @@ const serveOrchestrationHttp = (
         ),
         OrchestrationEventStore.layer,
         ProjectStore.layer,
+        SidebarLayout.layer,
       ).pipe(Layer.provideMerge(SqlitePersistence.layerMemory)),
     );
     const eventSink = Context.get(services, EventSinkV2);
@@ -431,9 +433,9 @@ it.effect("streams the full snapshot with the endpoint's errors", () =>
 
 it.effect("leaves older settled threads out of the HTTP shell only when asked", () =>
   Effect.gen(function* () {
-    const { eventSink, handler } = yield* serveOrchestrationHttp(() => true);
+    const { services, eventSink, handler } = yield* serveOrchestrationHttp(() => true);
     yield* eventSink.write({
-      events: Array.from({ length: 26 }, (_, index) => {
+      events: Array.from({ length: 27 }, (_, index) => {
         const id = ThreadId.make(`settled-${index}`);
         return {
           id: EventId.make(`create-${id}`),
@@ -466,13 +468,13 @@ it.effect("leaves older settled threads out of the HTTP shell only when asked", 
       });
 
     const full = yield* shell("");
-    expect(full.threads).toHaveLength(27);
+    expect(full.threads).toHaveLength(28);
     expect(full.olderSettled).toBeUndefined();
     const cut = yield* shell("?omitOlderSettled=1");
     expect(cut.threads.map((row) => row.id).toSorted()).toEqual(
-      [thread.id, ...Array.from({ length: 25 }, (_, index) => `settled-${index + 1}`)].toSorted(),
+      [thread.id, ...Array.from({ length: 25 }, (_, index) => `settled-${index + 2}`)].toSorted(),
     );
-    expect(cut.olderSettled?.counts).toEqual([{ projectId: thread.projectId, count: 1 }]);
+    expect(cut.olderSettled?.counts).toEqual([{ projectId: thread.projectId, count: 2 }]);
 
     // A client that holds rows the socket can replay from keeps them; any other cursor reloads.
     expect(full.projectIdentities).toBeTypeOf("string");
@@ -481,5 +483,17 @@ it.effect("leaves older settled threads out of the HTTP shell only when asked", 
     for (const cursor of [full.snapshotSequence + 1, "x"]) {
       expect((yield* shell(`?omitOlderSettled=1&resumeFrom=${cursor}`)).threads).toHaveLength(26);
     }
+
+    const placed = ThreadId.make("settled-0");
+    const layout = Context.get(services, SidebarLayout.SidebarLayoutService);
+    yield* layout.update({
+      revision: 0,
+      mutation: { type: "placeThreads", ranks: { [placed]: "m" } },
+    });
+    const reloaded = yield* shell("?omitOlderSettled=1");
+    expect(reloaded.threads.map((row) => row.id).toSorted()).toEqual(
+      [...cut.threads.map((row) => row.id), placed].toSorted(),
+    );
+    expect(reloaded.olderSettled?.counts).toEqual(cut.olderSettled?.counts);
   }),
 );

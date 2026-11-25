@@ -125,3 +125,40 @@ it("preserves saved nested membership, order, and collapse without duplicating g
     "other",
   ]);
 });
+
+it("writes the moved thread's rank when its displayed neighbor is on another environment", () => {
+  const before = {
+    id: ThreadId.make("before"),
+    environmentId: local,
+    createdAt: "2026-11-03T00:00:00Z",
+  };
+  const neighbor = {
+    id: ThreadId.make("neighbor"),
+    environmentId: remote,
+    createdAt: "2026-11-02T00:00:00Z",
+  };
+  const moved = {
+    id: ThreadId.make("moved"),
+    environmentId: local,
+    createdAt: "2026-11-01T00:00:00Z",
+  };
+  const threads = [before, neighbor, moved];
+  const ranks = projectThreadPlacement(threads, moved, neighbor, new Map());
+  expect(Object.keys(ranks ?? {})).toEqual([moved.id]);
+  const placed: Layouts = new Map([[local, { ...EMPTY_SIDEBAR_LAYOUT, threadRanks: ranks! }]]);
+  expect(sortProjectThreads(threads, placed)).toEqual([before, moved, neighbor]);
+});
+
+it("keeps upstream folder order when no saved layout assigns positions", () => {
+  const folders = ["Z", "A"].map((name) => ({
+    group: {
+      projectKey: name,
+      memberProjectRefs: [{ environmentId: local, projectId: ProjectId.make(name) }],
+    },
+  }));
+  expect(
+    projectSectionRows(folders, new Map(), new Map()).map(
+      (row) => row.kind === "folder" && row.folder,
+    ),
+  ).toEqual(folders);
+});
