@@ -11553,6 +11553,7 @@
       "v": "v"
     }
   ],
+  "1a565539ffd96d2a": "Spend a banked reset credit on this device’s accounts shortly before it expires.",
   "39f64d971ba424b5": "No usage sources configured.",
   "dbd877abdc2c7c81": "HTTP quota source",
   "4cf6a373a7535324": "{name} · Disabled",
@@ -11974,6 +11975,7 @@
   "f8d32e19131fd5b3": "agents cli codex claude cursor grok fx kiro opencode antigravity google sign in sign out install subscription instances authentication api key models configuration binary path config directory codex_home shadow home endpoint arguments environment variables display name accent color custom favorite hidden auto compact native sessions import resume",
   "ad371af21e5b4b01": "Usage providers",
   "9d9d31a4f3d5ff69": "usage sources CLIProxyAPI CLI proxy hub quota subscription limits management key add remove",
+  "5888d4308daf54f7": "Automatically use expiring reset credits",
   "d65fa0946585b245": "Text generators",
   "e6fd69a8a3bb69e2": "model api api key openai openrouter anthropic ollama lm studio custom endpoint base url thread titles commit messages",
   "f2b07faba1229ce7": "Health check interval",

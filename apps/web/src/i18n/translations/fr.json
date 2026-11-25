@@ -11543,6 +11543,7 @@
       "v": "v"
     }
   ],
+  "1a565539ffd96d2a": "Utilise un crédit de réinitialisation en réserve sur les comptes de cet appareil peu avant son expiration.",
   "39f64d971ba424b5": "Aucune source de suivi de l’utilisation configurée.",
   "dbd877abdc2c7c81": "Source de quotas HTTP",
   "4cf6a373a7535324": "{name} · Désactivé",
@@ -11964,6 +11965,7 @@
   "f8d32e19131fd5b3": "agents cli codex claude cursor grok fx kiro opencode antigravity google se connecter se déconnecter installer abonnement instances authentification clé d’api modèles configuration chemin du binaire répertoire de configuration codex_home home fantôme point de terminaison arguments variables d’environnement nom d’affichage couleur d’accent personnalisé favori masqué compactage auto sessions natives importer reprendre",
   "ad371af21e5b4b01": "Fournisseurs d’utilisation",
   "9d9d31a4f3d5ff69": "sources d’utilisation CLIProxyAPI proxy CLI hub quota abonnement limites clé de gestion ajouter supprimer",
+  "5888d4308daf54f7": "Utiliser automatiquement les crédits de réinitialisation qui arrivent à expiration",
   "d65fa0946585b245": "Générateurs de texte",
   "e6fd69a8a3bb69e2": "modèle api clé d’api openai openrouter anthropic ollama lm studio point de terminaison personnalisé url de base titres de fils messages de commit",
   "f2b07faba1229ce7": "Intervalle de vérification de l’état",

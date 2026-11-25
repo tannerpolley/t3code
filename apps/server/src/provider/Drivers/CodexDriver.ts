@@ -33,6 +33,7 @@ import {
   withCodexAppServerClient,
 } from "../CodexProvider.ts";
 import { resolveCodexLaunchArgs } from "../codexLaunchArgs.ts";
+import { codexResetCreditsToContract } from "../codexUsageLimits.ts";
 import { makeManagedServerProvider } from "@t3tools/provider-core/server/managedProvider";
 import * as ModelCatalog from "@t3tools/provider-core/server/ModelCatalog";
 import { applyCodexModelCatalog } from "../codexModelCatalog.ts";
@@ -361,22 +362,47 @@ export const CodexDriver: ProviderDriver<
     // until the outcome, and bound the wait so a hung app-server cannot hold the account lock.
     // Auth overlays use effectiveHomePath; the continuation key would conflate them with shared homes.
     const accountKey = homeLayout.effectiveHomePath ?? homeLayout.sharedHomePath;
-    const consumeResetCredit: NonNullable<ProviderInstance["consumeResetCredit"]> = () =>
-      resetCreditCoordinator
-        .redeem(accountKey, (idempotencyKey) =>
-          Effect.gen(function* () {
-            const { client } = yield* withCodexAppServerClient({
-              binaryPath: effectiveConfig.binaryPath,
-              homePath: effectiveConfig.homePath,
-              launchArgs: resolveCodexLaunchArgs(effectiveConfig.launchArgs, processEnv),
-              cwd: process.cwd(),
-              environment: processEnv,
-            });
-            const response = yield* client.request("account/rateLimitResetCredit/consume", {
-              idempotencyKey,
-            });
-            return response.outcome;
-          }).pipe(Effect.scoped, Effect.timeout("20 seconds")),
+    const consumeResetCredit: NonNullable<ProviderInstance["consumeResetCredit"]> = (selection) => {
+      const automatic = typeof selection === "object" ? selection : undefined;
+      const creditId = typeof selection === "string" ? selection : automatic?.creditId;
+      if (!creditId) return Effect.succeed("noCredit" as const);
+      return resetCreditCoordinator
+        .redeem(
+          accountKey,
+          (idempotencyKey) =>
+            Effect.gen(function* () {
+              const { client } = yield* withCodexAppServerClient({
+                binaryPath: effectiveConfig.binaryPath,
+                homePath: effectiveConfig.homePath,
+                launchArgs: resolveCodexLaunchArgs(effectiveConfig.launchArgs, processEnv),
+                cwd: process.cwd(),
+                environment: processEnv,
+              });
+              const account = automatic
+                ? (yield* client.request("account/read", {})).account
+                : undefined;
+              const limits = yield* client.request("account/rateLimits/read", null);
+              const credits = codexResetCreditsToContract(limits.rateLimitResetCredits);
+              if (!credits?.availableCount || credits.nextCreditId !== creditId) return undefined;
+              if (automatic) {
+                if (
+                  account?.type !== "chatgpt" ||
+                  account.email?.trim().toLowerCase() !== automatic.email ||
+                  (limits.accountId?.trim() || undefined) !== automatic.workspaceId ||
+                  credits.nextExpiresAt !== automatic.expiresAt ||
+                  !(yield* automatic.canRedeem)
+                )
+                  return undefined;
+              }
+              const response = yield* client.request("account/rateLimitResetCredit/consume", {
+                idempotencyKey,
+                creditId,
+              });
+              return response.outcome;
+            }).pipe(Effect.scoped, Effect.timeout("20 seconds")),
+          undefined,
+          creditId,
+          automatic !== undefined,
         )
         .pipe(
           Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner),
@@ -390,24 +416,28 @@ export const CodexDriver: ProviderDriver<
               }),
           ),
           Effect.tap((outcome) =>
-            ResetCreditCoordinator.refreshAfterRedemption({
-              outcome,
-              getSnapshot: snapshot.getSnapshot,
-              refresh: snapshot.refresh,
-            }).pipe(
-              Effect.filterOrFail(
-                (confirmed) => confirmed,
-                () =>
-                  new ProviderDriverError({
-                    driver: DRIVER_KIND,
-                    instanceId,
-                    detail:
-                      "The reset was applied, but Codex could not confirm the new limits. Refresh to check.",
-                  }),
-              ),
-            ),
+            automatic || outcome === undefined
+              ? Effect.void
+              : ResetCreditCoordinator.refreshAfterRedemption({
+                  outcome,
+                  getSnapshot: snapshot.getSnapshot,
+                  refresh: snapshot.refresh,
+                }).pipe(
+                  Effect.filterOrFail(
+                    (confirmed) => confirmed,
+                    () =>
+                      new ProviderDriverError({
+                        driver: DRIVER_KIND,
+                        instanceId,
+                        detail:
+                          "The reset was applied, but Codex could not confirm the new limits. Refresh to check.",
+                      }),
+                  ),
+                ),
           ),
+          Effect.map((outcome) => outcome ?? (automatic ? "nothingToReset" : "noCredit")),
         );
+    };
 
     // `codex login` and `codex logout` rewrite auth.json outside T3.
     if (effectiveConfig.enabled) {

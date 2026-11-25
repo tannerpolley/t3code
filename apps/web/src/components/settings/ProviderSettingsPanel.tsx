@@ -1194,6 +1194,7 @@ export function EnvironmentProviderSettings({
         environmentId={environmentId}
         environmentLabel={environmentLabel}
         sources={settings.usageLimitSources}
+        autoUseExpiringResetCredits={settings.autoUseExpiringResetCredits}
         readOnly={readOnly}
       />
 

@@ -11489,6 +11489,7 @@
     },
     "(으)로 전환"
   ],
+  "1a565539ffd96d2a": "이 기기의 계정에 적립된 재설정 크레딧을 만료 직전에 사용합니다.",
   "39f64d971ba424b5": "구성된 사용량 소스가 없습니다.",
   "dbd877abdc2c7c81": "HTTP 할당량 소스",
   "4cf6a373a7535324": "{name} · 사용 안 함",
@@ -11910,6 +11911,7 @@
   "f8d32e19131fd5b3": "에이전트 CLI Codex Claude Cursor Grok fx Kiro OpenCode Antigravity Google 로그인 로그아웃 설치 구독 인스턴스 인증 API 키 모델 구성 바이너리 경로 구성 디렉터리 codex_home 섀도 홈 엔드포인트 인수 환경 변수 표시 이름 강조 색상 사용자 지정 즐겨찾기 숨김 자동 압축 네이티브 세션 가져오기 재개",
   "ad371af21e5b4b01": "사용량 제공자",
   "9d9d31a4f3d5ff69": "사용량 소스 CLIProxyAPI CLI 프록시 허브 할당량 구독 한도 관리 키 추가 제거",
+  "5888d4308daf54f7": "만료 예정 재설정 크레딧 자동 사용",
   "d65fa0946585b245": "텍스트 생성기",
   "e6fd69a8a3bb69e2": "모델 API API 키 OpenAI OpenRouter Anthropic Ollama LM Studio 사용자 지정 엔드포인트 기본 URL 스레드 제목 커밋 메시지",
   "f2b07faba1229ce7": "상태 확인 간격",

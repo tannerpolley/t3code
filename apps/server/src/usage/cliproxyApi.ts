@@ -5,6 +5,7 @@ import {
   type UsageLimitSourceAccount,
   type UsageLimitSourceConfig,
 } from "@t3tools/contracts";
+import type { AutomaticResetCredit } from "@t3tools/provider-core/server/driver";
 import * as Cause from "effect/Cause";
 import * as Digest from "effect/crypto/Digest";
 import * as DateTime from "effect/DateTime";
@@ -493,6 +494,7 @@ export const makeCliproxyApi = Effect.gen(function* () {
     hub: CliproxyHub,
     accountId: string,
     creditId: string,
+    automatic?: AutomaticResetCredit,
   ): Effect.fn.Return<ProviderConsumeResetCreditResult, UsageLimitSourceError> {
     const operation = Effect.gen(function* () {
       const account = (yield* authFiles(hub)).find((account) => account.id === accountId);
@@ -501,16 +503,35 @@ export const makeCliproxyApi = Effect.gen(function* () {
           detail: "The Codex hub account is missing or disabled.",
         });
       }
+      const requestId = yield* creditRedeemRequestId(
+        account.id_token?.chatgpt_account_id ?? account.id,
+        creditId,
+      ).pipe(Effect.provideService(Digest.Digest, digest));
+      if (automatic) {
+        const identity = listedIdentity(account);
+        if (
+          automatic.creditId !== creditId ||
+          identity.email?.trim().toLowerCase() !== automatic.email ||
+          identity.workspaceId !== automatic.workspaceId
+        )
+          return { outcome: "nothingToReset" } as const;
+        const [next] = yield* credits((url) =>
+          apiCall(hub, account, CODEX_HUB.header(account), url),
+        );
+        if (
+          next?.id !== automatic.creditId ||
+          Date.parse(next.expires_at) !== Date.parse(automatic.expiresAt) ||
+          !(yield* automatic.canRedeem)
+        )
+          return { outcome: "nothingToReset" } as const;
+      }
       const body = yield* apiCall(
         hub,
         account,
         CODEX_HUB.header(account),
         `${CREDIT_URL}/consume`,
         {
-          redeem_request_id: yield* creditRedeemRequestId(
-            account.id_token?.chatgpt_account_id ?? account.id,
-            creditId,
-          ).pipe(Effect.provideService(Digest.Digest, digest)),
+          redeem_request_id: requestId,
           credit_id: creditId,
         },
       );

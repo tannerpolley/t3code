@@ -203,8 +203,8 @@ export function resetCreditChoices(
           "This redeems one credit on your account and clears the current rate-limit windows. It cannot be undone.",
         ),
       ),
-      availableCount: count,
-      input,
+      availableCount: credits.nextCreditId || "sourceId" in input ? count : 0,
+      input: credits.nextCreditId ? { ...input, creditId: credits.nextCreditId } : input,
     },
   ];
 }

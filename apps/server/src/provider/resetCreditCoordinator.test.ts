@@ -53,6 +53,91 @@ describe("ResetCreditCoordinator", () => {
     }).pipe(Effect.provide(ResetCreditCoordinator.layerTest)),
   );
 
+  it.effect("retains the pending key for an unanswered grant across skipped and other claims", () =>
+    Effect.gen(function* () {
+      const { redeem } = yield* ResetCreditCoordinator.ResetCreditCoordinator;
+      const keys: string[] = [];
+      const record = (key: string) =>
+        Effect.sync(() => {
+          keys.push(key);
+        });
+      yield* redeem(
+        "acct",
+        (key) => record(key).pipe(Effect.andThen(Effect.fail("timeout"))),
+        undefined,
+        "a",
+      ).pipe(Effect.ignore);
+      yield* redeem("acct", (key) => record(key).pipe(Effect.as(undefined)), undefined, "a");
+      yield* redeem("acct", (key) => record(key).pipe(Effect.as("reset" as const)), undefined, "b");
+      yield* redeem(
+        "acct",
+        (key) => record(key).pipe(Effect.as("alreadyRedeemed" as const)),
+        undefined,
+        "a",
+      );
+      assert.deepStrictEqual(keys, [keys[0], keys[0], keys[2], keys[0]]);
+      assert.notStrictEqual(keys[0], keys[2]);
+    }).pipe(Effect.provide(ResetCreditCoordinator.layerTest)),
+  );
+
+  it.effect("keeps an automatic retry pinned and uses new IDs for intentional manual claims", () =>
+    Effect.gen(function* () {
+      const { redeem } = yield* ResetCreditCoordinator.ResetCreditCoordinator;
+      const attempts: string[] = [];
+      const consume = (key: string) =>
+        Effect.sync(() => {
+          attempts.push(key);
+          return "reset" as const;
+        });
+      yield* redeem("acct", consume, undefined, "grant", true);
+      yield* redeem("acct", () => Effect.fail("unanswered replay"), undefined, "grant", true).pipe(
+        Effect.ignore,
+      );
+      yield* redeem("acct", () => Effect.as(Effect.void, undefined), undefined, "grant", true);
+      yield* redeem("acct", consume, undefined, "grant");
+      yield* redeem("acct", consume, undefined, "grant", true);
+      yield* redeem("acct", consume, undefined, "grant");
+      assert.strictEqual(attempts[0], attempts[2]);
+      assert.strictEqual(new Set(attempts).size, 3);
+    }).pipe(Effect.provide(ResetCreditCoordinator.layerTest)),
+  );
+
+  it.effect("keeps a failed manual preparation out of the automatic retry", () =>
+    Effect.gen(function* () {
+      const { redeem } = yield* ResetCreditCoordinator.ResetCreditCoordinator;
+      const spends = new Set<string>();
+      const consume = (key: string) =>
+        Effect.sync(() => {
+          spends.add(key);
+          return "reset" as const;
+        });
+      yield* redeem("acct", consume, undefined, "grant", true);
+      let manualKey: string | undefined;
+      yield* redeem(
+        "acct",
+        (key) =>
+          Effect.sync(() => {
+            manualKey = key;
+          }).pipe(Effect.andThen(Effect.fail("login read failed"))),
+        undefined,
+        "grant",
+      ).pipe(Effect.ignore);
+      yield* redeem("acct", consume, undefined, "grant", true);
+      assert.strictEqual(spends.size, 1);
+      assert.isDefined(manualKey);
+      yield* redeem(
+        "acct",
+        (key) => {
+          assert.strictEqual(key, manualKey);
+          return consume(key);
+        },
+        undefined,
+        "grant",
+      );
+      assert.strictEqual(spends.size, 2);
+    }).pipe(Effect.provide(ResetCreditCoordinator.layerTest)),
+  );
+
   it.effect("serialises concurrent redemptions on the same account, not per caller", () =>
     Effect.gen(function* () {
       const { redeem } = yield* ResetCreditCoordinator.ResetCreditCoordinator;
