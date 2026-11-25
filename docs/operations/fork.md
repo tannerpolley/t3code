@@ -70,13 +70,13 @@ PATH=$M/node_modules/.bin:$PATH CI=true T3CODE_PROJECT_ROOT=$M node scripts/setu
 
 ## Checks
 
-For a managed handoff, the orchestrator checks that the worker worktree is clean and still at the reviewed commit, fetches `origin/main`, and runs from that worktree:
+For a managed handoff, the orchestrator checks that the worker worktree is clean and still at the reviewed commit. Fetch `origin/main` and incorporate its current tip into the branch before validation. Review any changes that resolution introduced. Run from that worktree:
 
 ```sh
-flock "$HOME/.t3code-validation.lock" vp run check:changed --full-validation origin/main
+vp run check:changed --full-validation origin/main
 ```
 
-Every fork worktree on this Linux host uses the same lock path for heavy branch validation. Keep the lock file in place. The command runs full typecheck with one workspace task at a time, then each affected package's test script. Vitest uses at most two workers, and the web and server suites use one worker each for Playwright. The branch gate also runs the usual changed-file checks. Require a zero exit status and confirm the worktree is still clean at the reviewed SHA before pushing, merging, or building. If the branch changes, including when resolving a conflict with `origin/main`, review the changed diff and validate the new head before delivery. Send failures back to the issue owner for repair.
+On Linux, the command acquires `~/.t3code-validation.lock` across the user's worktrees. Keep the lock file in place. It runs full typecheck with one workspace task at a time, affected package suites, and any adjacent tests those suites miss. Vitest uses at most two workers, and the web and server suites use one worker each for Playwright. The branch gate also runs the usual changed-file checks and rejects focused tests. Require a zero exit status and confirm the worktree is still clean at the validated SHA. Before merging, fetch `origin/main` again. If the target tip advanced, incorporate it and repeat validation even when GitHub reports a clean merge. Revalidate after any branch head change. Send failures back to the issue owner for repair.
 
 The commit hook launches repo-wide Knip. After their targeted checks, managed workers can use `git -c core.hooksPath=/dev/null commit` so the orchestrator runs Knip under the same lock.
 

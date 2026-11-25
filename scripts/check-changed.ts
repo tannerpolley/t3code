@@ -256,6 +256,43 @@ export const docReaderTests = (files: ReadonlyArray<string>) =>
     ? ["apps/server/src/cloud/ConnectReachability.test.ts"]
     : [];
 
+const withValidationLock = Effect.fn("checkChanged.withValidationLock")(function* <A, E, R>(
+  validation: Effect.Effect<A, E, R>,
+) {
+  const platform = yield* HostProcess.Platform;
+  if (platform !== "linux") return yield* Effect.fail("Full validation requires Linux and flock.");
+  const path = yield* Path.Path;
+  const home = yield* HostProcess.HomeDirectory;
+  const lock = path.join(home, ".t3code-validation.lock");
+  const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
+  yield* Console.log(`Waiting for branch validation lock: ${lock}`);
+  return yield* Effect.scoped(
+    Effect.gen(function* () {
+      // The child holds the lock until the scope closes or its parent closes stdin.
+      const handle = yield* spawner.spawn(
+        ChildProcess.make(
+          "flock",
+          [
+            "--no-fork",
+            lock,
+            process.execPath,
+            "-e",
+            'console.log("locked"); process.stdin.resume()',
+          ],
+          { stdin: "pipe", stderr: "inherit", forceKillAfter: "5 seconds" },
+        ),
+      );
+      const ready = yield* handle.stdout.pipe(Stream.decodeText, Stream.splitLines, Stream.runHead);
+      if (Option.getOrUndefined(ready) !== "locked")
+        return yield* Effect.fail("Could not acquire the branch validation lock.");
+      return yield* Effect.raceFirst(
+        validation,
+        handle.exitCode.pipe(Effect.andThen(Effect.fail("Lost the branch validation lock."))),
+      );
+    }),
+  );
+});
+
 const checkChanged = Effect.fn("checkChanged")(function* (input: {
   readonly ref: Option.Option<string>;
   readonly concurrency: Option.Option<number>;
@@ -288,7 +325,19 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
 
   const lines = (...args: Array<string>) => gitLines(root, args);
 
+  if (input.fullValidation && Option.isNone(input.ref))
+    return yield* Effect.fail(
+      "Full validation requires an explicit target ref (for example origin/main).",
+    );
   const { ref, base } = yield* comparisonBase(root, input.ref);
+  const revision = (name: string) =>
+    git(root, ["rev-parse", "--verify", "--end-of-options", `${name}^{commit}`]).pipe(
+      Effect.map((output) => output.toString().trim()),
+    );
+  const head = input.fullValidation ? yield* revision("HEAD") : undefined;
+  if (input.fullValidation && (yield* revision(ref)) !== base) {
+    return yield* Effect.fail(`Merge the current ${ref} into this branch before full validation.`);
+  }
   // --no-renames lists a rename as its old and new path, as CI does.
   const changedFiles = lines("diff", "--name-only", "--no-renames", base, "--");
   const untrackedFiles = lines("ls-files", "--others", "--exclude-standard");
@@ -303,11 +352,13 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
   // Ignored generated sources, declarations, env files, and install state affect check results.
   // Include them in the key, but skip large ignored folders that no check reads.
   // Recompute after a passing run so edits made during it are never cached as passing.
-  const ci = Option.getOrElse(yield* Config.option(Config.String("CI")), () => "");
+  const ci = input.fullValidation
+    ? "true"
+    : Option.getOrElse(yield* Config.option(Config.String("CI")), () => "");
   const inputKey = Effect.gen(function* () {
     const hash = NodeCrypto.createHash("sha256");
     // CI changes test behavior (vite.config.ts rejects .only under CI).
-    hash.update(`${process.version}\0${base}\0${ci}\0${input.fullValidation}\0`);
+    hash.update(`${process.version}\0${base}\0${ci}\0${head ?? ""}\0`);
     hash.update(
       yield* git(root, [
         "diff",
@@ -354,6 +405,9 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
   const code = present.filter((file) => CODE.test(file));
   const packages = readWorkspace();
   const { affected, outputs } = decide(files, packages, false);
+  const suites = input.fullValidation
+    ? packages.filter((pkg) => pkg.hasTest && affected.includes(pkg.name))
+    : [];
 
   // Changed test files, and the test files beside a changed source file
   // (foo.ts -> foo.test.ts, foo.browser.test.tsx). Vitest's import-graph
@@ -371,6 +425,9 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
   // It reads files other than the ones beside it, so no changed file selects it.
   if (affected.includes("t3")) tests.add("apps/server/src/provider/AgentContextBudget.test.ts");
   const { vitestTests, nodeTests } = splitTests(tests);
+  const selectedVitestTests = vitestTests.filter(
+    (file) => !suites.some((pkg) => file.startsWith(`${pkg.dir}/`)),
+  );
 
   // React Compiler coverage compiles every client source file, so run only the
   // changed files' cases, in one extra step: a -t filter in the main test step
@@ -442,7 +499,10 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
   );
 
   // Output is piped, so keep the colors a terminal would get.
-  const env = process.stdout.isTTY ? { FORCE_COLOR: "1" } : {};
+  const env = {
+    ...(process.stdout.isTTY ? { FORCE_COLOR: "1" } : {}),
+    ...(input.fullValidation ? { CI: ci } : {}),
+  };
   const vp = (args: ReadonlyArray<string>, cwd = root, testWorkers = 2) =>
     Effect.scoped(
       Effect.gen(function* () {
@@ -557,26 +617,23 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
           ]
         : []),
     // From the repo root, the root vite.config.ts hands each file to its package's config.
-    ...(input.fullValidation
-      ? packages
-          .filter((pkg) => pkg.hasTest && affected.includes(pkg.name))
-          .map((pkg) => ({
-            name: `test (${pkg.name})`,
-            run: vp(
-              ["run", "--filter", pkg.name, "test"],
-              root,
-              pkg.name === "@t3tools/web" || pkg.name === "t3" ? 1 : 2,
-            ),
-          }))
-      : vitestTests.length > 0
-        ? [
-            {
-              name: `test (${vitestTests.length} files)`,
-              run: vp(["test", "run", "--passWithNoTests", ...vitestTests], root, 1),
-              serial: true,
-            },
-          ]
-        : []),
+    ...suites.map((pkg) => ({
+      name: `test (${pkg.name})`,
+      run: vp(
+        ["run", "--filter", pkg.name, "test"],
+        root,
+        pkg.name === "@t3tools/web" || pkg.name === "t3" ? 1 : 2,
+      ),
+    })),
+    ...(selectedVitestTests.length > 0
+      ? [
+          {
+            name: `test (${selectedVitestTests.length} files)`,
+            run: vp(["test", "run", "--passWithNoTests", ...selectedVitestTests], root, 1),
+            serial: true,
+          },
+        ]
+      : []),
     ...(nodeTests.length > 0
       ? [
           command(`node --test (${nodeTests.length} files)`, [
@@ -630,6 +687,13 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
   yield* Console.log(`\n${summary.join("\n")}`);
 
   if (results.some((result) => result.outcome !== "pass")) return false;
+  if (
+    input.fullValidation &&
+    ((yield* revision(ref)) !== base || (yield* revision("HEAD")) !== head)
+  )
+    return yield* Effect.fail(
+      "The branch or target moved during validation. Validate the new head.",
+    );
   if ((yield* inputKey) !== key) {
     yield* Console.log("  pass not cached: files changed during the run");
     return true;
@@ -671,8 +735,10 @@ export const checkChangedCommand = Command.make(
     ),
   },
   (input) =>
-    checkChanged(input).pipe(
-      Effect.catch((message) => Console.error(message).pipe(Effect.as(false))),
+    (input.fullValidation ? withValidationLock(checkChanged(input)) : checkChanged(input)).pipe(
+      Effect.catch((error) =>
+        Console.error(typeof error === "string" ? error : error.message).pipe(Effect.as(false)),
+      ),
       // exitCode, not a failed exit: runMain calls process.exit() on failure, and
       // piped stdout is asynchronous on macOS, so it would cut off step output.
       Effect.flatMap((ok) =>

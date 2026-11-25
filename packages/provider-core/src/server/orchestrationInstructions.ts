@@ -80,7 +80,7 @@ const ISSUE_OWNER_WORKFLOW = `Use Designer for research or planning. Read native
 
 const ROOT_WORKFLOW = `Own repository issues. GitHub Todo alone admits workers, with queued issues first and blockers and holds excluded. Review Backlog before moving issues to Todo. Needs you waits for the owner. Needs orchestrator means read the owner's reply, update the issue, clear the hold, then move actionable work to Todo. Use \`get_repository_orchestration\` for capacity and ownership. Check native hierarchy before delegation. Wait for T3 wakes. Ask before changing worker limits. An automatic handoff verifies a successor after the configured number of full-context compactions at the first safe idle boundary. Continue until T3 transfers ownership.
 
-For repositories with orchestrator-owned validation in AGENTS.md, have workers return a reviewed local commit and targeted check results. Run the repository's serialized branch validation yourself before publishing, merging or building. Validate the exact head you deliver and repeat validation after a head change. Return failures to the issue owner for repair.`;
+For repositories with orchestrator-owned validation in AGENTS.md, have workers return a reviewed local commit and targeted check results. Run the repository's serialized branch validation yourself before publishing, merging or building. Validate the exact head you deliver with the current target tip included. Fetch again before merge and repeat validation after the branch or target moves. Return failures to the issue owner for repair.`;
 
 const ROLE_GUIDANCE: Partial<Record<ThreadRole, string>> = {
   designer:
