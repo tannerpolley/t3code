@@ -4389,9 +4389,24 @@ describe("storage cleanup reports and local file policies", () => {
         expect((yield* projections.getThread(stillBound)).worktreePath).toBe(slot);
         expect(yield* store.slotsInUse(root)).toBe(0);
 
+        const artifacts = [
+          "scenarios",
+          "scenarios-github-issue-links",
+          "scenarios-second-environment",
+          "writer-preview",
+        ].map((name) => `${slot}/.t3/${name}`);
+        if (workerState === "archived") {
+          yield* command(slot, ["config", "core.excludesFile", `${repo}/slot-excludes`]);
+          yield* fs.writeFileString(`${repo}/slot-excludes`, "/.t3/\n");
+          for (const artifact of artifacts) {
+            yield* fs.makeDirectory(artifact, { recursive: true });
+            yield* command(artifact, ["init", "--quiet"]);
+          }
+        }
         failReviewerRead = false;
         const report = yield* service.runNow;
         expect(report.entries[0]?.reason).toBe("Returned to the issue worktree pool");
+        for (const artifact of artifacts) expect(yield* fs.exists(artifact)).toBe(false);
         for (const threadId of [worker, reviewer, sideChat, ...activeReviewers]) {
           const thread = yield* projections.getThread(threadId);
           expect(thread.archivedAt === null, threadId).toBe(

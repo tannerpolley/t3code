@@ -312,8 +312,10 @@ paths, or unmerged commits and reports why it kept them.
 
 To retain caches and build outputs between issue workers, add their repository-relative paths to
 `t3.json` on the default branch, for example `"issueWorktreeKeepPaths": [".venv", "build"]`.
-Ignored files outside those paths are cleared during preparation. Keep paths should contain only
-files you intend to share between issue workers.
+Ignored files outside those paths are cleared during preparation. Inside a slot's `.t3` directory,
+T3 clears known scenario and Writer preview directories. Other entries and keep paths that overlap
+those directories make the slot unavailable. Keep paths should contain only files you intend to
+share between issue workers.
 
 Choose **Delete now** to run the enabled rules immediately. The latest results show which
 worktrees were removed or kept and why, plus any failures.
