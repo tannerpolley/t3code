@@ -1477,6 +1477,66 @@ it("the merge-at-head cases' raw arm needs the guard on the merge of #212 itself
   assert.isFalse(passes(moved, "gh pr merge 212 --match-head-commit 9d04be7"));
 });
 
+it("grades the Writer's choice to ask or edit across question formats", () => {
+  const cases = NodeFS.readFileSync(
+    new URL("./cases/delegation-scope.ndjson", import.meta.url),
+    "utf8",
+  )
+    .trim()
+    .split("\n")
+    .map(decodeDeviceCase);
+  const passes = (id: string, ...calls: Array<Omit<SampleRun["calls"][number], "step">>) => {
+    const testCase = cases.find((entry) => entry.id === id)!;
+    return gradeSample(testCase.expect, {
+      calls: calls.map((call, step) => ({ ...call, step })),
+      text: "Updated the terminology in the Abstract and Results.",
+      finalText: "Updated the terminology in the Abstract and Results.",
+      stopReason: "end_turn",
+    }).every((check) => check.pass);
+  };
+
+  const question =
+    "Do you want the existing account of recovery or the new claim that flooding prevents it?";
+  const codex = {
+    tool: "AskUserQuestion",
+    input: { questions: [{ title: question, options: ["Existing account", "New claim"] }] },
+    failed: false,
+  };
+  const mcp = {
+    tool: "t3_request_user_input",
+    input: { questions: [{ id: "scope", header: "Thesis", question, options: [] }] },
+    failed: false,
+  };
+  const write = {
+    tool: "Edit",
+    input: {
+      file_path: "paper.md",
+      old_string: "after floods",
+      new_string: "after inundation events",
+    },
+    failed: false,
+  };
+  const shellEdit = {
+    tool: "Bash",
+    input: { command: "ruby -pi -e 'gsub(/recovery/, %q{non-recovery})' paper.md" },
+    failed: false,
+  };
+
+  const conflict = "writer-conflicting-thesis";
+  assert.isTrue(passes(conflict, codex));
+  assert.isTrue(passes(conflict, mcp));
+  assert.isFalse(passes(conflict, { ...mcp, failed: true }));
+  assert.isFalse(passes(conflict, write, mcp));
+  assert.isFalse(passes(conflict, shellEdit, codex));
+
+  const explicit = "writer-explicit-revision";
+  assert.isTrue(passes(explicit, write));
+  assert.isFalse(passes(explicit, { ...write, failed: true }));
+  assert.isFalse(passes(explicit));
+  assert.isFalse(passes(explicit, codex, write));
+  assert.isFalse(passes(explicit, mcp, write));
+});
+
 it("cli-review-threads' raw arm binds each thread id to its own reply", () => {
   const line = NodeFS.readFileSync(
     new URL("./cases/pr-tools-vs-cli.ndjson", import.meta.url),
