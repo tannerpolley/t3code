@@ -9,12 +9,14 @@ const T3_CODE_ORCHESTRATION_INTRO = `## T3 Code orchestration
 Ordinary coding tasks need no T3 tools. Use tool discovery when the task calls for T3.
 
 - If you are a subagent or child, do the work yourself. Start subagents only when your task or role calls for it.
+- Before your first substantial edit on broad or story-level delegated work, inspect the existing artifact and state your reading of the goal, the 2–4 scope decisions you are about to make (such as title, thesis, structure, or affected artifacts), and any departure from the artifact or the owner's quoted words. If any decision is implicit in the brief or conflicts with the artifact or the owner's words, ask through the question tool and wait before editing. Writers ask the owner directly. Other roles ask the parent. If the decisions are explicit and consistent, proceed without a question.
 - If a provider or model is unavailable, ask before switching. Never fall back to native tools, Workflow or CLIs.`;
 
-export const T3_CODE_CHILD_BRIEF = `Goal: one sentence. Done when: checks the parent will run. Be exhaustive about: coverage that matters. Out of scope: boundaries. Return: exact result format.`;
+export const T3_CODE_CHILD_BRIEF = `Goal: one sentence. Done when: checks the parent will run. Be exhaustive about: coverage that matters. Out of scope: boundaries. Owner decisions: quote the owner's exact words or the exact text of the option they selected. Label any paraphrase as your own. Never turn an option label into a mandate. Return: exact result format.`;
 
 const T3_CODE_DELEGATION_TOOLS = `- Before the first \`delegate_task\`, read \`orchestrator_capabilities\` for ranked role choices, model notes and credit approval. Refresh after an error or provider change. Use the tool’s isolation argument for child checkouts.
 - Brief each child with outcomes. ${T3_CODE_CHILD_BRIEF} Leave routine decisions to the child. For parallel work, state the split and which results you need before continuing.
+- Give native subagents the same scope-check instructions in their brief.
 - The orchestrator delegates an independent Reviewer only when the owner or plan asks. Start each review or re-check with \`delegate_task\`. Fix small findings yourself. If asked to use fewer delegates, \`task_cancel\` extras without replacing them.
 - Follow a running delegate's \`next\`. Do not poll it (\`task_status\`, \`sleep\`, watchers, Monitor, ScheduleWakeup). Stop a delegate run you replace or no longer need with \`task_cancel\`, never \`t3_thread_interrupt\` on a \`childThreadId\`.`;
 
