@@ -32,6 +32,7 @@ import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useNowMinute } from "../hooks/useNowMinute";
 import { __setClientSettingsForTests, getClientSettings } from "../hooks/useSettings";
 import { useThreadRouteTarget } from "../hooks/useThreadRouteTarget";
+import * as entities from "../state/entities";
 import { useProjects, useServerConfigs, useQuietThreadShells } from "../state/entities";
 import { useConnectedEnvironmentIds, usePrimaryEnvironmentId } from "../state/environments";
 import * as session from "../state/session";
@@ -225,11 +226,13 @@ it("keeps a placed project row in keyboard order after sending, settling and rem
   vi.mocked(useQuietThreadShells).mockReturnValue([first, last, moved]);
   vi.mocked(useThreadRouteTarget).mockReturnValue({ kind: "server", threadRef: ref });
   vi.mocked(useConnectedEnvironmentIds).mockReturnValue([environmentId]);
-  vi.mocked(useServerConfigs).mockReturnValue(
-    new Map([
-      [environmentId, { shellThreadFamilies: false } as unknown as EnvironmentServerConfig],
-    ]),
-  );
+  using _config = vi
+    .spyOn(entities, "useServerConfigs")
+    .mockReturnValue(
+      new Map([
+        [environmentId, { shellThreadFamilies: false } as unknown as EnvironmentServerConfig],
+      ]),
+    );
   vi.mocked(useHandleNewThread).mockReturnValue({
     activeDraftThread: null,
     activeThread: first,
