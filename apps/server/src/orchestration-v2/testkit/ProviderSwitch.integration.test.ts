@@ -102,6 +102,7 @@ function makeTestAdapter(input: {
   readonly responseByRunOrdinal: Readonly<Record<number, string>>;
   readonly responseByThreadId?: Readonly<Record<string, Readonly<Record<number, string>>>>;
   readonly capturedTurns: Ref.Ref<ReadonlyArray<CapturedTurn>>;
+  readonly publishAssistantMessages?: boolean;
   readonly injectedHistory?: Ref.Ref<ReadonlyArray<unknown>>;
   readonly failStartOnce?: Ref.Ref<boolean>;
   readonly refuseStarts?: Ref.Ref<number>;
@@ -394,6 +395,29 @@ function makeTestAdapter(input: {
                 input.responseByThreadId?.[turnInput.threadId]?.[turnInput.runOrdinal] ??
                 input.responseByRunOrdinal[turnInput.runOrdinal] ??
                 `${input.driver} response for run ${turnInput.runOrdinal}`;
+              const responseMessageId = MessageId.make(
+                `message:${input.driver}:${turnInput.threadId}:${turnInput.runOrdinal}:assistant`,
+              );
+              if (input.publishAssistantMessages && terminalStatus === "completed") {
+                yield* PubSub.publish(events, {
+                  type: "message.updated",
+                  driver: input.driver,
+                  message: {
+                    id: responseMessageId,
+                    threadId: turnInput.threadId,
+                    runId: turnInput.runId,
+                    nodeId: turnInput.rootNodeId,
+                    role: "assistant",
+                    text: response,
+                    attachments: [],
+                    streaming: false,
+                    createdBy: "agent",
+                    creationSource: "provider",
+                    createdAt: eventTime,
+                    updatedAt: eventTime,
+                  },
+                });
+              }
               const providerEvents: ReadonlyArray<ProviderAdapter.ProviderAdapterV2Event> = [
                 {
                   type: "provider_turn.updated",
@@ -438,9 +462,7 @@ function makeTestAdapter(input: {
                     completedAt: eventTime,
                     updatedAt: eventTime,
                     type: "assistant_message",
-                    messageId: MessageId.make(
-                      `message:${input.driver}:${turnInput.threadId}:${turnInput.runOrdinal}:assistant`,
-                    ),
+                    messageId: responseMessageId,
                     text: rejectedHistory ? "" : response,
                     streaming: false,
                   },
@@ -5654,6 +5676,7 @@ describe("orchestration v2 provider switching", () => {
             modelSelection: selection,
             responseByRunOrdinal: {},
             capturedTurns,
+            publishAssistantMessages: true,
             ...(broken
               ? { brokenRunOrdinals: new Set<number>(), nativeThreadGeneration: generation }
               : {}),
