@@ -4869,16 +4869,17 @@ describe("OrchestratorMcpService provider resolution", () => {
             { id: "serviceTier", value: "priority" },
           ],
         } as const;
+        const base = { ...inherited, options: [inherited.options[0]] };
         const override = [{ id: "reasoningEffort", value: "max" }] as const;
         const cases = [
           {
-            name: "partial override",
+            name: "inherits reasoning and follows environment speed with a Fast parent",
             target: { options: override },
-            expected: { ...inherited, options: [...override, inherited.options[1]] },
+            expected: { ...base, options: override },
           },
           {
             name: "explicit fast alias wins over the environment default",
-            parent: { ...inherited, options: [inherited.options[0]] },
+            parent: base,
             target: { options: { serviceTier: "fast" } },
             expected: inherited,
           },
@@ -4895,13 +4896,13 @@ describe("OrchestratorMcpService provider resolution", () => {
           {
             name: "same model by alias",
             target: { model: "GPT" },
-            expected: { ...inherited, model: "GPT" },
+            expected: { ...base, model: "GPT" },
           },
           {
             name: "parent named the same model by alias",
             parent: { ...inherited, model: "gpt" },
             target: { model: inherited.model },
-            expected: inherited,
+            expected: base,
           },
           {
             name: "change model",
@@ -5088,10 +5089,7 @@ describe("OrchestratorMcpService provider resolution", () => {
           yield* Effect.gen(function* () {
             const service = yield* OrchestratorMcpService.OrchestratorMcpService;
             const capabilities = yield* service.capabilities(scope);
-            assert.deepEqual(
-              capabilities.inheritedOptions,
-              "parent" in testCase ? testCase.parent.options : inherited.options,
-            );
+            assert.deepEqual(capabilities.inheritedOptions, base.options);
             const rejected = yield* service
               .delegateTask(scope, {
                 task: "Review the change.",

@@ -59,6 +59,7 @@ import { defaultProjectFallbackReadyAtom } from "../state/projects";
 import { useThreadRouteTarget } from "./useThreadRouteTarget";
 import { readUnloadedThreadCount } from "../state/olderSettledShelf";
 import { resolveProjectDefaultProviderModelSelection } from "../providerInstances";
+import { modelSelectionWithoutCodexSpeed } from "@t3tools/shared/model";
 import { resolveNewThreadModelSelection } from "@t3tools/shared/usageLimits";
 
 export const LAST_USED_PROJECT_STORAGE_KEY = "t3code:last-used-project:v1";
@@ -189,7 +190,25 @@ export function createNewThreadHandler(router: AnyRouter) {
     const composerModelSelection = composerActiveProvider
       ? (carrySourceComposer?.modelSelectionByProvider[composerActiveProvider] ?? null)
       : null;
-    const carryModelSelection = composerModelSelection ?? carrySourceShell?.modelSelection ?? null;
+    const sourceSelection = composerModelSelection ?? carrySourceShell?.modelSelection ?? null;
+    const sourceEnvironmentId =
+      currentRouteTarget?.kind === "server"
+        ? currentRouteTarget.threadRef.environmentId
+        : carrySourceDraft?.environmentId;
+    const sourceConfig =
+      sourceEnvironmentId === undefined
+        ? undefined
+        : environmentServerConfigs.get(sourceEnvironmentId);
+    const sourceDriver =
+      sourceSelection &&
+      (sourceConfig?.providers?.find(({ instanceId }) => instanceId === sourceSelection.instanceId)
+        ?.driver ??
+        sourceConfig?.settings.providerInstances?.[sourceSelection.instanceId]?.driver ??
+        sourceSelection.instanceId);
+    const carryModelSelection =
+      sourceSelection && sourceDriver === "codex"
+        ? modelSelectionWithoutCodexSpeed(sourceSelection)
+        : sourceSelection;
     const carryInteractionMode =
       carrySourceComposer?.interactionMode ??
       carrySourceShell?.interactionMode ??
@@ -368,7 +387,7 @@ export function createNewThreadHandler(router: AnyRouter) {
         const storedDraft = getComposerDraft(emptyStoredDraftThread.draftId);
         const storedDraftHasExplicitModelPick = hasExplicitComposerModelSelection(storedDraft);
         if (!storedDraftHasExplicitModelPick) {
-          applyStickyState(emptyStoredDraftThread.draftId);
+          applyStickyState(emptyStoredDraftThread.draftId, targetServerSettings.providerInstances);
           const modelSelectionOverride = resolveModelSelectionOverride(
             emptyStoredDraftThread.draftId,
           );
@@ -457,7 +476,7 @@ export function createNewThreadHandler(router: AnyRouter) {
         runtimeMode: defaultRuntimeMode,
         ...(carryInteractionMode ? { interactionMode: carryInteractionMode } : {}),
       });
-      applyStickyState(draftId);
+      applyStickyState(draftId, targetServerSettings.providerInstances);
       const modelSelectionOverride = resolveModelSelectionOverride(draftId);
       if (modelSelectionOverride) {
         setModelSelection(draftId, modelSelectionOverride, { replaceOptions: true });

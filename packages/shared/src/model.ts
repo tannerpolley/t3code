@@ -161,6 +161,32 @@ export function getCodexServiceTierOptionValue(
   );
 }
 
+function isCodexSpeedOption(option: ProviderOptionSelection): boolean {
+  return option.id === "serviceTier" || option.id === "fastMode";
+}
+
+export function withoutCodexSpeed(
+  options: ReadonlyArray<ProviderOptionSelection> | null | undefined,
+) {
+  const remaining = options?.filter((option) => !isCodexSpeedOption(option));
+  return remaining?.length ? remaining : undefined;
+}
+
+export function withCodexSpeedFrom(
+  options: ReadonlyArray<ProviderOptionSelection> | null | undefined,
+  source: ReadonlyArray<ProviderOptionSelection> | null | undefined,
+) {
+  const speed = source?.filter(isCodexSpeedOption);
+  const remaining = withoutCodexSpeed(options);
+  return speed?.length ? [...(remaining ?? []), ...speed] : remaining;
+}
+
+export function modelSelectionWithoutCodexSpeed(selection: ModelSelection): ModelSelection {
+  const { options, ...rest } = selection;
+  const remaining = withoutCodexSpeed(options);
+  return remaining ? { ...rest, options: remaining } : rest;
+}
+
 export function codexSpeedForTier(tier: unknown): "standard" | "fast" | "ultrafast" {
   if (tier === "fast" || tier === "priority") return "fast";
   return tier === "ultrafast" ? "ultrafast" : "standard";

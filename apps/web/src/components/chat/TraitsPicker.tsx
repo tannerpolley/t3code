@@ -23,6 +23,7 @@ import {
   getProviderOptionDescriptors,
   isClaudeUltrathinkPrompt,
   normalizeModelSlug,
+  withCodexSpeedFrom,
 } from "@t3tools/shared/model";
 import { msg, T, useMessages } from "gt-react";
 import { memo } from "react";
@@ -52,11 +53,7 @@ function keepExplicitSpeed(
   next: ProviderOptions | undefined,
   original: ProviderOptions | null | undefined,
 ) {
-  if (provider !== "codex") return next;
-  return [
-    ...(next ?? []).filter(({ id }) => id !== "serviceTier" && id !== "fastMode"),
-    ...(original ?? []).filter(({ id }) => id === "serviceTier" || id === "fastMode"),
-  ];
+  return provider === "codex" ? withCodexSpeedFrom(next, original) : next;
 }
 
 /**

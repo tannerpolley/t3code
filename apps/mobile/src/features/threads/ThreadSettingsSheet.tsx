@@ -27,6 +27,7 @@ import { AnimatedLegendList } from "@legendapp/list/reanimated";
 import {
   getProviderOptionCurrentLabel,
   getProviderOptionCurrentValue,
+  modelSelectionWithoutCodexSpeed,
 } from "@t3tools/shared/model";
 import {
   useNavigation,
@@ -112,6 +113,7 @@ import { ModelRow, ChoiceRow } from "./ThreadSettingsRows";
 import {
   compatibleRuntimeModeForChoices,
   runtimeModeChoicesForSupportedModes,
+  preserveCodexSpeedOnTraitChange,
   withManagedRuntimeModeLimits,
   type RuntimeModeChoice,
   selectableChoices,
@@ -587,12 +589,16 @@ function ThreadSettingsSessionProvider(
         }
       }
     }
-    const next = change
+    const changedOptions = change
       ? (change.modelOptions ?? [])
       : applyProviderOptionSelection(displayedDescriptors, { id, value });
-    if (!next) {
-      return;
-    }
+    if (!changedOptions) return;
+    const next = preserveCodexSpeedOnTraitChange(
+      changedOptions,
+      (pendingModel?.selection ?? props.selectedModel)?.options,
+      displayedModel?.providerDriver,
+      id,
+    );
     if (pendingModel) {
       rememberModelOptions(pendingModel.selection.instanceId, pendingModel.selection.model, next);
       setPendingModel({
@@ -624,7 +630,11 @@ function ThreadSettingsSessionProvider(
         current,
         pressed: option,
         pressedIsApplied: isApplied(option),
-        restoreSelection: props.restoreSelection,
+        restoreSelection:
+          option.providerDriver === "codex"
+            ? (selection) =>
+                modelSelectionWithoutCodexSpeed(props.restoreSelection?.(selection) ?? selection)
+            : props.restoreSelection,
       }),
     );
   };
@@ -1553,10 +1563,7 @@ export function ExistingThreadSettingsRouteScreen({
       reportedModelSelection={reportedModelSelection}
       onSelectModel={(option) =>
         updateModelSelection(
-          withStoredThreadModelOptions(
-            withRememberedModelOptions(option.selection),
-            selectedThread.modelSelection,
-          ),
+          withStoredThreadModelOptions(option.selection, selectedThread.modelSelection),
         )
       }
       restoreSelection={withRememberedModelOptions}

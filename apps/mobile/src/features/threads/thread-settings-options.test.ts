@@ -9,6 +9,7 @@ import {
   type RuntimeMode,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
+import { preserveCodexSpeedOnTraitChange } from "./thread-settings-options";
 
 import {
   applyProviderOptionSelection,
@@ -120,6 +121,20 @@ describe("prompt-controlled reasoning", () => {
         "ultracode",
       ),
     ).toEqual({ prompt: "solve it", modelOptions: [{ id: "effort", value: "ultracode" }] });
+  });
+
+  it("saves reasoning without pinning the Codex catalog's speed", () => {
+    const reasoningChange = [
+      { id: "reasoningEffort", value: "high" },
+      { id: "serviceTier", value: "default" },
+    ];
+    expect(
+      preserveCodexSpeedOnTraitChange(reasoningChange, undefined, "codex", "reasoningEffort"),
+    ).toEqual([{ id: "reasoningEffort", value: "high" }]);
+    const fast = { id: "serviceTier", value: "priority" };
+    expect(
+      preserveCodexSpeedOnTraitChange(reasoningChange, [fast], "codex", "reasoningEffort"),
+    ).toEqual([{ id: "reasoningEffort", value: "high" }, fast]);
   });
 
   it("keeps body-controlled Ultrathink locked", () => {

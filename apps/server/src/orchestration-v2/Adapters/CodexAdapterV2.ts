@@ -5573,6 +5573,8 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   ...goalHold.context.input,
                   providerTurnOrdinal: goalHold.context.providerTurnOrdinal + 1,
                 },
+                serviceTier:
+                  goalHold.context.appliedServiceTier ?? goalHold.context.startedServiceTier,
                 nativeTurnId: payload.turn.id,
                 startedAt: codexTimestamp(payload.turn.startedAt),
               });
@@ -8111,8 +8113,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               serviceTier = resolveCodexServiceTier(descriptor, selectedTier, defaultSpeed);
               // turn/start persists its tier, so restore the config when an override is cleared.
               if (serviceTier === undefined && codexConfig !== undefined) {
-                const configured =
-                  codexConfig.service_tier ?? descriptor?.currentValue ?? "default";
+                const configured = codexConfig.service_tier ?? "default";
                 serviceTier =
                   offeredCodexServiceTier(descriptor?.options ?? [], configured) ?? configured;
               }

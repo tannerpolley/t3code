@@ -4500,6 +4500,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                     id: "serviceTier",
                     type: "select",
                     label: "Speed",
+                    currentValue: "priority",
                     options: [
                       { id: "default", label: "Standard" },
                       { id: "priority", label: "Fast" },
@@ -12714,6 +12715,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                 nativeTurnId: "goal-turn-1",
                 prompt: objective,
                 sentPrompt: `This thread's goal is already set. Do not call create_goal. Start working on it now: ${objective}`,
+                turnPolicy: { serviceTier: "default" },
               }).slice(5),
               5,
             ),
@@ -12747,7 +12749,18 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             }),
           ],
         });
-        const harness = yield* makeCodexReplayHarness(transcript);
+        const harness = yield* makeCodexReplayHarness(
+          transcript,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          { defaultSpeed: Effect.succeed("normal") },
+        );
         yield* harness.runtime.startTurn(yield* goalTurnInput(harness, `/goal ${objective}`));
         yield* harness.firstTerminal;
 
@@ -12776,6 +12789,17 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           [
             [providerTurnId("goal-turn-1"), RunAttemptId.make("goal-attempt"), 1],
             [providerTurnId("goal-turn-2"), RunAttemptId.make("goal-attempt"), 2],
+          ],
+        );
+        assert.deepEqual(
+          harness.events.flatMap((event) =>
+            event.type === "provider_turn.updated" && event.providerTurn.status === "completed"
+              ? [[event.providerTurn.id, event.providerTurn.serviceTier]]
+              : [],
+          ),
+          [
+            [providerTurnId("goal-turn-1"), "default"],
+            [providerTurnId("goal-turn-2"), "default"],
           ],
         );
         // The goal is set paused until its first turn starts; only the result shows.

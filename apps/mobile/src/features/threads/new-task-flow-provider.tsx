@@ -29,6 +29,7 @@ import { pipe } from "effect/Function";
 import { useProjects, useServerConfigs, useThreadShells } from "../../state/entities";
 import type { TurnCommandMetadata } from "../../lib/commandMetadata";
 import type { DraftComposerAttachment } from "../../lib/composerImages";
+import { modelSelectionWithoutCodexSpeed } from "@t3tools/shared/model";
 import type { ModelOption, ProviderGroup } from "../../lib/modelOptions";
 import {
   buildModelOptions,
@@ -479,16 +480,25 @@ export function NewTaskFlowProvider(
     selectedProject?.id ?? null,
   );
 
+  const stickyDefault =
+    stickyModelSelection &&
+    (stickyModelSelection.instanceId === "codex" ||
+      modelOptions.some(
+        (option) =>
+          option.selection.instanceId === stickyModelSelection.instanceId &&
+          option.providerDriver === "codex",
+      ))
+      ? modelSelectionWithoutCodexSpeed(stickyModelSelection)
+      : stickyModelSelection;
   const selectedDefaultModel = resolveNewTaskModelSelection({
     draftSelection: draftModelSelection,
     projectDefaultSelection: projectDefaultModelSelection,
-    stickySelection: stickyModelSelection,
+    stickySelection: stickyDefault,
     modelOptions,
   });
   const selectedModel = resolveNewThreadModelSelection({
     defaultSelection: selectedDefaultModel,
-    explicitSelection:
-      draftModelSelection ?? (projectDefaultModelSelection ? null : stickyModelSelection),
+    explicitSelection: draftModelSelection ?? (projectDefaultModelSelection ? null : stickyDefault),
     fallbackSelection: selectedEnvironmentServerConfig?.settings.fallbackModelSelection ?? null,
     providers: selectedEnvironmentServerConfig?.providers ?? [],
     ...(selectedEnvironmentServerConfig
@@ -523,9 +533,12 @@ export function NewTaskFlowProvider(
     if (!option) {
       return;
     }
-    const selection = withRememberedModelOptions(
-      options ? { ...option.selection, options } : option.selection,
-    );
+    const selection =
+      options !== undefined
+        ? { ...option.selection, options }
+        : option.providerDriver === "codex"
+          ? modelSelectionWithoutCodexSpeed(withRememberedModelOptions(option.selection))
+          : withRememberedModelOptions(option.selection);
     updateComposerDraftSettings(selectedProjectDraftKey, { modelSelection: selection });
     setStickyComposerModelSelection(selection);
   };
