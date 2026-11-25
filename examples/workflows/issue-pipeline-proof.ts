@@ -1,6 +1,7 @@
 import * as NodeChildProcess from "node:child_process";
-import * as NodeFS from "node:fs";
+import * as NodeFSP from "node:fs/promises";
 import * as NodePath from "node:path";
+import * as NodeUtil from "node:util";
 
 const { agent, ask, every, issues, start, step, stop, Tick, workflow } = T3;
 
@@ -9,21 +10,18 @@ const prefix = "https://github.com/" + repository + "/issues/";
 const project = process.env.T3_WORKFLOW_PROOF_PROJECT;
 if (!project) throw new Error("Set T3_WORKFLOW_PROOF_PROJECT to the private fixture clone.");
 
-const git = (cwd: string, ...args: string[]) =>
-  NodeChildProcess.execFileSync("git", args, { cwd, encoding: "utf8", timeout: 20_000 }).trim();
-const gh = (...args: string[]) =>
-  NodeChildProcess.execFileSync("gh", args, {
-    cwd: project,
-    encoding: "utf8",
-    timeout: 20_000,
-  }).trim();
-const holds = new Set(["Needs you", "Needs orchestrator"]);
+const execFile = NodeUtil.promisify(NodeChildProcess.execFile);
+const run = async (cwd: string, command: string, args: string[]) =>
+  (await execFile(command, args, { cwd, encoding: "utf8", timeout: 20_000 })).stdout.trim();
+const git = (cwd: string, ...args: string[]) => run(cwd, "git", args);
+const gh = (...args: string[]) => run(project, "gh", args);
+const holds = new Set(["needs you", "needs orchestrator"]);
 const fixtureTitle = "[#691 proof] ";
 const model = (name: string) => ({ instanceId: "codex", model: name });
 
 const worker = workflow(
   "issue-pipeline-proof",
-  { version: 1, payload: Schema.String, concurrency: 1 },
+  { version: 2, payload: Schema.String, concurrency: 1 },
   Effect.fn(function* (url) {
     const key = url.slice(prefix.length);
     if (!url.startsWith(prefix) || !/^\d+$/.test(key)) return yield* stop("Outside fixture scope");
@@ -32,7 +30,7 @@ const worker = workflow(
     if (
       !detail.title.startsWith(fixtureTitle) ||
       detail.state.name !== "Todo" ||
-      detail.labels.some(({ name }) => holds.has(name))
+      detail.labels.some(({ name }) => holds.has(name.toLowerCase()))
     ) {
       return yield* stop("Fixture is no longer eligible");
     }
@@ -49,13 +47,13 @@ const worker = workflow(
     const target = yield* step(
       "default-branch",
       { returns: Schema.String },
-      Effect.sync(() => {
+      Effect.tryPromise(async () => {
         const repo = JSON.parse(
-          gh("repo", "view", repository, "--json", "isPrivate,defaultBranchRef"),
+          await gh("repo", "view", repository, "--json", "isPrivate,defaultBranchRef"),
         );
         if (
           !repo.isPrivate ||
-          git(project, "remote", "get-url", "--push", "origin") !==
+          (await git(project, "remote", "get-url", "--push", "origin")) !==
             `https://github.com/${repository}.git`
         ) {
           throw new Error("Expected origin to point to the private fixture repository");
@@ -77,8 +75,8 @@ const worker = workflow(
     const worktree = yield* step(
       "find-worktree",
       { returns: Schema.String },
-      Effect.sync(() => {
-        const entry = git(project, "worktree", "list", "--porcelain", "-z")
+      Effect.tryPromise(async () => {
+        const entry = (await git(project, "worktree", "list", "--porcelain", "-z"))
           .split("\0\0")
           .find((row) => row.split("\0").includes("branch refs/heads/" + branch));
         if (!entry?.startsWith("worktree ")) throw new Error("Implementation worktree missing");
@@ -90,9 +88,9 @@ const worker = workflow(
       const snapshot = yield* step(
         name + "-snapshot",
         { returns: Schema.Struct({ head: Schema.String, diff: Schema.String }) },
-        Effect.sync(() => {
-          const head = git(worktree, "rev-parse", "HEAD");
-          const diff = git(
+        Effect.tryPromise(async () => {
+          const head = await git(worktree, "rev-parse", "HEAD");
+          const diff = await git(
             worktree,
             "diff",
             "--no-ext-diff",
@@ -138,20 +136,17 @@ ${snapshot.diff}`,
     const head = yield* step(
       "checks",
       { returns: Schema.String },
-      Effect.sync(() => {
+      Effect.tryPromise(async () => {
         if (
-          git(worktree, "rev-parse", "HEAD") !== verdict.head ||
-          git(worktree, "status", "--porcelain") !== "" ||
-          git(worktree, "diff", "--name-only", "origin/" + target + "...HEAD") !== file ||
-          NodeFS.readFileSync(NodePath.join(worktree, file), "utf8") !== expected + "\n"
+          (await git(worktree, "rev-parse", "HEAD")) !== verdict.head ||
+          (await git(worktree, "status", "--porcelain")) !== "" ||
+          (await git(worktree, "diff", "--name-only", "origin/" + target + "...HEAD")) !== file ||
+          (await NodeFSP.readFile(NodePath.join(worktree, file), "utf8")) !== expected + "\n"
         ) {
           throw new Error("Unexpected fixture diff or uncommitted changes");
         }
-        git(worktree, "diff", "--check", "origin/" + target + "...HEAD");
-        NodeChildProcess.execFileSync("python3", ["-B", "-m", "unittest"], {
-          cwd: worktree,
-          timeout: 20_000,
-        });
+        await git(worktree, "diff", "--check", "origin/" + target + "...HEAD");
+        await run(worktree, "python3", ["-B", "-m", "unittest"]);
         return verdict.head;
       }),
     );
@@ -159,9 +154,9 @@ ${snapshot.diff}`,
     const pr = yield* step(
       "open-pr",
       { returns: Schema.String },
-      Effect.sync(() => {
+      Effect.tryPromise(async () => {
         const existing = JSON.parse(
-          gh(
+          await gh(
             "pr",
             "list",
             "-R",
@@ -178,7 +173,7 @@ ${snapshot.diff}`,
         );
         const sameRepository = existing.find((pr) => !pr.isCrossRepository);
         if (sameRepository) return sameRepository.url;
-        git(project, "push", "origin", head + ":refs/heads/" + branch);
+        await git(project, "push", "origin", head + ":refs/heads/" + branch);
         return gh(
           "pr",
           "create",
@@ -206,13 +201,14 @@ ${snapshot.diff}`,
     yield* step(
       "merge-reviewed-head",
       { returns: Schema.Void },
-      Effect.sync(() => {
-        const read = () => JSON.parse(gh("pr", "view", pr, "--json", "state,headRefOid"));
-        let current = read();
+      Effect.tryPromise(async () => {
+        const read = async () =>
+          JSON.parse(await gh("pr", "view", pr, "--json", "state,headRefOid"));
+        let current = await read();
         if (current.headRefOid !== head) throw new Error("Fixture PR head changed after checks");
         if (current.state === "OPEN") {
-          gh("pr", "merge", pr, "--squash", "--match-head-commit", head);
-          current = read();
+          await gh("pr", "merge", pr, "--squash", "--match-head-commit", head);
+          current = await read();
         }
         if (current.state !== "MERGED" || current.headRefOid !== head) {
           throw new Error("Fixture PR merge was not verified");
@@ -226,7 +222,7 @@ ${snapshot.diff}`,
 
 workflow(
   "issue-pipeline-proof-poll",
-  { version: 1, payload: Tick, triggers: [every("1 minute")], concurrency: 1 },
+  { version: 2, payload: Tick, triggers: [every("1 minute")], concurrency: 1 },
   Effect.fn(function* () {
     return yield* step(
       "find-and-start",
@@ -238,7 +234,10 @@ workflow(
           .filter((row) => row.url.startsWith(prefix) && row.title.startsWith(fixtureTitle))
           .reverse()) {
           const detail = yield* issues.read(row);
-          if (detail.state.name !== "Todo" || detail.labels.some(({ name }) => holds.has(name)))
+          if (
+            detail.state.name !== "Todo" ||
+            detail.labels.some(({ name }) => holds.has(name.toLowerCase()))
+          )
             continue;
           const { runId } = yield* start(worker, row.url, { key: row.url, subject: row });
           selected.push(runId);
