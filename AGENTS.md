@@ -155,3 +155,7 @@ Read the matching doc before changing code in that area; code review enforces th
 - No continuously repainting animations; they peg the GPU on high-refresh displays.
 - Security matters, but do not over-index on dev-mode or maintainer-only features. Read [SECURITY.md](SECURITY.md) before auditing or triaging reports.
 - If a rule here fights the task in front of you, say so loudly and get a human sign-off before breaking it.
+
+## This fork
+
+This checkout is the tannerpolley/t3code fork: upstream plus a short keep list. Read [the fork guide](docs/operations/fork.md) for its branches, checks, builds and upstream syncs.
