@@ -2044,8 +2044,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       return false;
     }
     restoreDragScroll();
-    const threads = contextDragThreads();
     const threadRef = parseScopedThreadKey(contextDragKeyRef.current ?? "");
+    if (threadRef && !canOperateThreads([threadRef])) return true;
+    const threads = contextDragThreads();
     const title = (threadRef && readThreadShell(threadRef)?.title.trim()) || gt("Thread");
     moveThreadContextDragGhost(point, { title, count: threads.length });
     return true;
@@ -2053,7 +2054,8 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   const dropThreadContextDrag = (point: { x: number; y: number }) => {
     if (!pointerOutsideThreadList(point)) return false;
     restoreDragScroll();
-    dropThreadContext(point, contextDragThreads());
+    const threadRef = parseScopedThreadKey(contextDragKeyRef.current ?? "");
+    if (threadRef && canOperateThreads([threadRef])) dropThreadContext(point, contextDragThreads());
     return true;
   };
   // useSensor memoizes options identity; fresh options rebuild DndContext and every sortable row.
@@ -3779,6 +3781,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                         <SortableThreadRow
                           key={threadKey}
                           sortableId={threadKey}
+                          allowLayoutDrag={
+                            folderRow !== undefined && canWriteLayout(thread.environmentId)
+                          }
                           contextDrag={isContextDrag}
                           sortableDisabled={
                             renamingThreadKey === threadKey ||

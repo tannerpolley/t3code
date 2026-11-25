@@ -5,7 +5,11 @@ import type {
   SidebarProjectSection,
   ThreadId,
 } from "@t3tools/contracts";
-import { activeThreadSortKey, planPinnedReorder } from "@t3tools/client-runtime/state/thread-sort";
+import {
+  activeThreadSortKey,
+  pinOrderKeyBetween,
+  planPinnedReorder,
+} from "@t3tools/client-runtime/state/thread-sort";
 import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
 
 const compare = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
@@ -64,8 +68,27 @@ export function projectThreadPlacement<T extends PlacedThread>(
       .filter((thread) => thread.environmentId === moved.environmentId)
       .map((thread) => [key(thread), thread.id]),
   );
-  if (assignments.some(({ id }) => !ids.has(id))) return null;
-  return Object.fromEntries(assignments.map(({ id, orderKey }) => [ids.get(id)!, orderKey]));
+  if (assignments.every(({ id }) => ids.has(id))) {
+    return Object.fromEntries(assignments.map(({ id, orderKey }) => [ids.get(id)!, orderKey]));
+  }
+
+  // Equal ranks can force a rebalance. Foreign rows stay fixed and bound the local run.
+  let start = to;
+  let end = to + 1;
+  while (ordered[start - 1]?.environmentId === moved.environmentId) start -= 1;
+  while (ordered[end]?.environmentId === moved.environmentId) end += 1;
+  const left = ordered[start - 1];
+  const right = ordered[end];
+  let before = left ? rank(left, layouts) : null;
+  const after = right ? rank(right, layouts) : null;
+  const localAssignments: Array<[ThreadId, string]> = [];
+  for (const thread of ordered.slice(start, end)) {
+    const next = pinOrderKeyBetween(before, after);
+    if (next === null) return null;
+    localAssignments.push([thread.id, next]);
+    before = next;
+  }
+  return Object.fromEntries(localAssignments);
 }
 
 export type ProjectSectionRow<F> =

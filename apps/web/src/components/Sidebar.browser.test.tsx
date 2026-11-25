@@ -209,7 +209,7 @@ it("keeps a placed project row in keyboard order after sending, settling and rem
   style.textContent = appCss;
   document.head.append(style);
   stack.defer(() => style.remove());
-  using _operate = vi.spyOn(session, "useEnvironmentScope").mockReturnValue(true);
+  using _operate = vi.spyOn(session, "useEnvironmentScope").mockReturnValue(false);
   const previousSettings = getClientSettings();
   stack.defer(() => __setClientSettingsForTests(previousSettings));
   __setClientSettingsForTests({ ...DEFAULT_CLIENT_SETTINGS, boringSidebarEnabled: true });

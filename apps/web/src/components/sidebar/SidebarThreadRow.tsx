@@ -512,10 +512,11 @@ export function SortableThreadRow(
   props: Omit<SidebarThreadRowProps, "sortable"> & {
     sortableId: string;
     sortableDisabled: boolean;
+    allowLayoutDrag?: boolean;
     contextDrag: boolean;
   },
 ) {
-  const { sortableId, sortableDisabled, contextDrag, ...rowProps } = props;
+  const { sortableId, sortableDisabled, allowLayoutDrag, contextDrag, ...rowProps } = props;
   const canOperateThread = useEnvironmentScope(
     rowProps.thread.environmentId,
     AuthOrchestrationOperateScope,
@@ -523,7 +524,7 @@ export function SortableThreadRow(
   const { listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: sortableId,
     disabled:
-      sortableDisabled || !canOperateThread
+      sortableDisabled || (!allowLayoutDrag && !canOperateThread)
         ? SIDEBAR_SORTABLE_DRAG_DISABLED
         : SIDEBAR_SORTABLE_DRAG_ENABLED,
     animateLayoutChanges: animateSidebarLayoutChanges,

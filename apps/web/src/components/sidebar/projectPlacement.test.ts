@@ -149,6 +149,18 @@ it("writes the moved thread's rank when its displayed neighbor is on another env
   expect(sortProjectThreads(threads, placed)).toEqual([before, moved, neighbor]);
 });
 
+it("repairs tied ranks inside the moved thread's environment only", () => {
+  const createdAt = "2026-11-03T00:00:00Z";
+  const before = { id: ThreadId.make("a"), environmentId: local, createdAt };
+  const neighbor = { id: ThreadId.make("b"), environmentId: remote, createdAt };
+  const moved = { id: ThreadId.make("c"), environmentId: local, createdAt: "2026-11-01T00:00:00Z" };
+  const threads = [before, neighbor, moved];
+  const ranks = projectThreadPlacement(threads, moved, neighbor, new Map());
+  expect(Object.keys(ranks ?? {}).toSorted()).toEqual([before.id, moved.id]);
+  const placed: Layouts = new Map([[local, { ...EMPTY_SIDEBAR_LAYOUT, threadRanks: ranks! }]]);
+  expect(sortProjectThreads(threads, placed)).toEqual([before, moved, neighbor]);
+});
+
 it("keeps upstream folder order when no saved layout assigns positions", () => {
   const folders = ["Z", "A"].map((name) => ({
     group: {
