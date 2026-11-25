@@ -927,7 +927,8 @@ function configuredCodexServiceTier(
   descriptor: ReturnType<typeof codexTierDescriptor>,
   configured: string | null | undefined,
 ) {
-  const tier = configured ?? "default";
+  const tier =
+    configured ?? descriptor?.options.find((option) => option.isDefault)?.id ?? "default";
   return resolveCodexServiceTier(descriptor, tier, null) ?? tier;
 }
 

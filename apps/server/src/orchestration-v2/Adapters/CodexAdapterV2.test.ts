@@ -1,3 +1,4 @@
+import { getProviderOptionDescriptors, withEffectiveCodexSpeed } from "@t3tools/shared/model";
 import { historyResponseItems } from "@t3tools/provider-core/server/handoffBudget";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import {
@@ -4450,6 +4451,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           { speed: "normal", tier: "priority", options: [{ id: "serviceTier", value: "fast" }] },
           { speed: null, tier: "default", options: [] },
           { speed: null, tier: "priority", options: [], configured: "ultrafast" },
+          { speed: null, tier: "priority", options: [], catalogFast: true },
         ] as const;
         const entries = cases.flatMap(
           ({ tier }, index): Array<CodexReplay.CodexAppServerReplayEntry> => {
@@ -4490,16 +4492,9 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           },
         );
         const defaultSpeed = yield* Ref.make<CodexDefaultSpeed | null>(null);
-        const harness = yield* makeCodexReplayHarness(
-          makeCodexReplayTranscript({ scenario: `default-speed-${managed}`, entries }),
-          undefined,
-          undefined,
-          undefined,
-          undefined,
-          undefined,
-          undefined,
-          undefined,
-          Effect.succeed([
+        const catalogFast = yield* Ref.make(false);
+        const catalog = Ref.get(catalogFast).pipe(
+          Effect.map((fast): ServerProviderModel[] => [
             {
               slug: CODEX_TEST_MODEL_SELECTION.model,
               name: "Test model",
@@ -4512,14 +4507,25 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                     label: "Speed",
                     currentValue: "priority",
                     options: [
-                      { id: "default", label: "Standard" },
-                      { id: "priority", label: "Fast" },
+                      { id: "default", label: "Standard", isDefault: !fast },
+                      { id: "priority", label: "Fast", isDefault: fast },
                     ],
                   },
                 ],
               },
             },
           ]),
+        );
+        const harness = yield* makeCodexReplayHarness(
+          makeCodexReplayTranscript({ scenario: `default-speed-${managed}`, entries }),
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          catalog,
           {
             defaultSpeed: Ref.get(defaultSpeed),
             turnConfig: cases.map((item) =>
@@ -4538,6 +4544,18 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         );
         for (const [index, testCase] of cases.entries()) {
           yield* Ref.set(defaultSpeed, testCase.speed);
+          yield* Ref.set(catalogFast, "catalogFast" in testCase);
+          if (!managed && "catalogFast" in testCase) {
+            const [model] = yield* catalog;
+            assert.equal(
+              withEffectiveCodexSpeed(
+                getProviderOptionDescriptors({ caps: model!.capabilities! }),
+                testCase.options,
+                testCase.speed,
+              )[0]?.currentValue,
+              testCase.tier,
+            );
+          }
           yield* harness.runtime.startTurn({
             ...makeCodexTestTurnInput({
               threadId: harness.threadId,

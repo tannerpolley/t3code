@@ -407,6 +407,8 @@ function withConfiguredSelectDefault(
       if (descriptor.id !== descriptorId || descriptor.type !== "select") return descriptor;
       const value = pick(descriptor.options);
       if (!value) return descriptor;
+      // Codex needs the model's advertised tier when live config clears its cached override.
+      if (descriptor.id === "serviceTier") return { ...descriptor, currentValue: value };
       return {
         ...descriptor,
         currentValue: value,
