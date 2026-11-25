@@ -478,7 +478,7 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
       Effect.gen(function* () {
         const [command, commandArgs] = vitePlusCommand(args, platform);
         if (input.fullValidation) yield* Console.log(`\n> vp ${args.join(" ")}`);
-        const options = {
+        const options: ChildProcess.CommandOptions = {
           cwd,
           env: { ...env, VITEST_MAX_WORKERS: String(testWorkers) },
           extendEnv: true,
