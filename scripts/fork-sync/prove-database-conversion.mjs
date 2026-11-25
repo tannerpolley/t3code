@@ -455,6 +455,75 @@ try {
     refuse("convert", /database is locked/);
   }
 
+  {
+    using sqlite = new NodeSqlite.DatabaseSync(db);
+    const verifyBlocked = (name) => {
+      const report = JSON.parse(refuse("dry-run", /Preflight refused/));
+      NodeAssert.equal(report.blockers[name], 1, name);
+    };
+    const setRoot = (configuration) =>
+      sqlite
+        .prepare(`UPDATE orchestration_v2_projection_threads
+      SET payload_json = json_set(payload_json, '$.repositoryOrchestration', json(?))
+      WHERE thread_id = ?`)
+        .run(JSON.stringify(configuration), normal);
+    setRoot({ restore: { requestId: "restore" } });
+    verifyBlocked("repositoryRestores");
+    setRoot({});
+    sqlite.exec(`INSERT INTO scheduled_tasks
+      (task_id, title, prompt, enabled, schedule_json, project_id, thread_id, workspace_strategy_json,
+       model_selection_json, runtime_mode, interaction_mode, created_by, creation_source, created_at,
+       updated_at, last_run_status, run_count)
+      VALUES ('task', 'Task', 'Prompt', 1, '{"type":"interval","everyMs":60000}', 'project', 'owner-thread',
+        '{"type":"root"}', '{"instanceId":"codex","model":"gpt-5"}', 'full-access', 'default', 'user',
+        'web', current_timestamp, current_timestamp, 'never', 0)`);
+    verifyBlocked("forkSchedules");
+    sqlite.exec(`UPDATE scheduled_tasks SET thread_id = NULL;
+      UPDATE orchestration_v2_projection_threads SET payload_json = json_remove(payload_json, '$.repositoryOrchestration')
+      WHERE thread_id = 'owner-thread'`);
+    NodeAssert.equal(JSON.parse(success("dry-run")).blockers.forkSchedules, 0);
+
+    sqlite.exec(`INSERT INTO issue_inbox_digests(host, repository_id, text, created_at)
+        VALUES ('github.com', 'repository-id', 'Digest', current_timestamp);
+      INSERT INTO issue_inbox_events (host, repository_id, repository, event_key, issue_number,
+        issue_title, kind, tagged, high_priority, needs_triage, url, snippet, occurred_at, digest_id)
+        VALUES ('github.com', 'repository-id', 'example/project', 'key', 700, 'Issue', 'comment',
+          1, 0, 0, 'https://example.test', 'Comment', current_timestamp, 1)`);
+    verifyBlocked("pendingInboxDigestEvents");
+    sqlite.exec("UPDATE issue_inbox_digests SET delivered_at = current_timestamp");
+
+    sqlite.exec(`INSERT INTO inline_shell_runs (thread_id, block_id, run_id, status, record_json)
+      VALUES ('owner-thread', 'block', 'shell-run', 'completed', '{}')`);
+    verifyBlocked("pendingInlineShellDeliveries");
+    sqlite.exec("UPDATE inline_shell_runs SET delivered_by = 'delivery'");
+
+    sqlite.exec(`UPDATE orchestration_v2_projection_threads
+      SET payload_json = json_set(payload_json, '$.autoProviderSwitch',
+        json('{"runId":"failed","to":{"instanceId":"codex","model":"gpt-5"}}'))
+      WHERE thread_id = 'owner-thread';
+      INSERT INTO orchestration_v2_projection_runs
+        (run_id, thread_id, ordinal, provider, provider_instance_id, status, requested_at, completed_at, payload_json)
+      VALUES ('failed', 'owner-thread', 1, 'codex', 'codex', 'failed', current_timestamp, current_timestamp, '{}')`);
+    verifyBlocked("pendingProviderSwitches");
+    sqlite.exec(`INSERT INTO orchestration_v2_projection_runs
+      (run_id, thread_id, ordinal, provider, provider_instance_id, status, requested_at, completed_at, payload_json)
+      VALUES ('continuation', 'owner-thread', 2, 'codex', 'codex', 'completed', current_timestamp,
+        current_timestamp, '{"userMessageId":"limit-switch-resume:owner-thread:failed"}')`);
+    const settled = JSON.parse(success("dry-run")).blockers;
+    for (const name of [
+      "repositoryRestores",
+      "pendingInboxDigestEvents",
+      "pendingInlineShellDeliveries",
+      "pendingProviderSwitches",
+    ]) {
+      NodeAssert.equal(settled[name], 0, name);
+    }
+    sqlite.exec(`DELETE FROM orchestration_v2_projection_runs;
+      UPDATE orchestration_v2_projection_threads SET payload_json = json_remove(payload_json, '$.autoProviderSwitch')
+      WHERE thread_id = 'owner-thread';
+      INSERT INTO orchestration_v2_projection_thread_references VALUES ('owner-thread', 'archived-reference')`);
+  }
+
   async function readThreads(runtime) {
     return withStores(runtime, db, function* ({ store, projection, project }) {
       NodeAssert.equal(
@@ -547,15 +616,83 @@ try {
         .run(type, normal, normal, type, now);
     }
   }
+  const oldHead = await withStores(old, db, function* ({ store, projection }) {
+    const cursor = yield* store.latestAgentSequence(normal);
+    NodeAssert.equal((yield* projection.getThreadSnapshot(normal)).snapshotSequence, cursor);
+    NodeAssert.equal(
+      (yield* projection.getThreadSnapshotWindow(normal, { rowLimit: 20 })).snapshotSequence,
+      cursor,
+    );
+    return cursor;
+  });
+  {
+    using sqlite = new NodeSqlite.DatabaseSync(db);
+    sqlite.exec(`UPDATE orchestration_v2_projection_threads SET payload_json =
+      json_set(payload_json, '$.runtimeMode', 'invalid') WHERE thread_id = 'completion-thread'`);
+    refuse("convert", /Failed to read|Failed to load|Could not read/);
+    NodeAssert.equal(
+      sqlite
+        .prepare("SELECT count(*) AS n FROM sqlite_schema WHERE name LIKE 't3_fresh_fork_%'")
+        .get().n,
+      0,
+    );
+    NodeAssert.equal(
+      sqlite
+        .prepare(
+          "SELECT count(*) AS n FROM orchestration_events WHERE event_type = 'thread.quiet-updated' AND application_event_version = 2",
+        )
+        .get().n,
+      1,
+    );
+    sqlite.exec(`UPDATE orchestration_v2_projection_threads SET payload_json =
+      json_set(payload_json, '$.runtimeMode', 'full-access') WHERE thread_id = 'completion-thread'`);
+  }
   const report = JSON.parse(success("dry-run"));
   NodeAssert.equal(report.counts.events.withheld, 7);
   NodeAssert.equal(report.counts.events.requestEvents, 2);
   NodeAssert.equal(report.counts.events.completionEvents, 1);
   NodeAssert.deepEqual(report.settingsKeys, ["codexDefaultSpeed", "autoUseExpiringResetCredits"]);
-  success("convert");
+  const conversion = JSON.parse(success("convert").trimEnd().split("\n").at(-1));
+  NodeAssert.deepEqual(conversion, { converted: true, verifiedThreads: 3 });
   refuse("convert", /already converted/);
   await startServer(upstream, root);
   NodeAssert.deepEqual(await readThreads(fresh), before);
+  const { decideThreadResume } =
+    await import("../../apps/server/src/orchestration-v2/ThreadStream.ts");
+  await withStores(fresh, db, function* ({ store, projection }) {
+    const snapshot = yield* projection.getThreadSnapshot(normal);
+    const highWater = yield* store.latestAgentSequence(normal);
+    NodeAssert.equal(snapshot.snapshotSequence, highWater);
+    NodeAssert.equal(
+      (yield* projection.getThreadSnapshotWindow(normal, { rowLimit: 20 })).snapshotSequence,
+      highWater,
+    );
+    NodeAssert.ok(highWater < oldHead);
+    NodeAssert.deepEqual(
+      decideThreadResume({
+        afterSequence: oldHead,
+        highWater,
+        replayEventCount: 0,
+        replayEncodedBytes: 0,
+      }),
+      { mode: "snapshot" },
+    );
+
+    const event = {
+      type: "thread.metadata-updated",
+      id: "fresh-mutation",
+      threadId: normal,
+      occurredAt: fresh.Schema.decodeUnknownSync(fresh.Schema.DateTimeUtcFromString)(now),
+      payload: { ...snapshot.projection.thread, title: "Updated after cutover" },
+    };
+    const [stored] = yield* store.appendAgentEvents({ events: [event] });
+    yield* projection.apply(stored.event);
+    NodeAssert.ok(stored.sequence > oldHead);
+    NodeAssert.equal(
+      (yield* projection.getThreadSnapshot(normal)).projection.thread.title,
+      "Updated after cutover",
+    );
+  });
 
   const persisted = JSON.parse(await NodeFSP.readFile(settingsPath, "utf8"));
   NodeAssert.equal(persisted.snoozeLimitedThreads, true);
@@ -575,6 +712,27 @@ try {
     );
     NodeAssert.deepEqual(ledger(sqlite, "t3_fork_migrations"), forkLedger);
     NodeAssert.deepEqual(
+      {
+        ...sqlite
+          .prepare(
+            "SELECT * FROM orchestration_v2_projection_thread_references WHERE owner_thread_id = ?",
+          )
+          .get(normal),
+      },
+      {
+        owner_thread_id: normal,
+        referenced_thread_id: "archived-reference",
+      },
+    );
+    NodeAssert.equal(
+      sqlite
+        .prepare(
+          "SELECT count(*) AS n FROM sqlite_schema WHERE type = 'trigger' AND (name GLOB 'orchestration_v2_quiet_*' OR name GLOB 'orchestration_v2_thread_references_*')",
+        )
+        .get().n,
+      0,
+    );
+    NodeAssert.deepEqual(
       JSON.parse(sqlite.prepare("SELECT layout_json FROM sidebar_layout").get().layout_json),
       layout,
     );
@@ -593,7 +751,7 @@ try {
     );
   }
   console.log(
-    "PASS ledger and pending-work refusals, offline lock, dry-run counts, conversion, upstream boot, strict replay, full and bounded reads, and settings restore",
+    "PASS preflight refusals, offline lock, read-only counts, verification rollback, upstream boot, full and bounded reads, replay cursor fallback, archival preservation, and settings restore",
   );
 } finally {
   await NodeFSP.rm(root, { recursive: true, force: true });

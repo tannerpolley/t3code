@@ -56,53 +56,128 @@ const conversions = {
   completionProjections: [messages, "thread_id", nullParent, normalizedMessage],
 };
 
-const managedThreads = `SELECT thread.thread_id FROM ${threads} thread
-  WHERE thread.deleted_at IS NULL AND (
+const runs = "orchestration_v2_projection_runs";
+const managedThread = (id) => `EXISTS (SELECT 1 FROM ${threads} thread
+  WHERE thread.thread_id = ${id} AND thread.deleted_at IS NULL AND (
     json_type(thread.payload_json, '$.linkedIssue') = 'object'
     OR EXISTS (SELECT 1 FROM orchestration_v2_projection_issue_work claim
       WHERE claim.owner_thread_id = thread.thread_id)
     OR EXISTS (SELECT 1 FROM orchestration_v2_projection_repository_orchestration owner
-      WHERE owner.root_thread_id = thread.thread_id
-        OR owner.root_thread_id = json_extract(thread.payload_json, '$.lineage.rootThreadId'))
-  )`;
+      WHERE owner.root_thread_id IN (thread.thread_id, json_extract(thread.payload_json, '$.lineage.rootThreadId')))
+  ))`;
 
 const blockers = {
-  unresolvedAppRequests: `SELECT count(*) FROM ${requests}
-    WHERE CASE WHEN ${appOwned} THEN
-      status NOT IN ('resolved', 'expired', 'cancelled')
-      OR json_extract(payload_json, '$.status') IS NOT status END`,
-  pendingForkEffects: `SELECT count(*) FROM orchestration_v2_effect_outbox
-    WHERE status IN ('pending', 'running') AND
-      (effect_type LIKE 'issue.%' OR effect_type IN ('run.silence.check',
-        'repository.handoff-completion', 'usage-sprint.notify'))`,
-  ownerDecisions: `SELECT count(*) FROM owner_decisions
-    WHERE state IN ('publishing', 'awaiting_choice') OR pending_publish IS NOT NULL
-      OR pending_delivery = 1 OR pending_label = 1`,
-  issueChanges: `SELECT count(*) FROM issue_changes
-    WHERE status IN ('pending', 'queued', 'executing', 'needs_attention') OR in_flight_step IS NOT NULL`,
-  issueRequests: `SELECT count(*) FROM orchestration_v2_projection_issue_work_requests request
-    LEFT JOIN orchestration_v2_projection_issue_work work USING (host, repository_id, issue_id)
-    WHERE request.queue_state IN ('queued', 'needs_attention') OR
-      (request.queue_state IS NULL AND json_type(request.payload_json, '$.cancellation') IS NULL
-        AND (work.owner_thread_id IS NULL OR request.attempt_key = work.owner_thread_id))`,
-  repositoryHandoffs: `SELECT count(*) FROM orchestration_v2_projection_repository_orchestration owner
-    JOIN ${threads} thread ON thread.thread_id = owner.root_thread_id
-    WHERE json_type(thread.payload_json, '$.repositoryOrchestration.handoff') = 'object'
-      OR json_extract(thread.payload_json, '$.repositoryOrchestration.automaticHandoff.status') = 'verifying'`,
-  managedRuns: `SELECT count(*) FROM orchestration_v2_projection_runs
-    WHERE thread_id IN (${managedThreads})
-      AND status IN ('queued', 'preparing', 'starting', 'running', 'waiting')`,
-  managedDelegations: `WITH managed AS MATERIALIZED (${managedThreads})
-    SELECT count(*) FROM orchestration_v2_projection_subagents
-    WHERE origin = 'app_owned'
-      AND (status IN ('pending', 'running', 'waiting') OR completion_delivery_state IN ('pending', 'claimed'))
-      AND (thread_id IN managed OR child_thread_id IN managed)`,
-  managedProviderRequests: `SELECT count(*) FROM ${requests}
-    WHERE thread_id IN (${managedThreads}) AND status = 'pending' AND NOT (${appOwned})`,
-  forkSchedules: `SELECT count(*) FROM scheduled_tasks
-    WHERE repository_target_json IS NOT NULL OR action IS NOT 'prompt'`,
-  runningInlineShells: "SELECT count(*) FROM inline_shell_runs WHERE status = 'running'",
+  unresolvedAppRequests: [
+    requests,
+    `${appOwned} AND (
+    status NOT IN ('resolved', 'expired', 'cancelled')
+    OR json_extract(payload_json, '$.status') IS NOT status)`,
+  ],
+  pendingForkEffects: [
+    "orchestration_v2_effect_outbox",
+    `status IN ('pending', 'running') AND
+    (effect_type LIKE 'issue.%' OR effect_type IN ('run.silence.check',
+      'repository.handoff-completion', 'usage-sprint.notify'))`,
+  ],
+  ownerDecisions: [
+    "owner_decisions",
+    `state IN ('publishing', 'awaiting_choice') OR pending_publish IS NOT NULL
+    OR pending_delivery = 1 OR pending_label = 1`,
+  ],
+  issueChanges: [
+    "issue_changes",
+    `status IN ('pending', 'queued', 'executing', 'needs_attention')
+    OR in_flight_step IS NOT NULL`,
+  ],
+  issueRequests: [
+    "orchestration_v2_projection_issue_work_requests",
+    `queue_state IN ('queued', 'needs_attention') OR
+    (queue_state IS NULL AND json_type(payload_json, '$.cancellation') IS NULL
+      AND NOT EXISTS (SELECT 1 FROM orchestration_v2_projection_issue_work work
+        WHERE work.host = entry.host AND work.repository_id = entry.repository_id AND work.issue_id = entry.issue_id
+          AND work.owner_thread_id IS NOT NULL AND work.owner_thread_id <> entry.attempt_key))`,
+  ],
+  repositoryHandoffs: [
+    threads,
+    `json_type(payload_json, '$.repositoryOrchestration.handoff') = 'object'
+    OR json_extract(payload_json, '$.repositoryOrchestration.automaticHandoff.status') = 'verifying'`,
+  ],
+  repositoryRestores: [
+    threads,
+    "json_type(payload_json, '$.repositoryOrchestration.restore') = 'object'",
+  ],
+  managedRuns: [
+    runs,
+    `status IN ('queued', 'preparing', 'starting', 'running', 'waiting')
+    AND ${managedThread("entry.thread_id")}`,
+  ],
+  managedDelegations: [
+    "orchestration_v2_projection_subagents",
+    `origin = 'app_owned'
+    AND (status IN ('pending', 'running', 'waiting') OR completion_delivery_state IN ('pending', 'claimed'))
+    AND (${managedThread("entry.thread_id")} OR ${managedThread("entry.child_thread_id")})`,
+  ],
+  managedProviderRequests: [
+    requests,
+    `status = 'pending' AND NOT (${appOwned})
+    AND ${managedThread("entry.thread_id")}`,
+  ],
+  forkSchedules: [
+    "scheduled_tasks",
+    `repository_target_json IS NOT NULL OR action IS NOT 'prompt'
+    OR EXISTS (SELECT 1 FROM ${threads} thread
+      WHERE thread.thread_id = entry.thread_id
+        AND json_type(thread.payload_json, '$.repositoryOrchestration') = 'object')`,
+  ],
+  runningInlineShells: ["inline_shell_runs", "status = 'running'"],
+  pendingInlineShellDeliveries: [
+    "inline_shell_runs",
+    `status <> 'running' AND delivered_by IS NULL
+    AND EXISTS (SELECT 1 FROM ${threads} thread WHERE thread.thread_id = entry.thread_id
+      AND thread.deleted_at IS NULL)`,
+  ],
+  pendingInboxDigestEvents: [
+    "issue_inbox_events",
+    `read_at IS NULL AND EXISTS (
+    SELECT 1 FROM issue_inbox_digests digest WHERE digest.digest_id = entry.digest_id AND digest.delivered_at IS NULL)`,
+  ],
+  pendingProviderSwitches: [
+    threads,
+    `archived_at IS NULL AND deleted_at IS NULL
+    AND json_extract(payload_json, '$.settledOverride') IS NOT 'settled'
+    AND json_type(payload_json, '$.autoProviderSwitch.to') = 'object'
+    AND json_extract(payload_json, '$.modelSelection.instanceId') IS json_extract(payload_json, '$.autoProviderSwitch.to.instanceId')
+    AND json_extract(payload_json, '$.modelSelection.model') IS json_extract(payload_json, '$.autoProviderSwitch.to.model')
+    AND coalesce(json_extract(payload_json, '$.modelSelection.options'), '[]')
+      IS coalesce(json_extract(payload_json, '$.autoProviderSwitch.to.options'), '[]')
+    AND EXISTS (SELECT 1 FROM ${runs} failed
+      WHERE failed.run_id = json_extract(entry.payload_json, '$.autoProviderSwitch.runId')
+        AND failed.thread_id = entry.thread_id AND failed.status = 'failed'
+        AND failed.run_id = (SELECT latest.run_id FROM ${runs} latest
+          WHERE latest.thread_id = entry.thread_id AND latest.status <> 'queued'
+            AND NOT (latest.status = 'cancelled' AND json_extract(latest.payload_json, '$.startedAt') IS NULL)
+          ORDER BY latest.completed_at IS NULL DESC, latest.completed_at DESC, latest.ordinal DESC, latest.run_id DESC
+          LIMIT 1)
+        AND NOT EXISTS (SELECT 1 FROM ${runs} continuation
+          WHERE continuation.thread_id = entry.thread_id
+            AND json_extract(continuation.payload_json, '$.userMessageId') =
+              'limit-switch-resume:' || entry.thread_id || ':' || failed.run_id)
+        AND NOT EXISTS (SELECT 1 FROM orchestration_v2_projection_context_transfers transfer
+          WHERE transfer.source_thread_id = entry.thread_id AND transfer.type = 'subagent_result'
+            AND json_extract(transfer.payload_json, '$.sourcePoint.runId') = failed.run_id)
+    )`,
+  ],
 };
+
+const retiredTriggers = [
+  "orchestration_v2_thread_references_insert",
+  "orchestration_v2_thread_references_update",
+  "orchestration_v2_thread_references_delete",
+  "orchestration_v2_quiet_turn_items_insert",
+  "orchestration_v2_quiet_turn_items_update",
+  "orchestration_v2_quiet_messages_insert",
+  "orchestration_v2_quiet_messages_update",
+];
 
 function scalar(db, query, ...args) {
   const statement = db.prepare(query);
@@ -148,11 +223,13 @@ function validateLedgers(recorded) {
 
 // A live dry run uses separate bounded statements. The high key caps the scan even as new rows arrive.
 function scan(db, table, fields, dryRun) {
-  if (!dryRun) return db.prepare(`SELECT ${fields} FROM ${table}`).get();
+  if (!dryRun) return db.prepare(`SELECT ${fields} FROM ${table} AS entry`).get();
   const end = scalar(db, `SELECT max(rowid) FROM ${table}`);
   const nextPage = db.prepare(`SELECT rowid FROM ${table}
     WHERE rowid > ? AND rowid <= ? ORDER BY rowid LIMIT 1 OFFSET 1023`);
-  const page = db.prepare(`SELECT ${fields} FROM ${table} WHERE rowid > ? AND rowid <= ?`);
+  const page = db.prepare(
+    `SELECT ${fields} FROM ${table} AS entry WHERE entry.rowid > ? AND entry.rowid <= ?`,
+  );
   const totals = page.get(0, 0);
   for (let cursor = 0; cursor < end;) {
     const next = nextPage.get(cursor, end)?.rowid ?? end;
@@ -196,11 +273,28 @@ function countRows(db, dryRun) {
 }
 
 function representativeThreads(db) {
-  const ids = new Set([scalar(db, `SELECT thread_id FROM ${threads} ORDER BY rowid DESC LIMIT 1`)]);
+  const ids = new Set();
   for (const [table, threadId, where] of Object.values(conversions)) {
-    ids.add(scalar(db, `SELECT ${threadId} FROM ${table} WHERE ${where} ORDER BY rowid LIMIT 1`));
+    ids.add(
+      scalar(
+        db,
+        `SELECT entry.${threadId} FROM ${table} entry
+      WHERE ${where} AND EXISTS (SELECT 1 FROM ${threads} thread
+        WHERE thread.thread_id = entry.${threadId} AND thread.deleted_at IS NULL)
+      ORDER BY entry.rowid LIMIT 1`,
+      ),
+    );
   }
   ids.delete(undefined);
+  const excluded =
+    ids.size === 0 ? "" : `AND thread_id NOT IN (${[...ids].map(() => "?").join(", ")})`;
+  const recent = scalar(
+    db,
+    `SELECT thread_id FROM ${threads}
+    WHERE deleted_at IS NULL ${excluded} ORDER BY rowid DESC LIMIT 1`,
+    ...ids,
+  );
+  if (recent !== undefined) ids.add(recent);
   return [...ids];
 }
 
@@ -231,7 +325,7 @@ function fingerprints(db, ids) {
   ]);
 }
 
-function run(db, mode, settingsPath) {
+async function run(db, mode, settingsPath) {
   NodeAssert.ok(
     !scalar(db, "SELECT 1 FROM sqlite_schema WHERE name = ?", settingsExport),
     "Database was already converted. Run restore-settings to recover the exported preferences.",
@@ -243,7 +337,10 @@ function run(db, mode, settingsPath) {
     keptSettings.filter((key) => Object.hasOwn(settings, key)).map((key) => [key, settings[key]]),
   );
   const blocked = Object.fromEntries(
-    Object.entries(blockers).map(([key, query]) => [key, scalar(db, query)]),
+    Object.entries(blockers).map(([key, [table, where]]) => [
+      key,
+      scan(db, table, `count(CASE WHEN ${where} THEN 1 END) AS count`, mode === "dry-run").count,
+    ]),
   );
   const before = countRows(db, mode === "dry-run");
   console.log(
@@ -279,13 +376,15 @@ function run(db, mode, settingsPath) {
       .run(...forkEvents).changes,
     before.events.withheld,
   );
-  // Keep sequence/stream heads for snapshot cursors and append. Upstream replay only reads version 2 thread events.
+  // Retain physical sequences and stream versions so later appends cannot reuse them.
   NodeAssert.equal(
     db
       .prepare(`UPDATE ${events} SET application_event_version = 0 WHERE ${matchingEvents}`)
       .run(...forkEvents).changes,
     before.events.withheld,
   );
+
+  for (const trigger of retiredTriggers) db.exec(`DROP TRIGGER IF EXISTS ${trigger}`);
 
   const changes = { ...before.events, ...before.runtimeRequests, ...before.messages };
   for (const [name, [table, , where, replacement]] of Object.entries(conversions)) {
@@ -313,6 +412,8 @@ function run(db, mode, settingsPath) {
   NodeAssert.equal(scalar(db, `SELECT max(sequence) FROM ${events}`), eventHead);
   NodeAssert.equal(scalar(db, "SELECT seq FROM sqlite_sequence WHERE name = ?", events), allocated);
   NodeAssert.deepEqual(fingerprints(db, sample), expected);
+  const { verifyCandidateThreads } = await import("./verify-candidate-threads.ts");
+  await verifyCandidateThreads(db, sample);
   return sample.length;
 }
 
@@ -339,7 +440,7 @@ function restore(db, settingsPath) {
   console.log(JSON.stringify({ restored: Object.keys(exported) }));
 }
 
-function main() {
+async function main() {
   const [mode, stateDir, ...extra] = process.argv.slice(2);
   NodeAssert.ok(
     extra.length === 0 && stateDir && ["dry-run", "convert", "restore-settings"].includes(mode),
@@ -352,7 +453,7 @@ function main() {
 
   if (mode === "dry-run") {
     using db = new NodeSqlite.DatabaseSync(filename, { readOnly: true, timeout: 250 });
-    run(db, mode, settingsPath);
+    await run(db, mode, settingsPath);
     return;
   }
   // The server holds this lock even between DB operations. The state DB lock also excludes other clients.
@@ -365,14 +466,14 @@ function main() {
   if (mode === "restore-settings") {
     restore(db, settingsPath);
   } else {
-    const verifiedThreads = run(db, mode, settingsPath);
+    const verifiedThreads = await run(db, mode, settingsPath);
     db.exec("COMMIT");
     console.log(JSON.stringify({ converted: true, verifiedThreads }));
   }
 }
 
 try {
-  main();
+  await main();
 } catch (error) {
   console.error(error.message);
   process.exitCode = 1;
