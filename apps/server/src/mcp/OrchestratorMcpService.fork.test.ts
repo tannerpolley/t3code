@@ -572,13 +572,11 @@ describe("OrchestratorMcpService provider resolution", () => {
       ),
       role.targets[2],
     );
-    assert.equal(
-      statuses[0]!.targets[2]!.unavailableReason,
-      `Model ${model} on provider codex rejected options: Option reasoningEffort must be one of: medium, high.`,
-    );
+    // Ultra fast falls back to Fast on a model that only offers Fast.
+    assert.deepEqual(statuses[0]!.targets[2], { ...role.targets[3]!, unavailableReason: null });
     assert.equal(
       statuses[0]!.targets[3]!.unavailableReason,
-      `Model ${model} on provider codex rejected options: Option serviceTier must be one of: default, priority.`,
+      `Model ${model} on provider codex rejected options: Option reasoningEffort must be one of: medium, high.`,
     );
   });
 

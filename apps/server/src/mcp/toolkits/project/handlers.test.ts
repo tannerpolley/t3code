@@ -177,15 +177,15 @@ const clientLaunchHarness = (input: {
           threadId === input.caller?.threadId
             ? { id: threadId, title: "Caller" }
             : launch !== undefined
-            ? {
-                id: launch.threadId,
-                title: launch.title,
-                mcpClientSessionId: launch.mcpClientSessionId,
-                delegatedFrom: launch.delegatedFrom,
-              }
-            : threadId === OTHER_AGENT_THREAD
-              ? { id: threadId, title: "Other bot", mcpClientSessionId: "session-other" }
-              : undefined;
+              ? {
+                  id: launch.threadId,
+                  title: launch.title,
+                  mcpClientSessionId: launch.mcpClientSessionId,
+                  delegatedFrom: launch.delegatedFrom,
+                }
+              : threadId === OTHER_AGENT_THREAD
+                ? { id: threadId, title: "Other bot", mcpClientSessionId: "session-other" }
+                : undefined;
         return thread === undefined
           ? Effect.die("no records for an unknown thread")
           : Effect.succeed({
@@ -389,6 +389,7 @@ it.effect("a thread launched from a Codex thread drops the caller's speed overri
     const codex = ProviderInstanceId.make("codex");
     const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
     const { projectId, dependencies } = clientLaunchHarness({
+      runtimeModeCeiling: "full-access",
       launched,
       caller: {
         threadId: ThreadId.make("thread:caller"),
