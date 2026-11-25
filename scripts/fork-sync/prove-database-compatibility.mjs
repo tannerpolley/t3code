@@ -186,6 +186,14 @@ try {
     ],
   };
   const requestId = "app-request";
+  const questions = [
+    {
+      id: "scope",
+      header: "Scope",
+      question: "Which scope?",
+      options: [{ label: "All", description: "Everything" }],
+    },
+  ];
   await withStores(old, db, function* ({ store, projection, project }) {
     const projectEvent = yield* store.appendProjectEvent({
       type: "project.created",
@@ -314,14 +322,7 @@ try {
             updatedAt: now,
             type: "user_input_request",
             requestId,
-            questions: [
-              {
-                id: "scope",
-                header: "Scope",
-                question: "Which scope?",
-                options: [{ label: "All", description: "Everything" }],
-              },
-            ],
+            questions,
           }),
         );
       }
@@ -536,11 +537,10 @@ try {
     const [restored] = window.projection.runtimeRequests;
     NodeAssert.equal(restored.responseCapability.type, "not_resumable");
     NodeAssert.deepEqual(restored.answers, { scope: ["All"] });
-    NodeAssert.ok(
-      window.projection.turnItems.some(
-        (item) => item.type === "user_input_request" && item.requestId === requestId,
-      ),
+    const requestCard = window.projection.turnItems.find(
+      (item) => item.type === "user_input_request" && item.requestId === requestId,
     );
+    NodeAssert.deepEqual(requestCard?.questions, questions);
     const completionSnapshot = yield* projection.getThreadSnapshot(completion);
     const completionHistory = Array.from(
       yield* store
