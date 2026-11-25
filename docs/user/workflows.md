@@ -170,3 +170,25 @@ Cancelling a run stops its active agent turns and cancels child runs it invoked.
 - Runs live on the server that started them and only advance while it is running; use an always-on machine for schedules or webhooks you cannot miss.
 - Keep older workflow versions defined until their unfinished runs end or are cancelled.
 - Signals sent to a `channel` before a run waits on it are kept for 7 days by default.
+
+## Run the fork's GitHub issue pipeline
+
+The fork ships [an issue pipeline](../../workflows/issue-pipeline.ts) for repositories that
+use GitHub's repository-level Todo, In progress, and Done issue statuses. Enable Workflows
+and register each repository as a T3 project. On the server, set `T3CODE_WORKFLOWS` to the
+absolute path to the fork's `workflows` directory, and set `T3_ISSUE_PIPELINE_PROJECTS` to a
+JSON array of the registered projects' absolute checkout paths. Leave the list empty to
+disable intake. Each checkout needs a GitHub `origin`, authenticated `gh` and Git access,
+and a `vp run check:changed` script. The server needs Codex with Sol and Astra available.
+
+The poll runs each minute. Todo issues with a **Needs you** or **Needs orchestrator** label
+stay out of the queue. Up to four issues run at a time, configurable with
+`T3_ISSUE_PIPELINE_LIMIT`. An implementation runs in its own worktree and a fresh agent
+reviews each committed revision. When local checks pass, the workflow opens a PR and waits
+for GitHub CI. It squash-merges only at the reviewed commit after CI is green.
+
+A blocked review, local check, publication, or merge opens a question on the Workflows page
+with the details. The question lets you acknowledge the handoff. The issue stays In progress
+and the branch and any PR are kept for you to resolve. To deliberately retry a stopped issue,
+return it to Todo and start a new `issue-pipeline` run with a new key and an input containing
+`project` (the registered checkout path) and `url` (the issue URL).
