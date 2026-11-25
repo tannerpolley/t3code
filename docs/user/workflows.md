@@ -188,6 +188,11 @@ reviews each committed revision. When local checks pass, the workflow opens a PR
 for GitHub CI. It merges only at the reviewed commit after CI is green, using the
 repository’s merge queue when required.
 
+GitHub can pin the head commit in a merge request. It checks the target branch separately,
+so changing the PR’s target during submission can change where it merges. Keep workflow
+PRs on their original target branch. The workflow verifies the target before submission
+and after merging, and asks you to intervene if it finds a different target.
+
 A blocked review, local check, publication, or merge opens a question on the Workflows page
 with the details. The question lets you acknowledge the handoff. The issue stays In progress
 and the branch and any PR are kept for you to resolve. To deliberately retry a stopped issue,
