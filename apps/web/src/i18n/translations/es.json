@@ -8918,7 +8918,7 @@
   "93c4c53562d30a98": "Cuando lo pides, los agentes te muestran un breve informe sobre T3 Code y lo envían al equipo de T3 si lo apruebas.",
   "cd9ee803e8727017": "Los agentes también informan por su cuenta de los problemas que encuentran en T3 Code, como una herramienta de T3 que falla.",
   "45fa271ea0e1ac8e": "Beta",
-  "3a678332fc7142f7": "Agrupa los hilos de la barra lateral en carpetas de proyecto. Los hilos fijados quedan arriba, y Pospuestos y Resueltos quedan debajo de las carpetas.",
+  "4794257eb633d9ba": "Agrupa los hilos de la barra lateral en carpetas de proyectos y secciones personalizadas. Los hilos conservan su orden cuando están activos, pospuestos o finalizados.",
   "e4e91d155cb6a9b4": "Barra lateral simple (agrupar por proyecto)",
   "f079556d67367fe7": "Muestra los hilos de las carpetas en dos líneas: el título y, debajo, la rama, la pull request y el agente.",
   "ac1e5c94d1ad3c6a": "Filas de carpeta en dos líneas",
@@ -11538,6 +11538,7 @@
       "v": "v"
     }
   ],
+  "1a565539ffd96d2a": "Canjea un crédito de restablecimiento guardado en las cuentas de este dispositivo poco antes de que caduque.",
   "39f64d971ba424b5": "No hay fuentes de uso configuradas.",
   "dbd877abdc2c7c81": "Fuente de cuotas HTTP",
   "4cf6a373a7535324": "{name} · Deshabilitado",
@@ -11959,6 +11960,7 @@
   "f8d32e19131fd5b3": "agentes cli codex claude cursor grok fx kiro opencode antigravity google iniciar sesión cerrar sesión instalar suscripción instancias autenticación clave de api modelos configuración binario ruta directorio de configuración codex_home shadow home endpoint argumentos variables de entorno nombre visible color de acento personalizado favorito oculto compactación automática sesiones nativas importar reanudar",
   "ad371af21e5b4b01": "Proveedores de uso",
   "9d9d31a4f3d5ff69": "fuentes de uso CLIProxyAPI proxy de CLI hub cuota suscripción límites gestión clave añadir quitar",
+  "5888d4308daf54f7": "Usar automáticamente los créditos de restablecimiento próximos a caducar",
   "d65fa0946585b245": "Generadores de texto",
   "e6fd69a8a3bb69e2": "modelo api clave de api openai openrouter anthropic ollama lm studio endpoint personalizado url base títulos de hilos mensajes de commit",
   "f2b07faba1229ce7": "Intervalo de comprobación de estado",
@@ -12981,5 +12983,22 @@
   "99451a5d2d40440f": "Retirada por {by}.",
   "3ee30a50b70fffab": "Retirada por {by}: {reason}",
   "92e129bf413a1220": "retirada",
-  "800966eb58181745": "Comprobando qué idiomas admite el modelo…"
+  "800966eb58181745": "Comprobando qué idiomas admite el modelo…",
+  "cef42f1eea1b516e": "Mover a una sección de {environment}",
+  "53215a0961be77a6": "Mover a una sección",
+  "73a4bafa48c244aa": "Nueva sección",
+  "5fd5eaf0499d5247": "Quitar de la sección",
+  "74f489e47ca59e05": "Cambiar el nombre de la sección",
+  "cd9047bb4c235453": "Eliminar sección",
+  "54d9df5245fa49a7": "No se pudo guardar la disposición de la barra lateral. Inténtalo de nuevo.",
+  "7070d28e490778c2": "Nombre de la sección",
+  "7c95a36da22a5eff": "Nueva sección",
+  "e0d0ac58b0ddb151": "Cambiar el nombre de la sección",
+  "1becfb4db7ffe135": "Predeterminado de Codex",
+  "3c8f3dd37881c169": "Codex velocidad normal rápida ultrarrápida nivel de servicio",
+  "72dc8979fc87df5c": "Velocidad de Codex: {speed}",
+  "7aa202a739c5f90d": "Se aplica en el siguiente turno a los hilos y agentes de Codex que usan la velocidad predeterminada. Los modelos usan la velocidad más rápida disponible hasta la que elijas.",
+  "afecbf6b765a2fb0": "Ultrarrápida",
+  "e2a5cf66eeec090e": "Velocidad predeterminada",
+  "e351e22d0be49f2b": "Velocidad de Codex: {speed} en {environment}"
 }

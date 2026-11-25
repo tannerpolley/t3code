@@ -1,11 +1,19 @@
 import appCss from "../index.css?inline";
 import type { EnvironmentServerConfig } from "@t3tools/client-runtime/connection";
-import { scopeProjectRef, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import {
+  scopeProjectRef,
+  scopeThreadRef,
+  scopedThreadKey,
+} from "@t3tools/client-runtime/environment";
 import * as shelfHooks from "../state/olderSettledShelf";
+import * as sidebarLayout from "../state/sidebarLayout";
 import { createWorkspaceFocusController, workspaceAreaProps } from "../lib/workspaceFocus";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import {
   DEFAULT_CLIENT_SETTINGS,
+  EMPTY_SIDEBAR_LAYOUT,
+  type SidebarLayoutRecord,
+  type SidebarLayoutMutation,
   EnvironmentId,
   type LocalApi,
   ProjectId,
@@ -24,8 +32,10 @@ import { useHandleNewThread } from "../hooks/useHandleNewThread";
 import { useNowMinute } from "../hooks/useNowMinute";
 import { __setClientSettingsForTests, getClientSettings } from "../hooks/useSettings";
 import { useThreadRouteTarget } from "../hooks/useThreadRouteTarget";
+import * as entities from "../state/entities";
 import { useProjects, useServerConfigs, useQuietThreadShells } from "../state/entities";
 import { useConnectedEnvironmentIds, usePrimaryEnvironmentId } from "../state/environments";
+import * as session from "../state/session";
 import { readEnvironmentScope, useEnvironmentScope } from "../state/session";
 import { useOrchestrationCommand } from "../state/use-orchestration-command";
 import { useTerminalUiStateStore } from "../terminalUiStateStore";
@@ -41,6 +51,7 @@ vi.mock(import("../state/olderSettledShelf"), async (original) => {
   return { ...actual, useOlderSettledShelf: vi.fn(actual.useOlderSettledShelf) };
 });
 vi.mock("../state/entities", { spy: true });
+vi.mock("../state/sidebarLayout", { spy: true });
 vi.mock("../state/environments", { spy: true });
 vi.mock("../hooks/useHandleNewThread", { spy: true });
 vi.mock("../hooks/useNowMinute", { spy: true });
@@ -191,6 +202,143 @@ describe("sidebar project folder new thread", () => {
 
     expect(startThread).toHaveBeenCalledExactlyOnceWith(dev1ProjectRef);
   });
+});
+
+it("keeps a placed project row in keyboard order after sending, settling and remounting", async () => {
+  using stack = new DisposableStack();
+  const style = document.createElement("style");
+  style.textContent = appCss;
+  document.head.append(style);
+  stack.defer(() => style.remove());
+  using _operate = vi.spyOn(session, "useEnvironmentScope").mockReturnValue(false);
+  const previousSettings = getClientSettings();
+  stack.defer(() => __setClientSettingsForTests(previousSettings));
+  __setClientSettingsForTests({ ...DEFAULT_CLIENT_SETTINGS, boringSidebarEnabled: true });
+
+  const web = project("web");
+  const { environmentId, id: projectId } = web;
+  const atDay = (day: number) => `2026-11-0${day}T00:00:00.000Z`;
+  const first = { ...threadShell(projectId, 1), createdAt: atDay(3) };
+  const last = { ...threadShell(projectId, 2), createdAt: atDay(2) };
+  const moved = { ...threadShell(projectId, 3), createdAt: atDay(1) };
+  const ref = scopeThreadRef(environmentId, first.id);
+  vi.mocked(useProjects).mockReturnValue([web]);
+  vi.mocked(useQuietThreadShells).mockReturnValue([first, last, moved]);
+  vi.mocked(useThreadRouteTarget).mockReturnValue({ kind: "server", threadRef: ref });
+  vi.mocked(useConnectedEnvironmentIds).mockReturnValue([environmentId]);
+  using _config = vi
+    .spyOn(entities, "useServerConfigs")
+    .mockReturnValue(
+      new Map([
+        [environmentId, { shellThreadFamilies: false } as unknown as EnvironmentServerConfig],
+      ]),
+    );
+  vi.mocked(useHandleNewThread).mockReturnValue({
+    activeDraftThread: null,
+    activeThread: first,
+    defaultProjectRef: scopeProjectRef(environmentId, projectId),
+    defaultProjectFallbackReady: true,
+    handleNewThread: vi.fn(),
+    routeDraftId: null,
+    routeThreadRef: ref,
+  });
+
+  let record: SidebarLayoutRecord = {
+    revision: 1,
+    layout: {
+      ...EMPTY_SIDEBAR_LAYOUT,
+      sidebarProjectSections: [
+        { id: "work", name: "Work", projectKeys: [projectId], collapsed: false },
+      ],
+    },
+  };
+  const change = vi.fn(async (_environmentId: EnvironmentId, mutation: SidebarLayoutMutation) => {
+    if (mutation.type !== "placeThreads") throw new Error("Expected a thread placement");
+    record = {
+      revision: record.revision + 1,
+      layout: { ...record.layout, threadRanks: mutation.ranks },
+    };
+    return true;
+  });
+  using _layout = vi.spyOn(sidebarLayout, "useSidebarLayout").mockImplementation(() => ({
+    byEnvironment: new Map([[environmentId, { environmentId, record, writable: true }]]),
+    change,
+  }));
+  const tree = () => (
+    <SidebarProvider>
+      <Sidebar routeReveal={{ observedKey: null, pendingKey: null }} />
+    </SidebarProvider>
+  );
+  const expected = [first, moved, last].map((thread) =>
+    scopedThreadKey(scopeThreadRef(environmentId, thread.id)),
+  );
+  const checkPlacement = async (screen: Awaited<ReturnType<typeof render>>) => {
+    const rows = Array.from(
+      screen.container.querySelectorAll<HTMLElement>('[data-testid="sidebar-row-folder"]'),
+    );
+    expect(rows.map((row) => row.dataset.sidebarRow)).toEqual(expected);
+    rows[0]!.focus();
+    await userEvent.keyboard("{ArrowDown}");
+    expect(document.activeElement).toBe(rows[1]);
+  };
+
+  {
+    await using screen = await render(tree());
+    const row = (threadId: ThreadId) =>
+      screen.container.querySelector<HTMLElement>(
+        `[data-sidebar-row="${CSS.escape(scopedThreadKey(scopeThreadRef(environmentId, threadId)))}"]`,
+      )!;
+    const source = row(moved.id);
+    const target = row(last.id);
+    const sourceRect = source.getBoundingClientRect();
+    const targetRect = target.getBoundingClientRect();
+    const x = sourceRect.x + sourceRect.width / 2;
+    const sourceY = sourceRect.y + sourceRect.height / 2;
+    const targetY = targetRect.y + targetRect.height / 2;
+    const pointer = (type: string, y: number) =>
+      new PointerEvent(type, {
+        bubbles: true,
+        cancelable: true,
+        pointerId: 1,
+        isPrimary: true,
+        button: 0,
+        buttons: type === "pointerup" ? 0 : 1,
+        clientX: x,
+        clientY: y,
+      });
+    await act(() => source.dispatchEvent(pointer("pointerdown", sourceY)));
+    await act(() => document.dispatchEvent(pointer("pointermove", sourceY - 10)));
+    await act(() => document.dispatchEvent(pointer("pointermove", targetY)));
+    await vi.waitFor(() =>
+      expect(target.closest("li")?.style.transform).toMatch(/translate3d\(0px, [1-9]/),
+    );
+    await act(() => document.dispatchEvent(pointer("pointerup", targetY)));
+    expect(change).toHaveBeenCalledExactlyOnceWith(environmentId, {
+      type: "placeThreads",
+      ranks: { [moved.id]: expect.any(String) },
+    });
+    await screen.rerender(tree());
+    await checkPlacement(screen);
+    const sent = {
+      ...moved,
+      latestUserAuthoredMessageAt: atDay(7),
+      unsettledAt: atDay(7),
+      activeOrderKey: "b",
+    };
+    vi.mocked(useQuietThreadShells).mockReturnValue([first, sent, last]);
+    await screen.rerender(tree());
+    await checkPlacement(screen);
+    vi.mocked(useQuietThreadShells).mockReturnValue([
+      { ...sent, settledOverride: "settled", settledAt: atDay(8), activeOrderKey: null },
+      first,
+      last,
+    ]);
+    await screen.rerender(tree());
+    await checkPlacement(screen);
+  }
+  record = JSON.parse(JSON.stringify(record));
+  await using reloaded = await render(tree());
+  await checkPlacement(reloaded);
 });
 
 // regression: #38623 unsent drafts are listed above threads but mod+1..9 skipped them
@@ -487,6 +635,9 @@ describe("sidebar settled pagination", () => {
     style.textContent = appCss;
     document.head.append(style);
     stack.defer(() => style.remove());
+    const previousSettings = getClientSettings();
+    stack.defer(() => __setClientSettingsForTests(previousSettings));
+    __setClientSettingsForTests({ ...DEFAULT_CLIENT_SETTINGS, boringSidebarEnabled: false });
     const focusController = createWorkspaceFocusController(document);
     stack.defer(() => focusController.dispose());
     let loading = false;

@@ -594,6 +594,53 @@ it.layer(NodeServices.layer)("build-desktop-artifact", (it) => {
     ),
   );
 
+  it.effect("builds only a versioned AppImage for the fork launcher", () =>
+    Effect.gen(function* () {
+      const fork = yield* createBuildConfig(
+        "linux",
+        "AppImage",
+        "0.1.0-v2.12.19",
+        false,
+        false,
+        undefined,
+        undefined,
+      );
+      const upstream = yield* createBuildConfig(
+        "linux",
+        "AppImage",
+        "0.1.0",
+        false,
+        false,
+        undefined,
+        undefined,
+      );
+
+      assert.deepEqual((fork.linux as { target: string[] }).target, ["AppImage"]);
+      assert.propertyVal(fork, "artifactName", "T3-Code-${version}-${arch}.${ext}");
+      assert.notProperty(fork, "appImage");
+      assert.isNull(fork.publish);
+      assert.deepEqual((upstream.linux as { target: string[] }).target, ["AppImage", "deb"]);
+      const resources = fork.extraResources as ReadonlyArray<{ from: string; to: string }>;
+      const updaterMetadata = resources.find(({ to }) => to === "app-update.yml");
+      assert.isDefined(updaterMetadata);
+      const fs = yield* FileSystem.FileSystem;
+      const path = yield* Path.Path;
+      const raw = yield* fs.readFileString(
+        path.join(import.meta.dirname, "..", updaterMetadata!.from),
+      );
+      const config = yield* Schema.decodeEffect(
+        fromYaml(Schema.Record(Schema.String, Schema.String)),
+      )(raw);
+      assert.deepEqual(config, { updaterCacheDirName: "t3code-updater" });
+    }).pipe(
+      Effect.provide(
+        ConfigProvider.layer(
+          ConfigProvider.fromEnv({ env: { GITHUB_REPOSITORY: "pingdotgg/t3code" } }),
+        ),
+      ),
+    ),
+  );
+
   it.effect("declares Calendar and Apple Events access for hosted commands in macOS builds", () =>
     Effect.gen(function* () {
       for (const version of ["0.1.0", "0.1.1-nightly.20261019.1"]) {

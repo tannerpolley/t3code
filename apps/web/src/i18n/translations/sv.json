@@ -8926,7 +8926,7 @@
   "93c4c53562d30a98": "När du ber om det visar agenter en kort rapport om T3 Code och skickar den till T3-teamet om du godkänner den.",
   "cd9ee803e8727017": "Agenter rapporterar även problem med T3 Code som de själva stöter på, till exempel ett T3-verktyg som misslyckats.",
   "45fa271ea0e1ac8e": "Beta",
-  "3a678332fc7142f7": "Gruppera trådar i sidofältet i projektmappar. Fästa trådar ligger överst, och Snoozade och Klara ligger under mapparna.",
+  "4794257eb633d9ba": "Gruppera trådar i sidopanelen i projektmappar och egna sektioner. Trådarna behåller ordningen när de är aktiva, pausas eller avslutas.",
   "e4e91d155cb6a9b4": "Enkelt sidofält (gruppera per projekt)",
   "f079556d67367fe7": "Visa trådar i mappar på två rader: titeln, sedan gren, pull request och agent.",
   "ac1e5c94d1ad3c6a": "Mapprader på två rader",
@@ -11551,6 +11551,7 @@
       "v": "v"
     }
   ],
+  "1a565539ffd96d2a": "Använder en sparad återställningskredit för kontona på den här enheten strax innan den löper ut.",
   "39f64d971ba424b5": "Inga användningskällor har konfigurerats.",
   "dbd877abdc2c7c81": "HTTP-källa för kvoter",
   "4cf6a373a7535324": "{name} · Inaktiverad",
@@ -11972,6 +11973,7 @@
   "f8d32e19131fd5b3": "agenter cli codex claude cursor grok fx kiro opencode antigravity google logga in logga ut installera prenumeration instanser autentisering api-nyckel modeller konfiguration binär sökväg konfigurationskatalog codex_home skugghem slutpunkt argument miljövariabler visningsnamn accentfärg anpassad favorit dold automatisk komprimering inbyggda sessioner importera återuppta",
   "ad371af21e5b4b01": "Användningsleverantörer",
   "9d9d31a4f3d5ff69": "användningskällor CLIProxyAPI CLI-proxy hubb kvot prenumeration gränser hanteringsnyckel lägg till ta bort",
+  "5888d4308daf54f7": "Använd återställningskrediter automatiskt innan de löper ut",
   "d65fa0946585b245": "Textgeneratorer",
   "e6fd69a8a3bb69e2": "modell api api-nyckel openai openrouter anthropic ollama lm studio anpassad slutpunkt bas-url trådtitlar commit-meddelanden",
   "f2b07faba1229ce7": "Intervall för hälsokontroll",
@@ -12993,5 +12995,22 @@
   "99451a5d2d40440f": "Återkallad av {by}.",
   "3ee30a50b70fffab": "Återkallad av {by}: {reason}",
   "92e129bf413a1220": "återkallad",
-  "800966eb58181745": "Kontrollerar vilka språk modellen stöder…"
+  "800966eb58181745": "Kontrollerar vilka språk modellen stöder…",
+  "cef42f1eea1b516e": "Flytta till en sektion i {environment}",
+  "53215a0961be77a6": "Flytta till sektion",
+  "73a4bafa48c244aa": "Ny sektion",
+  "5fd5eaf0499d5247": "Ta bort från sektionen",
+  "74f489e47ca59e05": "Byt namn på sektionen",
+  "cd9047bb4c235453": "Ta bort sektion",
+  "54d9df5245fa49a7": "Det gick inte att spara sidopanelens layout. Försök igen.",
+  "7070d28e490778c2": "Sektionsnamn",
+  "7c95a36da22a5eff": "Ny sektion",
+  "e0d0ac58b0ddb151": "Byt namn på sektionen",
+  "1becfb4db7ffe135": "Codex standard",
+  "3c8f3dd37881c169": "Codex hastighet normal snabb ultrasnabb tjänstenivå",
+  "72dc8979fc87df5c": "Codex hastighet: {speed}",
+  "7aa202a739c5f90d": "Gäller från nästa tur för Codex-trådar och agenter som använder standarden. Modellerna använder den snabbaste hastighet de har stöd för, upp till ditt val.",
+  "afecbf6b765a2fb0": "Ultrasnabb",
+  "e2a5cf66eeec090e": "Standardhastighet",
+  "e351e22d0be49f2b": "Codex hastighet: {speed} på {environment}"
 }

@@ -8928,7 +8928,7 @@
   "93c4c53562d30a98": "When you ask, agents show you a short report about T3 Code and send it to the T3 team if you approve.",
   "cd9ee803e8727017": "Agents also report T3 Code problems they hit on their own, such as a T3 tool that failed.",
   "45fa271ea0e1ac8e": "Beta",
-  "3a678332fc7142f7": "Group sidebar threads into project folders. Pinned threads stay on top, and Snoozed and Settled stay below the folders.",
+  "4794257eb633d9ba": "Group sidebar threads into project folders and custom sections. Threads keep their order when they work, snooze, or settle.",
   "e4e91d155cb6a9b4": "Boring sidebar (group by project)",
   "f079556d67367fe7": "Show folder threads on two lines: the title, then the branch, pull request, and agent.",
   "ac1e5c94d1ad3c6a": "Two-line folder rows",
@@ -11553,6 +11553,7 @@
       "v": "v"
     }
   ],
+  "1a565539ffd96d2a": "Spend a banked reset credit on this device’s accounts shortly before it expires.",
   "39f64d971ba424b5": "No usage sources configured.",
   "dbd877abdc2c7c81": "HTTP quota source",
   "4cf6a373a7535324": "{name} · Disabled",
@@ -11974,6 +11975,7 @@
   "f8d32e19131fd5b3": "agents cli codex claude cursor grok fx kiro opencode antigravity google sign in sign out install subscription instances authentication api key models configuration binary path config directory codex_home shadow home endpoint arguments environment variables display name accent color custom favorite hidden auto compact native sessions import resume",
   "ad371af21e5b4b01": "Usage providers",
   "9d9d31a4f3d5ff69": "usage sources CLIProxyAPI CLI proxy hub quota subscription limits management key add remove",
+  "5888d4308daf54f7": "Automatically use expiring reset credits",
   "d65fa0946585b245": "Text generators",
   "e6fd69a8a3bb69e2": "model api api key openai openrouter anthropic ollama lm studio custom endpoint base url thread titles commit messages",
   "f2b07faba1229ce7": "Health check interval",
@@ -12995,5 +12997,22 @@
   "99451a5d2d40440f": "Withdrawn by {by}.",
   "3ee30a50b70fffab": "Withdrawn by {by}: {reason}",
   "92e129bf413a1220": "withdrawn",
-  "800966eb58181745": "Checking which languages the model supports…"
+  "800966eb58181745": "Checking which languages the model supports…",
+  "cef42f1eea1b516e": "Move to section on {environment}",
+  "53215a0961be77a6": "Move to section",
+  "73a4bafa48c244aa": "New section",
+  "5fd5eaf0499d5247": "Remove from section",
+  "74f489e47ca59e05": "Rename section",
+  "cd9047bb4c235453": "Delete section",
+  "54d9df5245fa49a7": "Could not save sidebar layout. Try again.",
+  "7070d28e490778c2": "Section name",
+  "7c95a36da22a5eff": "New section",
+  "e0d0ac58b0ddb151": "Rename section",
+  "1becfb4db7ffe135": "Codex default",
+  "3c8f3dd37881c169": "Codex speed normal fast ultra fast service tier",
+  "72dc8979fc87df5c": "Codex speed: {speed}",
+  "7aa202a739c5f90d": "Applies on the next turn to Codex threads and workers using the default. Models use the fastest supported speed up to your choice.",
+  "afecbf6b765a2fb0": "Ultra fast",
+  "e2a5cf66eeec090e": "Default speed",
+  "e351e22d0be49f2b": "Codex speed: {speed} on {environment}"
 }

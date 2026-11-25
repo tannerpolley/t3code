@@ -2,6 +2,7 @@ import { SettingsGroup } from "./SettingsGroup";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import {
   AuthSettingsWriteScope,
+  CodexDefaultSpeed,
   AuthProvidersManageScope,
   AuthOrchestrationReadScope,
 } from "@t3tools/contracts";
@@ -92,6 +93,8 @@ import {
   EmptyMedia,
   EmptyTitle,
 } from "../ui/empty";
+import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
+import { CODEX_DEFAULT_SPEED_LABEL, CODEX_SPEED_LABELS } from "./codexSpeedCopy";
 import { ScrollArea } from "../ui/scroll-area";
 import { Toggle, ToggleGroup } from "../ui/toggle-group";
 import { stackedThreadToast, toastManager } from "../ui/toast";
@@ -383,7 +386,8 @@ function ProviderSettingsPanelContent(target: ProviderSettingsTarget) {
     if (
       !target.scoped &&
       (searchTargetId === searchableSetting("provider-health-check-interval").id ||
-        searchTargetId === searchableSetting("usage-providers").id) &&
+        searchTargetId === searchableSetting("usage-providers").id ||
+        searchTargetId === searchableSetting("codex-default-speed").id) &&
       !selectedEnvironmentCanRenderSettings &&
       searchableEnvironmentId !== undefined
     ) {
@@ -579,6 +583,7 @@ export function EnvironmentProviderSettings({
   const searchableSetting = useSearchableSetting();
   const gt = useGT();
   const settings = useEnvironmentSettings(environmentId);
+  const messages = useMessages();
   const managedPolicy = useManagedPolicy(environmentId);
   // A policy that allows no provider leaves nothing to add.
   const canAddProvider =
@@ -1146,11 +1151,50 @@ export function EnvironmentProviderSettings({
         </SettingsGroup>
       </SettingsSection>
 
+      {rows.some((row) => row.driver === "codex") ? (
+        <SettingsSection title="Codex">
+          <SettingsRow
+            {...searchableSetting("codex-default-speed")}
+            description={gt(
+              "Applies on the next turn to Codex threads and workers using the default. Models use the fastest supported speed up to your choice.",
+            )}
+            control={
+              <Select<CodexDefaultSpeed | "config">
+                value={settings.codexDefaultSpeed ?? "config"}
+                disabled={!canWriteSettings}
+                onValueChange={(value) => {
+                  if (value !== null) {
+                    updateSettings({ codexDefaultSpeed: value === "config" ? null : value });
+                  }
+                }}
+              >
+                <SelectTrigger size="sm" aria-label={gt("Default speed")}>
+                  <SelectValue>
+                    {settings.codexDefaultSpeed == null
+                      ? messages(CODEX_DEFAULT_SPEED_LABEL)
+                      : messages(CODEX_SPEED_LABELS[settings.codexDefaultSpeed])}
+                  </SelectValue>
+                </SelectTrigger>
+                <SelectPopup align="end" alignItemWithTrigger={false}>
+                  <SelectItem value="config">{messages(CODEX_DEFAULT_SPEED_LABEL)}</SelectItem>
+                  {CodexDefaultSpeed.literals.map((speed) => (
+                    <SelectItem key={speed} value={speed}>
+                      {messages(CODEX_SPEED_LABELS[speed])}
+                    </SelectItem>
+                  ))}
+                </SelectPopup>
+              </Select>
+            }
+          />
+        </SettingsSection>
+      ) : null}
+
       <UsageProviderSettings
         key={environmentId}
         environmentId={environmentId}
         environmentLabel={environmentLabel}
         sources={settings.usageLimitSources}
+        autoUseExpiringResetCredits={settings.autoUseExpiringResetCredits}
         readOnly={readOnly}
       />
 

@@ -12,6 +12,7 @@ import {
   getProviderOptionCurrentValue,
   getProviderOptionDescriptors,
   readCustomModelEntries,
+  resolveCodexServiceTier,
   modelSelectionsEqual,
   pickModelSelection,
   withImplicitFastModeDefault,
@@ -35,6 +36,26 @@ const codexCaps: ModelCapabilities = createModelCapabilities({
       type: "boolean",
     },
   ],
+});
+
+describe("Codex speed", () => {
+  const tiers = {
+    id: "serviceTier",
+    type: "select",
+    label: "Speed",
+    options: [
+      { id: "default", label: "Standard" },
+      { id: "priority", label: "Fast" },
+    ],
+  } as const;
+
+  it("prefers explicit aliases and falls back through the model's advertised tiers", () => {
+    expect(resolveCodexServiceTier(tiers, "fast", "normal")).toBe("priority");
+    expect(resolveCodexServiceTier(tiers, "default", "ultrafast")).toBe("default");
+    expect(resolveCodexServiceTier(tiers, undefined, "ultrafast")).toBe("priority");
+    expect(resolveCodexServiceTier(undefined, undefined, "ultrafast")).toBe("default");
+    expect(resolveCodexServiceTier(tiers, undefined, null)).toBeUndefined();
+  });
 });
 
 describe("descriptor helpers", () => {

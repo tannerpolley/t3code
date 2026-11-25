@@ -8,7 +8,7 @@ import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 import * as SqlClient from "effect/sql/SqlClient";
 
-import { getCodexServiceTierOptionValue } from "../codexModelOptions.ts";
+import { codexSpeedForTier, getCodexServiceTierOptionValue } from "@t3tools/shared/model";
 
 export class CodexUsageHistoryReadError extends Schema.TaggedError<CodexUsageHistoryReadError>()(
   "CodexUsageHistoryReadError",
@@ -57,9 +57,11 @@ const make = Effect.gen(function* () {
       readonly native_thread_id: string | null;
       readonly native_turn_id: string;
       readonly selection_json: string | null;
+      readonly service_tier: string | null;
     }>`
       SELECT json_extract(attempt.payload_json, '$.nativeThreadId') AS native_thread_id,
         json_extract(turn.payload_json, '$.nativeTurnRef.nativeId') AS native_turn_id,
+        json_extract(turn.payload_json, '$.serviceTier') AS service_tier,
         (
           SELECT json_extract(event.payload_json, '$.modelSelection')
           FROM orchestration_events AS event
@@ -105,11 +107,12 @@ const make = Effect.gen(function* () {
         )
       )
         continue;
-      const tier = getCodexServiceTierOptionValue(selection.value);
-      if (tier === "fast" || tier === "priority") resolved.set(request, "fast");
-      else if (tier === "ultrafast") resolved.set(request, "ultrafast");
-      else if (tier === undefined || tier === "default" || tier === "standard") {
-        resolved.set(request, "standard");
+      const tier = match.service_tier ?? getCodexServiceTierOptionValue(selection.value);
+      if (
+        tier === undefined ||
+        ["priority", "fast", "ultrafast", "default", "standard"].includes(tier)
+      ) {
+        resolved.set(request, codexSpeedForTier(tier));
       }
     }
     return resolved;

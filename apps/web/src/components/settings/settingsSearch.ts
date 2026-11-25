@@ -1094,6 +1094,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "codex-default-speed",
+    title: msg("Default speed"),
+    to: "/settings/providers",
+    searchTerms: [msg("Codex speed normal fast ultra fast service tier")],
+    providerSettingsOnly: true,
+  },
+  {
     id: "usage-providers",
     title: msg("Usage providers"),
     to: "/settings/providers",
@@ -1102,6 +1109,12 @@ export const SETTINGS_SEARCH_ITEMS = [
         "usage sources CLIProxyAPI CLI proxy hub quota subscription limits management key add remove",
       ),
     ],
+    providerSettingsOnly: true,
+  },
+  {
+    id: "auto-use-expiring-reset-credits",
+    title: msg("Automatically use expiring reset credits"),
+    to: "/settings/providers",
     providerSettingsOnly: true,
   },
   {

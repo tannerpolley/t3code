@@ -345,6 +345,7 @@ const seedCodexHistory = (input: {
   sessionId?: string;
   model?: string;
   options?: readonly { id: string; value: string | boolean }[];
+  serviceTier?: string;
 }) =>
   Effect.gen(function* () {
     const sql = yield* SqlClient.SqlClient;
@@ -382,6 +383,7 @@ const seedCodexHistory = (input: {
       status: "completed",
       payload_json: encodeUnknownJsonString({
         nativeTurnRef: { driver: "codex", nativeId: input.nativeTurnId ?? id, strength: "strong" },
+        serviceTier: input.serviceTier,
       }),
     })}`;
     const changedSelection = {
@@ -441,13 +443,21 @@ describe("Codex usage history", () => {
       });
       yield* seedCodexHistory({ id: "legacy-option", options: [{ id: "fastMode", value: true }] });
       yield* seedCodexHistory({ id: "standard", options: [] });
-      const requests = ["fast", "ultrafast", "legacy-option", "standard", "fast"].map(request);
+      yield* seedCodexHistory({ id: "environment-default", options: [], serviceTier: "priority" });
+      const requests = [
+        "fast",
+        "ultrafast",
+        "legacy-option",
+        "standard",
+        "fast",
+        "environment-default",
+      ].map(request);
       const history = yield* CodexUsageHistory.CodexUsageHistory;
       const resolved = yield* history.resolve(requests);
       assert.strictEqual(resolved.size, requests.length);
       assert.deepStrictEqual(
         requests.map((item) => resolved.get(item)),
-        ["fast", "ultrafast", "fast", "standard", "fast"],
+        ["fast", "ultrafast", "fast", "standard", "fast", "fast"],
       );
     }).pipe(Effect.provide(historyLayer)),
   );

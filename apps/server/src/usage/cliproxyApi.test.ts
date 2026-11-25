@@ -580,6 +580,37 @@ describe("CLIProxyAPI built-in management API", () => {
     }),
   );
 
+  it.effect("requires a fresh matching grant, expiry, and hub login for automatic redemption", () =>
+    Effect.gen(function* () {
+      for (const [selection, listed, requests] of [
+        [{}, [credit("first")], 1],
+        [{}, [], 0],
+        [{}, [credit("other")], 0],
+        [{}, [credit("first", "2099-02-01T00:00:00Z")], 0],
+        [{ workspaceId: "previous-account" }, [credit("first")], 0],
+      ] as const) {
+        const test = fixture({
+          upstream: (request) => ({
+            status: 200,
+            body: request.url?.endsWith("/consume") ? { code: "reset" } : { credits: listed },
+          }),
+        });
+        const api = yield* test.api;
+        yield* api.consume(config, "first.json", "first", {
+          creditId: "first",
+          expiresAt: "2099-01-01T00:00:00.000Z",
+          email: "first@example.com",
+          workspaceId: "account-a",
+          canRedeem: Effect.succeed(true),
+          ...selection,
+        });
+        expect(
+          test.requests.filter((request) => request.body?.url?.endsWith("/consume")),
+        ).toHaveLength(requests);
+      }
+    }),
+  );
+
   it.effect("skips disabled accounts and rejects redemption on them", () =>
     Effect.gen(function* () {
       const test = fixture({ accounts: [{ ...accounts[0]!, disabled: true }] });

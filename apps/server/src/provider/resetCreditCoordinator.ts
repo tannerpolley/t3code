@@ -9,20 +9,28 @@ import * as Ref from "effect/Ref";
 import * as Schedule from "effect/Schedule";
 import * as Semaphore from "effect/Semaphore";
 
+interface GrantRedemptionState {
+  readonly pending: { automatic?: string | undefined; manual?: string | undefined };
+  automaticKey?: string | undefined;
+  automaticSettled?: boolean;
+}
+
 interface AccountRedemptionState {
   readonly lock: Semaphore.Semaphore;
-  readonly pendingKey: Ref.Ref<string | null>;
+  readonly keys: Map<string | undefined, GrantRedemptionState>;
 }
 
 export class ResetCreditCoordinator extends Context.Service<
   ResetCreditCoordinator,
   {
     /** Reuse the idempotency key until an outcome or settled failure; timeouts keep it for retry. */
-    readonly redeem: <E, R>(
+    readonly redeem: <A extends ProviderConsumeResetCreditOutcome | undefined, E, R>(
       accountKey: string,
-      consume: (idempotencyKey: string) => Effect.Effect<ProviderConsumeResetCreditOutcome, E, R>,
+      consume: (idempotencyKey: string) => Effect.Effect<A, E, R>,
       isSettled?: (error: E) => boolean,
-    ) => Effect.Effect<ProviderConsumeResetCreditOutcome, E | PlatformError.PlatformError, R>;
+      creditId?: string,
+      automatic?: boolean,
+    ) => Effect.Effect<A, E | PlatformError.PlatformError, R>;
   }
 >()("t3/provider/resetCreditCoordinator") {}
 
@@ -35,9 +43,9 @@ export const make = Effect.gen(function* () {
   const stateFor = Effect.fn("ResetCreditCoordinator.stateFor")(function* (accountKey: string) {
     const existing = (yield* Ref.get(statesRef)).get(accountKey);
     if (existing) return existing;
-    const candidate = {
+    const candidate: AccountRedemptionState = {
       lock: yield* Semaphore.make(1),
-      pendingKey: yield* Ref.make<string | null>(null),
+      keys: new Map(),
     };
     return yield* Ref.modify(statesRef, (states) => {
       const current = states.get(accountKey);
@@ -50,19 +58,38 @@ export const make = Effect.gen(function* () {
 
   const redeem: ResetCreditCoordinator["Service"]["redeem"] = Effect.fn(
     "resetCreditCoordinator.redeem",
-  )(function* (accountKey, consume, isSettled) {
+  )(function* (accountKey, consume, isSettled, creditId, automatic) {
     const state = yield* stateFor(accountKey);
     return yield* state.lock.withPermits(1)(
       Effect.gen(function* () {
-        const existing = yield* Ref.get(state.pendingKey);
-        const idempotencyKey = existing ?? (yield* random.uuidV4());
-        yield* Ref.set(state.pendingKey, idempotencyKey);
+        const keys: GrantRedemptionState = state.keys.get(creditId) ?? { pending: {} };
+        const lane = automatic ? "automatic" : "manual";
+        const previous = keys.pending[lane];
+        const idempotencyKey =
+          (automatic
+            ? (keys.automaticKey ?? keys.pending.manual)
+            : (keys.pending.manual ?? keys.pending.automatic)) ?? (yield* random.uuidV4());
+        if (!automatic || !keys.automaticSettled) keys.pending[lane] = idempotencyKey;
+        // A confirmed automatic claim stays pinned while future manual claims get their own IDs.
+        if (automatic) keys.automaticKey ??= idempotencyKey;
+        state.keys.set(creditId, keys);
         const outcome = yield* consume(idempotencyKey).pipe(
           Effect.tapError((error) =>
-            isSettled?.(error) ? Ref.set(state.pendingKey, null) : Effect.void,
+            Effect.sync(() => {
+              if (isSettled?.(error)) keys.pending[lane] = previous;
+            }),
           ),
         );
-        yield* Ref.set(state.pendingKey, null);
+        if (outcome === undefined) {
+          keys.pending[lane] = previous;
+        } else {
+          if (keys.automaticKey === idempotencyKey) keys.automaticSettled = true;
+          if (keys.pending.manual === idempotencyKey) keys.pending.manual = undefined;
+          if (keys.pending.automatic === idempotencyKey) keys.pending.automatic = undefined;
+        }
+        if (!keys.pending.manual && !keys.pending.automatic && !keys.automaticKey) {
+          state.keys.delete(creditId);
+        }
         return outcome;
       }),
     );

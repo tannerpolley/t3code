@@ -23,6 +23,8 @@ import type { EffortDisplay } from "@t3tools/contracts/settings";
 import { cn } from "~/lib/utils";
 import { resolveComposerTraitsInput } from "./composerProviderState";
 import { useApplyThreadModelPick } from "./useApplyThreadModelPick";
+import { useEnvironmentSettings } from "../../hooks/useSettings";
+import { readCodexSetupMode } from "../settings/CodexSetupSection.logic";
 import { useStableCallback } from "../../hooks/useStableCallback";
 import {
   ComposerEffortColumn,
@@ -150,6 +152,12 @@ export function ComposerControlsBar(props: {
   const m = useMessages();
   const applyThreadModelPick = useApplyThreadModelPick();
   const applyRouteThreadModelPick = useStableCallback(() => applyThreadModelPick(routeThreadRef));
+  const codexDefaultSpeed = useEnvironmentSettings(environmentId, (settings) =>
+    selectedProvider === "codex" &&
+    readCodexSetupMode(settings.providerInstances?.[selectedInstanceId]?.config) === "existing"
+      ? settings.codexDefaultSpeed
+      : undefined,
+  );
   const traitsInput = resolveComposerTraitsInput({
     provider: selectedProvider,
     instanceId: selectedInstanceId,
@@ -161,6 +169,7 @@ export function ComposerControlsBar(props: {
     models: selectedProviderModels,
     modelOptions: composerModelOptions?.[selectedInstanceId],
     reportedModelSelection,
+    codexDefaultSpeed,
     promptUltrathink,
     onPromptEdit,
   });

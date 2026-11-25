@@ -358,28 +358,34 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
     const consumeResetCredit: NonNullable<ProviderInstance["consumeResetCredit"]> = Effect.fn(
       "ClaudeDriver.consumeResetCredit",
     )(
-      function* (creditId) {
-        const current = yield* snapshot.getSnapshot;
-        const credits = current.usageLimits?.resetCredits;
-        const grantId =
-          creditId === undefined
-            ? credits?.nextCreditId
-            : credits?.options?.some((option) => option.creditId === creditId)
-              ? creditId
-              : undefined;
-        if (!grantId || !current.version) return "noCredit" as const;
-        const version = current.version;
+      function* (selection) {
+        const automatic = typeof selection === "object" ? selection : undefined;
+        const creditId =
+          automatic?.creditId ?? (typeof selection === "string" ? selection : undefined);
         return yield* resetCreditCoordinator.redeem(
           configDir,
           (requestId) =>
-            ClaudeResetCredits.consumeClaudeResetCredit({
-              configDir,
-              accountConfigPath,
-              version,
-              grantId,
-              requestId,
+            Effect.gen(function* () {
+              const current = yield* snapshot.getSnapshot;
+              const credits = current.usageLimits?.resetCredits;
+              const grantId =
+                automatic || creditId === undefined
+                  ? credits?.nextCreditId
+                  : credits?.options?.find((option) => option.creditId === creditId)?.creditId;
+              if (automatic && grantId !== creditId) return undefined;
+              if (!grantId || !current.version) return undefined;
+              return yield* ClaudeResetCredits.consumeClaudeResetCredit({
+                configDir,
+                accountConfigPath,
+                version: current.version,
+                grantId,
+                requestId,
+                automatic,
+              });
             }),
           ClaudeResetCredits.isSettledClaudeResetCreditFailure,
+          creditId,
+          automatic !== undefined,
         );
       },
       Effect.provideService(HttpClient.HttpClient, httpClient),
@@ -397,26 +403,34 @@ export const ClaudeDriver: ProviderDriver<ClaudeSettings, ClaudeDriverEnv, Path.
             cause,
           }),
       ),
-      Effect.tap((outcome) =>
-        ResetCreditCoordinator.refreshAfterRedemption({
-          outcome,
-          getSnapshot: snapshot.getSnapshot,
-          refresh: Cache.invalidateAll(capabilitiesProbeCache).pipe(
-            Effect.andThen(snapshot.refresh),
-          ),
-        }).pipe(
-          Effect.filterOrFail(
-            (confirmed) => confirmed,
-            () =>
-              new ProviderDriverError({
-                driver: DRIVER_KIND,
-                instanceId,
-                detail:
-                  "The reset was applied, but Claude could not confirm the new limits. Refresh to check.",
-              }),
-          ),
+      (consume, selection) =>
+        Effect.tap(consume, (outcome) =>
+          typeof selection === "object" || outcome === undefined
+            ? Effect.void
+            : ResetCreditCoordinator.refreshAfterRedemption({
+                outcome,
+                getSnapshot: snapshot.getSnapshot,
+                refresh: Cache.invalidateAll(capabilitiesProbeCache).pipe(
+                  Effect.andThen(snapshot.refresh),
+                ),
+              }).pipe(
+                Effect.filterOrFail(
+                  (confirmed) => confirmed,
+                  () =>
+                    new ProviderDriverError({
+                      driver: DRIVER_KIND,
+                      instanceId,
+                      detail:
+                        "The reset was applied, but Claude could not confirm the new limits. Refresh to check.",
+                    }),
+                ),
+              ),
         ),
-      ),
+      (consume, selection) =>
+        Effect.map(
+          consume,
+          (outcome) => outcome ?? (typeof selection === "object" ? "nothingToReset" : "noCredit"),
+        ),
     );
 
     return {

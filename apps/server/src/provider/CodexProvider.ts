@@ -35,6 +35,7 @@ import { PREFERRED_DEFAULT_CODEX_MODELS, ServerSettingsError } from "@t3tools/co
 
 import {
   codexModelFamily,
+  resolveCodexServiceTier,
   createModelCapabilities,
   formatCodexModelName,
 } from "@t3tools/shared/model";
@@ -406,6 +407,8 @@ function withConfiguredSelectDefault(
       if (descriptor.id !== descriptorId || descriptor.type !== "select") return descriptor;
       const value = pick(descriptor.options);
       if (!value) return descriptor;
+      // Codex needs the model's advertised tier when live config clears its cached override.
+      if (descriptor.id === "serviceTier") return { ...descriptor, currentValue: value };
       return {
         ...descriptor,
         currentValue: value,
@@ -422,14 +425,8 @@ function applyConfiguredCodexServiceTier(
   serviceTier: string | undefined,
 ): ReadonlyArray<ServerProviderModel> {
   if (!serviceTier) return models;
-  return withConfiguredSelectDefault(
-    models,
-    "serviceTier",
-    (options) =>
-      options.find(
-        (option) =>
-          option.id === serviceTier || (serviceTier === "fast" && option.id === "priority"),
-      )?.id,
+  return withConfiguredSelectDefault(models, "serviceTier", (options) =>
+    resolveCodexServiceTier({ options }, serviceTier, null),
   );
 }
 
@@ -475,8 +472,14 @@ function appendCustomCodexModels(
   models: ReadonlyArray<ServerProviderModel>,
   customModels: ReadonlyArray<CustomModelSetting>,
 ): ReadonlyArray<ServerProviderModel> {
-  const fallbackCapabilities = models.find((model) => model.capabilities)?.capabilities ?? null;
-  return providerModelsFromSettings(models, customModels, fallbackCapabilities);
+  const fallback = models.find((model) => model.capabilities)?.capabilities;
+  return providerModelsFromSettings(
+    models,
+    customModels,
+    fallback?.optionDescriptors
+      ? { optionDescriptors: fallback.optionDescriptors.filter(({ id }) => id !== "serviceTier") }
+      : null,
+  );
 }
 
 function parseCodexSkillsListResponse(

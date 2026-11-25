@@ -4869,12 +4869,19 @@ describe("OrchestratorMcpService provider resolution", () => {
             { id: "serviceTier", value: "priority" },
           ],
         } as const;
+        const base = { ...inherited, options: [inherited.options[0]] };
         const override = [{ id: "reasoningEffort", value: "max" }] as const;
         const cases = [
           {
-            name: "partial override",
+            name: "inherits reasoning and follows environment speed with a Fast parent",
             target: { options: override },
-            expected: { ...inherited, options: [...override, inherited.options[1]] },
+            expected: { ...base, options: override },
+          },
+          {
+            name: "explicit fast alias wins over the environment default",
+            parent: base,
+            target: { options: { serviceTier: "fast" } },
+            expected: inherited,
           },
           {
             name: "clear with array",
@@ -4889,13 +4896,13 @@ describe("OrchestratorMcpService provider resolution", () => {
           {
             name: "same model by alias",
             target: { model: "GPT" },
-            expected: { ...inherited, model: "GPT" },
+            expected: { ...base, model: "GPT" },
           },
           {
             name: "parent named the same model by alias",
             parent: { ...inherited, model: "gpt" },
             target: { model: inherited.model },
-            expected: inherited,
+            expected: base,
           },
           {
             name: "change model",
@@ -4983,7 +4990,7 @@ describe("OrchestratorMcpService provider resolution", () => {
                   } as never;
                 }),
             }),
-            ServerSettings.layerTest(),
+            ServerSettings.layerTest({ codexDefaultSpeed: "normal" }),
             providerRegistryLayer([
               {
                 ...providerSnapshot({
@@ -4996,7 +5003,31 @@ describe("OrchestratorMcpService provider resolution", () => {
                     slug: model,
                     name: model,
                     isCustom: false,
-                    capabilities: null,
+                    capabilities:
+                      model === inherited.model
+                        ? {
+                            optionDescriptors: [
+                              {
+                                id: "reasoningEffort",
+                                type: "select" as const,
+                                label: "Reasoning",
+                                options: [
+                                  { id: "high", label: "High" },
+                                  { id: "max", label: "Max" },
+                                ],
+                              },
+                              {
+                                id: "serviceTier",
+                                type: "select" as const,
+                                label: "Speed",
+                                options: [
+                                  { id: "default", label: "Standard" },
+                                  { id: "priority", label: "Fast" },
+                                ],
+                              },
+                            ],
+                          }
+                        : null,
                     ...(model === inherited.model ? { aliases: ["gpt"] } : {}),
                   })),
                   {
@@ -5058,7 +5089,15 @@ describe("OrchestratorMcpService provider resolution", () => {
           yield* Effect.gen(function* () {
             const service = yield* OrchestratorMcpService.OrchestratorMcpService;
             const capabilities = yield* service.capabilities(scope);
-            assert.deepEqual(capabilities.inheritedOptions, inherited.options);
+            assert.deepEqual(capabilities.inheritedOptions, base.options);
+            const rejected = yield* service
+              .delegateTask(scope, {
+                task: "Review the change.",
+                target: yield* decodeTarget({ options: { serviceTier: "unsupported" } }),
+                mode: "async",
+              })
+              .pipe(Effect.flip);
+            assert.include(rejected.message, "serviceTier must be one of");
             yield* service.delegateTask(scope, {
               task: "Review the change.",
               target: yield* decodeTarget(testCase.target),

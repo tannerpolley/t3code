@@ -31,6 +31,7 @@ export interface CodexRateLimitSnapshot {
 export interface CodexResetCreditsSummary {
   readonly availableCount: number;
   readonly credits?: ReadonlyArray<{
+    readonly id?: string;
     readonly status: string;
     readonly expiresAt?: number | null;
   }> | null;
@@ -97,19 +98,22 @@ function codexRateLimitsToWindows(
   return windows;
 }
 
-function codexResetCreditsToContract(
+export function codexResetCreditsToContract(
   summary: CodexResetCreditsSummary | null | undefined,
 ): ServerProviderResetCredits | undefined {
   if (!summary) return undefined;
-  const expiries = (summary.credits ?? [])
+  const next = (summary.credits ?? [])
     .filter((credit) => credit.status === "available")
-    .map((credit) => credit.expiresAt)
-    .filter((value): value is number => typeof value === "number");
-  const nextExpiresAt =
-    expiries.length > 0 ? isoFromEpochSeconds(Math.min(...expiries)) : undefined;
+    .map((credit) => ({ expiresAt: isoFromEpochSeconds(credit.expiresAt), id: credit.id?.trim() }))
+    .sort(
+      (a, b) =>
+        (Date.parse(a.expiresAt ?? "") || Number.MAX_SAFE_INTEGER) -
+        (Date.parse(b.expiresAt ?? "") || Number.MAX_SAFE_INTEGER),
+    )[0];
   return {
     availableCount: Math.max(0, summary.availableCount),
-    ...(nextExpiresAt ? { nextExpiresAt } : {}),
+    ...(next?.expiresAt ? { nextExpiresAt: next.expiresAt } : {}),
+    ...(next?.id ? { nextCreditId: next.id } : {}),
   };
 }
 

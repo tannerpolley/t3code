@@ -201,6 +201,47 @@ function renderText(text: string, props: Partial<Parameters<typeof ChatMarkdown>
   return render(<ChatMarkdown cwd="/tmp/project" text={text} {...props} />);
 }
 
+it("sets inline math at the prose size and baseline without adding line spacing", async () => {
+  setup();
+  settingsOverrides.mathRenderingEnabled = true;
+  const longFormula = Array.from({ length: 24 }, (_, index) => `x_{${index}}`).join(" + ");
+  await using screen = await renderText(
+    `Before $A_{0,E}^2$ after.\n\nBefore and after.\n\n$${longFormula}$\n\n| Formula |\n| --- |\n| $${longFormula}$ |\n\n$$\nx^2\n$$`,
+    { className: "max-w-sm" },
+  );
+
+  const [formula, wideFormula, tableFormula] = screen.container.querySelectorAll<SVGSVGElement>(
+    '[data-markdown-math="inline"] svg',
+  )!;
+
+  for (const svg of [formula!, wideFormula!]) {
+    const baseline = document.createElement("span");
+    baseline.style.display = "inline-block";
+    svg.parentElement!.after(baseline);
+    const transform = svg.getScreenCTM()!;
+    expect.soft(1000 * transform.d).toBeCloseTo(parseFloat(getComputedStyle(baseline).fontSize), 1);
+    expect.soft(transform.f).toBeCloseTo(baseline.getBoundingClientRect().top, 1);
+    baseline.remove();
+  }
+
+  const paragraph = formula!.closest("p")!;
+  expect(paragraph.getBoundingClientRect().height).toBe(
+    paragraph.nextElementSibling!.getBoundingClientRect().height,
+  );
+  const scrollport = wideFormula!.parentElement!;
+  expect(scrollport.clientWidth).toBeLessThan(scrollport.scrollWidth);
+  scrollport.scrollLeft = scrollport.scrollWidth;
+  expect(scrollport.scrollLeft).toBeGreaterThan(0);
+
+  const tableScrollport = tableFormula!.closest(".chat-markdown-table-container")!;
+  expect(tableScrollport.scrollWidth).toBeGreaterThan(tableScrollport.clientWidth);
+  expect(tableFormula!.parentElement!.dataset.markdownCopy).toBe(`\\(${longFormula}\\)`);
+  const displayFormula = screen.container.querySelector<HTMLElement>(
+    '[data-markdown-math="display"]',
+  )!;
+  expect(displayFormula.dataset.markdownCopy).toBe("\\[\nx^2\n\\]\n\n");
+});
+
 function buttonsLabelled(container: HTMLElement, label: string) {
   return [...container.querySelectorAll<HTMLButtonElement>("button")].filter(
     (button) => button.getAttribute("aria-label") === label,

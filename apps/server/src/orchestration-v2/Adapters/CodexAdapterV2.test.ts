@@ -1,3 +1,4 @@
+import { getProviderOptionDescriptors, withEffectiveCodexSpeed } from "@t3tools/shared/model";
 import { historyResponseItems } from "@t3tools/provider-core/server/handoffBudget";
 import { makeProviderFailure } from "@t3tools/provider-core/server/failure";
 import {
@@ -10,6 +11,7 @@ import {
   CommandId,
   CheckpointId,
   CodexSettings,
+  type CodexDefaultSpeed,
   EnvironmentId,
   MessageId,
   type ModelSelection,
@@ -702,7 +704,7 @@ function codexReplayPreamble(input: {
   readonly interactionMode?: "plan" | "default";
   readonly turnPolicy?: Pick<
     typeof CodexClient.V2TurnStartParams.Type,
-    "approvalPolicy" | "sandboxPolicy"
+    "approvalPolicy" | "sandboxPolicy" | "serviceTier"
   >;
 }): Array<CodexReplay.CodexAppServerReplayEntry> {
   return [
@@ -845,12 +847,14 @@ function codexReplayPreamble(input: {
 function withConfigReadBeforeTurnStart(
   entries: ReadonlyArray<CodexReplay.CodexAppServerReplayEntry>,
   threadName = CODEX_TEST_THREAD_TITLE,
+  turnConfig: ReadonlyArray<{ readonly service_tier?: string }> = [],
 ): Array<CodexReplay.CodexAppServerReplayEntry> {
   const result: Array<CodexReplay.CodexAppServerReplayEntry> = [];
   let offset = 0;
   let clientIds = new Map<number, number>();
   let namedThreads = new Set<unknown>();
   let transcriptReads = 0;
+  let turnIndex = 0;
   let previousOutbound: { readonly method: string; readonly id: number } | undefined;
   let failedMethod: string | undefined;
   for (const entry of entries) {
@@ -893,7 +897,7 @@ function withConfigReadBeforeTurnStart(
         exchanges.push([
           "config/read",
           { cwd: params.cwd, includeLayers: false },
-          { config: {}, origins: {} },
+          { config: turnConfig[turnIndex++] ?? {}, origins: {} },
         ]);
       }
       for (const [method, requestParams, response] of exchanges) {
@@ -930,8 +934,12 @@ function withConfigReadBeforeTurnStart(
 function withConfigReads(
   transcript: CodexReplay.CodexAppServerReplayTranscript,
   threadName?: string,
+  turnConfig?: Parameters<typeof withConfigReadBeforeTurnStart>[2],
 ): CodexReplay.CodexAppServerReplayTranscript {
-  return { ...transcript, entries: withConfigReadBeforeTurnStart(transcript.entries, threadName) };
+  return {
+    ...transcript,
+    entries: withConfigReadBeforeTurnStart(transcript.entries, threadName, turnConfig),
+  };
 }
 
 function makeCodexReplayTranscript(input: {
@@ -1736,6 +1744,9 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     promptSuggestions: Effect.Effect<boolean> = Effect.succeed(false),
     onNotification: (method: string) => Effect.Effect<void> = () => Effect.void,
     models?: CodexAdapterV2.CodexAdapterV2Options["models"],
+    speedOptions?: Pick<CodexAdapterV2.CodexAdapterV2Options, "defaultSpeed" | "resolveRuntime"> & {
+      turnConfig?: Parameters<typeof withConfigReadBeforeTurnStart>[2];
+    },
   ) =>
     Effect.gen(function* () {
       const fileSystem = yield* FileSystem.FileSystem;
@@ -1747,8 +1758,9 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       const continuationRequests: Array<ProviderContinuationRequests.ProviderContinuationRequest> =
         [];
       const commandStopWatchers: Array<PortScanner.AgentCommandStopWatcher> = [];
+      const { turnConfig, ...adapterSpeedOptions } = speedOptions ?? {};
       const driver = yield* CodexReplay.makeReplayDriver(
-        withConfigReads(transcript),
+        withConfigReads(transcript, undefined, turnConfig),
         beforeEmitInbound === undefined ? {} : { beforeEmitInbound },
       );
       const clientFactory: CodexAdapterV2.CodexAppServerClientFactoryShape = {
@@ -1800,6 +1812,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         clientFactory,
         ...(onUsageLimits ? { onUsageLimits } : {}),
         ...(models ? { models } : {}),
+        ...adapterSpeedOptions,
         digest: yield* Digest.Digest,
         fileSystem,
         idAllocator,
@@ -4424,6 +4437,157 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         ),
       ),
     ),
+  );
+
+  it.effect.each([false, true])(
+    "applies live Codex defaults between turns (managed: %s)",
+    (managed) =>
+      Effect.gen(function* () {
+        const nativeThreadId = "codex-default-speed";
+        const cases = [
+          { speed: "ultrafast", tier: "priority", options: [] },
+          { speed: "normal", tier: "default", options: [] },
+          { speed: "fast", tier: "default", options: [{ id: "serviceTier", value: "default" }] },
+          { speed: "normal", tier: "priority", options: [{ id: "serviceTier", value: "fast" }] },
+          { speed: null, tier: "default", options: [] },
+          { speed: null, tier: "priority", options: [], configured: "ultrafast" },
+          { speed: null, tier: "priority", options: [], catalogFast: true },
+        ] as const;
+        const entries = cases.flatMap(
+          ({ tier }, index): Array<CodexReplay.CodexAppServerReplayEntry> => {
+            const nativeTurnId = `speed-${index}`;
+            const preamble = codexReplayPreamble({
+              nativeThreadId,
+              nativeTurnId,
+              prompt: "work",
+              ...(managed ? {} : { turnPolicy: { serviceTier: tier } }),
+            });
+            const start = preamble.findIndex(
+              (entry) => entry.type === "expect_outbound" && entry.label === "turn/start",
+            );
+            return [
+              ...(index === 0
+                ? preamble
+                : preamble
+                    .slice(start)
+                    .map((entry) =>
+                      entry.type !== "runtime_exit" &&
+                      Predicate.isObject(entry.frame) &&
+                      typeof entry.frame.id === "number"
+                        ? withReplayRequestId(entry, 3 + index)
+                        : entry,
+                    )),
+              {
+                type: "emit_inbound",
+                label: "turn/completed",
+                frame: {
+                  method: "turn/completed",
+                  params: {
+                    threadId: nativeThreadId,
+                    turn: makeCodexReplayTurn({ id: nativeTurnId, status: "completed" }),
+                  },
+                },
+              },
+            ];
+          },
+        );
+        const defaultSpeed = yield* Ref.make<CodexDefaultSpeed | null>(null);
+        const catalogFast = yield* Ref.make(false);
+        const catalog = Ref.get(catalogFast).pipe(
+          Effect.map((fast): ServerProviderModel[] => [
+            {
+              slug: CODEX_TEST_MODEL_SELECTION.model,
+              name: "Test model",
+              isCustom: false,
+              capabilities: {
+                optionDescriptors: [
+                  {
+                    id: "serviceTier",
+                    type: "select",
+                    label: "Speed",
+                    currentValue: "priority",
+                    options: [
+                      { id: "default", label: "Standard", isDefault: !fast },
+                      { id: "priority", label: "Fast", isDefault: fast },
+                    ],
+                  },
+                ],
+              },
+            },
+          ]),
+        );
+        const harness = yield* makeCodexReplayHarness(
+          makeCodexReplayTranscript({ scenario: `default-speed-${managed}`, entries }),
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          undefined,
+          catalog,
+          {
+            defaultSpeed: Ref.get(defaultSpeed),
+            turnConfig: cases.map((item) =>
+              "configured" in item ? { service_tier: item.configured } : {},
+            ),
+            ...(managed
+              ? {
+                  resolveRuntime: Effect.succeed({
+                    config: DEFAULT_CODEX_SETTINGS,
+                    environment: {},
+                    revision: "test",
+                  }),
+                }
+              : {}),
+          },
+        );
+        for (const [index, testCase] of cases.entries()) {
+          yield* Ref.set(defaultSpeed, testCase.speed);
+          yield* Ref.set(catalogFast, "catalogFast" in testCase);
+          if (!managed && "catalogFast" in testCase) {
+            const [model] = yield* catalog;
+            assert.equal(
+              withEffectiveCodexSpeed(
+                getProviderOptionDescriptors({ caps: model!.capabilities! }),
+                testCase.options,
+                testCase.speed,
+              )[0]?.currentValue,
+              testCase.tier,
+            );
+          }
+          yield* harness.runtime.startTurn({
+            ...makeCodexTestTurnInput({
+              threadId: harness.threadId,
+              providerThread: harness.providerThread,
+              now: yield* DateTime.now,
+              attemptId: RunAttemptId.make(`speed-attempt-${index}`),
+              text: "work",
+            }),
+            runOrdinal: index + 1,
+            providerTurnOrdinal: index + 1,
+            modelSelection: { ...CODEX_TEST_MODEL_SELECTION, options: testCase.options },
+          });
+          yield* harness.awaitTerminal(index + 1);
+        }
+        assert.deepEqual(
+          harness.events.flatMap((event) =>
+            event.type === "provider_turn.updated" && event.providerTurn.status === "completed"
+              ? [event.providerTurn.serviceTier]
+              : [],
+          ),
+          cases.map(({ tier }) => (managed ? undefined : tier)),
+        );
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
+        ),
+      ),
   );
 
   it.effect("stops asking for commands the user allowed for the session", () =>
@@ -12582,6 +12746,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                 nativeTurnId: "goal-turn-1",
                 prompt: objective,
                 sentPrompt: `This thread's goal is already set. Do not call create_goal. Start working on it now: ${objective}`,
+                turnPolicy: { serviceTier: "priority" },
               }).slice(5),
               5,
             ),
@@ -12596,6 +12761,12 @@ describe("CodexAdapterV2 post-settle continuation", () => {
               turnId: "goal-turn-1",
               goal: codexGoal("active", 0),
             }),
+            ...request(
+              7,
+              "thread/settings/update",
+              { threadId: nativeThreadId, serviceTier: "default" },
+              {},
+            ),
             notification("first turn done", "turn/completed", {
               threadId: nativeThreadId,
               turn: makeCodexReplayTurn({ id: "goal-turn-1", status: "completed" }),
@@ -12615,8 +12786,49 @@ describe("CodexAdapterV2 post-settle continuation", () => {
             }),
           ],
         });
-        const harness = yield* makeCodexReplayHarness(transcript);
-        yield* harness.runtime.startTurn(yield* goalTurnInput(harness, `/goal ${objective}`));
+        const settingsApplied = yield* Deferred.make<void>();
+        const harness = yield* makeCodexReplayHarness(
+          transcript,
+          undefined,
+          undefined,
+          undefined,
+          (entry) =>
+            entry.label === "first turn done" ? Deferred.await(settingsApplied) : Effect.void,
+          undefined,
+          undefined,
+          undefined,
+          Effect.succeed([
+            {
+              slug: CODEX_TEST_MODEL_SELECTION.model,
+              name: "Test model",
+              isCustom: false,
+              capabilities: {
+                optionDescriptors: [
+                  {
+                    id: "serviceTier",
+                    type: "select",
+                    label: "Speed",
+                    options: [{ id: "priority", label: "Fast" }],
+                  },
+                ],
+              },
+            },
+          ]),
+          { defaultSpeed: Effect.succeed("normal") },
+        );
+        const input = yield* goalTurnInput(harness, `/goal ${objective}`);
+        yield* harness.runtime.startTurn({
+          ...input,
+          modelSelection: {
+            ...input.modelSelection,
+            options: [{ id: "serviceTier", value: "fast" }],
+          },
+        });
+        yield* harness.runtime.applyModelSelection!({
+          providerThread: harness.providerThread,
+          modelSelection: input.modelSelection,
+        });
+        yield* Deferred.succeed(settingsApplied, undefined);
         yield* harness.firstTerminal;
 
         const idAllocator = yield* IdAllocator.IdAllocatorV2;
@@ -12644,6 +12856,17 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           [
             [providerTurnId("goal-turn-1"), RunAttemptId.make("goal-attempt"), 1],
             [providerTurnId("goal-turn-2"), RunAttemptId.make("goal-attempt"), 2],
+          ],
+        );
+        assert.deepEqual(
+          harness.events.flatMap((event) =>
+            event.type === "provider_turn.updated" && event.providerTurn.status === "completed"
+              ? [[event.providerTurn.id, event.providerTurn.serviceTier]]
+              : [],
+          ),
+          [
+            [providerTurnId("goal-turn-1"), "priority"],
+            [providerTurnId("goal-turn-2"), "default"],
           ],
         );
         // The goal is set paused until its first turn starts; only the result shows.

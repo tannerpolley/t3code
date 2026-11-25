@@ -229,7 +229,7 @@ const nativeReport = (provider: ServerProvider): AccountReport => ({
 });
 
 // Include every enabled login, even unreadable workspaces.
-function accountKeyResolver(reports: Iterable<AccountReport>) {
+export function accountKeyResolver(reports: Iterable<AccountReport>) {
   const workspaces = new Map<string, Set<string>>();
   for (const report of reports) {
     const key = accountKey(report.driver, report.email, report.usageLimits);
@@ -803,7 +803,7 @@ function paceOfShares(usedPercent: number, elapsed: number): LimitPace {
   return "on";
 }
 
-/** One redeemable reset as clients offer it; `input` already names the chosen credit. */
+/** A displayed reset balance with a pinned input when a credit can be redeemed. */
 export interface ResetCreditChoice {
   readonly key: string;
   readonly summary: string;

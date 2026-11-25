@@ -512,10 +512,11 @@ export function SortableThreadRow(
   props: Omit<SidebarThreadRowProps, "sortable"> & {
     sortableId: string;
     sortableDisabled: boolean;
+    allowLayoutDrag?: boolean;
     contextDrag: boolean;
   },
 ) {
-  const { sortableId, sortableDisabled, contextDrag, ...rowProps } = props;
+  const { sortableId, sortableDisabled, allowLayoutDrag, contextDrag, ...rowProps } = props;
   const canOperateThread = useEnvironmentScope(
     rowProps.thread.environmentId,
     AuthOrchestrationOperateScope,
@@ -523,7 +524,7 @@ export function SortableThreadRow(
   const { listeners, setNodeRef, transform, transition, isDragging } = useSortable({
     id: sortableId,
     disabled:
-      sortableDisabled || !canOperateThread
+      sortableDisabled || (!allowLayoutDrag && !canOperateThread)
         ? SIDEBAR_SORTABLE_DRAG_DISABLED
         : SIDEBAR_SORTABLE_DRAG_ENABLED,
     animateLayoutChanges: animateSidebarLayoutChanges,
@@ -608,6 +609,7 @@ type SidebarThreadRowProps = {
   // "folder-multiline" adds the card's environment and PR line under it.
   variant: "card" | "slim" | "folder" | "folder-multiline";
   navigationParent?: string | undefined;
+  folderDepth?: number | undefined;
   variantAction: SidebarSweepAction;
   settlementSupported: boolean;
   snoozeSupported: boolean;
@@ -1353,6 +1355,13 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               aria-label={accessibility.label}
               aria-current={accessibility.current}
               data-testid={inFolder ? "sidebar-row-folder" : "sidebar-row-slim"}
+              style={
+                inFolder && props.folderDepth
+                  ? {
+                      paddingInlineStart: `calc(var(--spacing) * 9 + ${Math.min(props.folderDepth, 3) * 10}px)`,
+                    }
+                  : undefined
+              }
               aria-busy={isRegeneratingTitle || undefined}
               className={cn(
                 rowSurfaceClassName,
@@ -1392,6 +1401,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
             {multiline ? titleLineIcons : null}
             {pinIndicator}
             {multiline ? null : terminalStatusIcon}
+            {inFolder && !multiline ? prBadge : null}
             {multiline ? null : issueBadge}
             {isRegeneratingTitle ? (
               <span role="status" className="sr-only">
