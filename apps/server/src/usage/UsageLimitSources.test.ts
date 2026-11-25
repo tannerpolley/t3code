@@ -10,6 +10,7 @@ import {
 } from "@t3tools/contracts";
 import * as SecretResolver from "@t3tools/secret-provider-core/server/SecretResolver";
 import * as DateTime from "effect/DateTime";
+import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
 import * as Fiber from "effect/Fiber";
 import * as Layer from "effect/Layer";
@@ -23,6 +24,9 @@ import * as ServerSettings from "../serverSettings.ts";
 import * as UsageLimitSources from "./UsageLimitSources.ts";
 
 const encodeConfigEvent = Schema.encodeSync(ServerConfigStreamEvent);
+const decodeHubCall = Schema.decodeUnknownSync(
+  Schema.fromJsonString(Schema.Struct({ url: Schema.String })),
+);
 
 it.effect("keeps malformed source URLs encodable for config subscribers", () =>
   Effect.gen(function* () {
@@ -522,4 +526,113 @@ it.effect("the reset fallback refreshes its hub, and a stalled hub cannot hold t
     yield* TestClock.adjust("5 seconds");
     expect(yield* Fiber.join(stalled)).toBeNull();
   }),
+);
+
+it.effect("sends no consume request when auto-use is disabled during hub preparation", () =>
+  Effect.gen(function* () {
+    const entered = yield* Deferred.make<void>();
+    const release = yield* Deferred.make<void>();
+    const sourceId = UsageLimitSourceId.make("hub");
+    const expiresAt = "2099-01-01T00:00:00.000Z";
+    const settings = yield* ServerSettings.ServerSettingsService;
+    let blockPreparation = false;
+    let consumeRequests = 0;
+    const client = HttpClient.make((request) =>
+      Effect.gen(function* () {
+        const path = new URL(request.url).pathname;
+        const respond = (body: unknown, status = 200) =>
+          HttpClientResponse.fromWeb(request, Response.json(body, { status }));
+        if (path.endsWith("/auth-files")) {
+          if (blockPreparation) {
+            blockPreparation = false;
+            yield* Deferred.succeed(entered, undefined);
+            yield* Deferred.await(release);
+          }
+          return respond({
+            files: [
+              {
+                id: "account.json",
+                provider: "codex",
+                auth_index: "codex",
+                email: "user@example.test",
+                id_token: { chatgpt_account_id: "workspace" },
+              },
+            ],
+          });
+        }
+        if (!path.endsWith("/api-call") || request.body._tag !== "Uint8Array") {
+          return respond({}, 404);
+        }
+        const { url } = decodeHubCall(new TextDecoder().decode(request.body.body));
+        if (url.endsWith("/consume")) consumeRequests++;
+        return respond({
+          status_code: 200,
+          body: JSON.stringify(
+            url.endsWith("/consume")
+              ? { code: "reset" }
+              : url.endsWith("/usage")
+                ? { rate_limit: null }
+                : {
+                    credits: [
+                      {
+                        id: "grant",
+                        expires_at: expiresAt,
+                        status: "available",
+                        reset_type: "codex_rate_limits",
+                      },
+                    ],
+                  },
+          ),
+        });
+      }),
+    );
+    const sources = yield* UsageLimitSources.make.pipe(
+      Effect.provideService(HttpClient.HttpClient, client),
+    );
+    yield* sources.streamChanges.pipe(
+      Stream.filter((snapshots) => snapshots.some(({ accounts }) => accounts.length > 0)),
+      Stream.runHead,
+    );
+    blockPreparation = true;
+    const redeem = yield* sources
+      .consumeResetCredit(
+        { sourceId, accountId: "account.json", creditId: "grant" },
+        {
+          creditId: "grant",
+          endpoint: "https://hub.test",
+          expiresAt,
+          email: "user@example.test",
+          workspaceId: "workspace",
+          canRedeem: settings.getSettings.pipe(
+            Effect.map((current) => current.autoUseExpiringResetCredits),
+            Effect.orElseSucceed(() => false),
+          ),
+        },
+      )
+      .pipe(Effect.forkChild);
+    yield* Deferred.await(entered);
+    yield* settings.updateSettings({ autoUseExpiringResetCredits: false });
+    yield* Deferred.succeed(release, undefined);
+    expect(yield* Fiber.join(redeem)).toEqual({ outcome: "nothingToReset" });
+    expect(consumeRequests).toBe(0);
+  }).pipe(
+    Effect.provide([
+      Layer.mock(SecretResolver.SecretResolver)({}),
+      ServerSettings.layerTest({
+        autoUseExpiringResetCredits: true,
+        usageLimitSources: {
+          hub: {
+            kind: "cliproxy",
+            url: "https://hub.test",
+            enabled: true,
+            managementKey: "test-key",
+          },
+        },
+      }),
+      Layer.mock(BackgroundPolicy.BackgroundPolicy)({
+        shouldRunScopeWork: () => Effect.succeed(false),
+      }),
+      NodeCrypto.layer,
+    ]),
+  ),
 );

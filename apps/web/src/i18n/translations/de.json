@@ -11544,6 +11544,7 @@
     },
     " wechseln"
   ],
+  "1a565539ffd96d2a": "Ein gespeichertes Reset-Guthaben für die Konten dieses Geräts kurz vor Ablauf einlösen.",
   "39f64d971ba424b5": "Keine Nutzungsquellen konfiguriert.",
   "dbd877abdc2c7c81": "HTTP-Kontingentquelle",
   "4cf6a373a7535324": "{name} · Deaktiviert",
@@ -11966,6 +11967,7 @@
   "f8d32e19131fd5b3": "agenten cli codex claude cursor grok fx kiro opencode antigravity google anmelden abmelden installieren abonnement instanzen authentifizierung api-schlüssel modelle konfiguration binärdatei pfad konfigurationsverzeichnis codex_home shadow home endpunkt argumente umgebungsvariablen anzeigename akzentfarbe benutzerdefiniert favorit ausgeblendet automatisch komprimieren native sitzungen import fortsetzen",
   "ad371af21e5b4b01": "Nutzungsanbieter",
   "9d9d31a4f3d5ff69": "nutzungsquellen CLIProxyAPI cli proxy hub kontingent abonnement limits verwaltung schlüssel hinzufügen entfernen",
+  "5888d4308daf54f7": "Ablaufendes Reset-Guthaben automatisch einlösen",
   "d65fa0946585b245": "Textgeneratoren",
   "e6fd69a8a3bb69e2": "modell api api-schlüssel openai openrouter anthropic ollama lm studio eigener endpunkt basis-url thread-titel commit-nachrichten",
   "f2b07faba1229ce7": "Intervall der Zustandsprüfung",

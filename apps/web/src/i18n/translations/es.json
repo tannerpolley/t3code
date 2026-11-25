@@ -11538,6 +11538,7 @@
       "v": "v"
     }
   ],
+  "1a565539ffd96d2a": "Canjea un crédito de restablecimiento guardado en las cuentas de este dispositivo poco antes de que caduque.",
   "39f64d971ba424b5": "No hay fuentes de uso configuradas.",
   "dbd877abdc2c7c81": "Fuente de cuotas HTTP",
   "4cf6a373a7535324": "{name} · Deshabilitado",
@@ -11959,6 +11960,7 @@
   "f8d32e19131fd5b3": "agentes cli codex claude cursor grok fx kiro opencode antigravity google iniciar sesión cerrar sesión instalar suscripción instancias autenticación clave de api modelos configuración binario ruta directorio de configuración codex_home shadow home endpoint argumentos variables de entorno nombre visible color de acento personalizado favorito oculto compactación automática sesiones nativas importar reanudar",
   "ad371af21e5b4b01": "Proveedores de uso",
   "9d9d31a4f3d5ff69": "fuentes de uso CLIProxyAPI proxy de CLI hub cuota suscripción límites gestión clave añadir quitar",
+  "5888d4308daf54f7": "Usar automáticamente los créditos de restablecimiento próximos a caducar",
   "d65fa0946585b245": "Generadores de texto",
   "e6fd69a8a3bb69e2": "modelo api clave de api openai openrouter anthropic ollama lm studio endpoint personalizado url base títulos de hilos mensajes de commit",
   "f2b07faba1229ce7": "Intervalo de comprobación de estado",

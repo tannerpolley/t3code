@@ -14,6 +14,7 @@ import {
   AlertDialogTitle,
 } from "../ui/alert-dialog";
 import { Button } from "../ui/button";
+import { Switch } from "../ui/switch";
 import { AddUsageLimitSourceDialog } from "./AddUsageLimitSourceDialog";
 import { useSearchableSetting } from "./settingsSearch";
 import { SettingsRow, SettingsSection } from "./settingsLayout";
@@ -24,11 +25,13 @@ export function UsageProviderSettings({
   environmentId,
   environmentLabel,
   sources,
+  autoUseExpiringResetCredits,
   readOnly,
 }: {
   readonly environmentId: EnvironmentId;
   readonly environmentLabel: string;
   readonly sources: UnifiedSettings["usageLimitSources"];
+  readonly autoUseExpiringResetCredits: boolean;
   readonly readOnly: boolean;
 }) {
   const gt = useGT();
@@ -36,6 +39,7 @@ export function UsageProviderSettings({
   const updateSettings = useUpdateEnvironmentSettings(environmentId);
   const [adding, setAdding] = useState<"cliproxy" | "http" | null>(null);
   const entries = Object.entries(sources);
+  const autoUse = searchableSetting("auto-use-expiring-reset-credits");
 
   return (
     <>
@@ -56,6 +60,22 @@ export function UsageProviderSettings({
           ) : null
         }
       >
+        <SettingsRow
+          {...autoUse}
+          description={gt(
+            "Spend a banked reset credit on this device’s accounts shortly before it expires.",
+          )}
+          control={
+            <Switch
+              aria-label={autoUse.title}
+              checked={autoUseExpiringResetCredits}
+              disabled={readOnly}
+              onCheckedChange={(checked) =>
+                updateSettings({ autoUseExpiringResetCredits: checked })
+              }
+            />
+          }
+        />
         {entries.length === 0 ? (
           <SettingsRow title={gt("No usage sources configured.")} />
         ) : (

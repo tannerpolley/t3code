@@ -108,7 +108,107 @@ const noSpawn = ChildProcessSpawner.make(() =>
 );
 const encodeCredentials = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
+const decodeCreditFrame = Schema.decodeUnknownEffect(
+  Schema.fromJsonString(
+    Schema.Struct({
+      id: Schema.optional(Schema.Number),
+      method: Schema.String,
+      params: Schema.optional(Schema.Unknown),
+    }),
+  ),
+);
+
 it.layer(layerTest)("CodexDriver", (it) => {
+  it.effect("pins automatic redemption to the grant in a fresh Codex read", () =>
+    Effect.gen(function* () {
+      const requests: unknown[] = [];
+      let nextCredit = "other";
+      const spawner = ChildProcessSpawner.make(() =>
+        Effect.gen(function* () {
+          const stdout = yield* Queue.unbounded<Uint8Array>();
+          return ChildProcessSpawner.makeHandle({
+            pid: ChildProcessSpawner.ProcessId(1),
+            exitCode: Effect.never,
+            isRunning: Effect.succeed(true),
+            kill: () => Effect.void,
+            unref: Effect.succeed(Effect.void),
+            stdin: Sink.forEach((chunk: Uint8Array) =>
+              Effect.gen(function* () {
+                const frame = yield* decodeCreditFrame(new TextDecoder().decode(chunk));
+                if (frame.id === undefined) return;
+                const replies = {
+                  initialize: {
+                    userAgent: "test",
+                    codexHome: "/tmp/test",
+                    platformFamily: "unix",
+                    platformOs: "linux",
+                  },
+                  "account/read": {
+                    requiresOpenaiAuth: false,
+                    account: { type: "chatgpt", email: "user@example.test", planType: "plus" },
+                  },
+                  "account/rateLimits/read": {
+                    accountId: "workspace",
+                    rateLimits: {},
+                    rateLimitResetCredits: {
+                      availableCount: 1,
+                      credits: [
+                        {
+                          id: nextCredit,
+                          status: "available",
+                          resetType: "codexRateLimits",
+                          grantedAt: 100,
+                          expiresAt: 1200,
+                        },
+                      ],
+                    },
+                  },
+                  "account/rateLimitResetCredit/consume": { outcome: "reset" },
+                };
+                if (frame.method === "account/rateLimitResetCredit/consume")
+                  requests.push(frame.params);
+                const result = replies[frame.method as keyof typeof replies];
+                yield* Queue.offer(
+                  stdout,
+                  new TextEncoder().encode(JSON.stringify({ id: frame.id, result }) + "\n"),
+                );
+              }).pipe(Effect.orDie),
+            ),
+            stdout: Stream.fromQueue(stdout),
+            stderr: Stream.empty,
+            all: Stream.empty,
+            getInputFd: () => Sink.drain,
+            getOutputFd: () => Stream.empty,
+          });
+        }),
+      );
+      const config = yield* ServerConfig.ServerConfig;
+      const instance = yield* CodexDriver.create({
+        instanceId: ProviderInstanceId.make("credit-fixture"),
+        displayName: undefined,
+        enabled: false,
+        environment: [],
+        config: {
+          ...CodexDriver.defaultConfig(),
+          binaryPath: process.execPath,
+          homePath: NodePath.join(config.stateDir, "credit-home"),
+        },
+      }).pipe(Effect.provideService(ChildProcessSpawner.ChildProcessSpawner, spawner));
+      const selection = {
+        creditId: "grant",
+        expiresAt: "1970-01-01T00:20:00.000Z",
+        email: "user@example.test",
+        workspaceId: "workspace",
+        canRedeem: Effect.succeed(true),
+      };
+      expect(yield* instance.consumeResetCredit!(selection)).toBe("nothingToReset");
+      expect(requests).toEqual([]);
+      nextCredit = "grant";
+      expect(yield* instance.consumeResetCredit!(selection)).toBe("reset");
+      expect(requests).toEqual([expect.objectContaining({ creditId: "grant" })]);
+    }),
+  );
+
   const checkManagedAccount = (replacementTiming: "unchanged" | "during-probe") =>
     Effect.gen(function* () {
       const instanceId = ProviderInstanceId.make("restored-managed-account");

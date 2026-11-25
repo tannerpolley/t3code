@@ -53,6 +53,33 @@ describe("ResetCreditCoordinator", () => {
     }).pipe(Effect.provide(ResetCreditCoordinator.layerTest)),
   );
 
+  it.effect("retains the pending key for an unanswered grant across skipped and other claims", () =>
+    Effect.gen(function* () {
+      const { redeem } = yield* ResetCreditCoordinator.ResetCreditCoordinator;
+      const keys: string[] = [];
+      const record = (key: string) =>
+        Effect.sync(() => {
+          keys.push(key);
+        });
+      yield* redeem(
+        "acct",
+        (key) => record(key).pipe(Effect.andThen(Effect.fail("timeout"))),
+        undefined,
+        "a",
+      ).pipe(Effect.ignore);
+      yield* redeem("acct", (key) => record(key), undefined, "a");
+      yield* redeem("acct", (key) => record(key).pipe(Effect.as("reset" as const)), undefined, "b");
+      yield* redeem(
+        "acct",
+        (key) => record(key).pipe(Effect.as("alreadyRedeemed" as const)),
+        undefined,
+        "a",
+      );
+      assert.deepStrictEqual(keys, [keys[0], keys[0], keys[2], keys[0]]);
+      assert.notStrictEqual(keys[0], keys[2]);
+    }).pipe(Effect.provide(ResetCreditCoordinator.layerTest)),
+  );
+
   it.effect("serialises concurrent redemptions on the same account, not per caller", () =>
     Effect.gen(function* () {
       const { redeem } = yield* ResetCreditCoordinator.ResetCreditCoordinator;

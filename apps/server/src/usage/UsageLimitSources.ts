@@ -12,6 +12,7 @@ import {
   type UsageLimitSourceSnapshot,
 } from "@t3tools/contracts";
 import { resolveServerBackgroundActivitySettings } from "@t3tools/shared/backgroundActivitySettings";
+import type { AutomaticResetCredit } from "@t3tools/provider-core/server/driver";
 import { hubRoutes } from "@t3tools/shared/usageLimits";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -70,6 +71,7 @@ export class UsageLimitSources extends Context.Service<
     readonly refresh: Effect.Effect<void>;
     readonly consumeResetCredit: (
       input: UsageLimitSourceConsumeResetCreditInput,
+      automatic?: AutomaticResetCredit & { readonly endpoint: string | undefined },
     ) => Effect.Effect<ProviderConsumeResetCreditResult, UsageLimitSourceError>;
   }
 >()("t3/usage/UsageLimitSources") {}
@@ -121,6 +123,12 @@ function keepLastGoodReadings(
   });
 }
 
+function cliproxyEndpoint(url: URL | null) {
+  if (url && /^https?:$/.test(url.protocol)) {
+    return `${url.origin}${url.pathname.replace(/(\/management\.html)?\/*$/i, "")}`;
+  }
+}
+
 function missingManagementKey(config: UsageLimitSourceConfig): string {
   return typeof config.managementKey === "string"
     ? "No management key configured."
@@ -152,16 +160,12 @@ export const make = Effect.gen(function* () {
   ) {
     const checkedAt = DateTime.formatIso(yield* DateTime.now);
     const url = URL.parse(config.url);
+    const endpoint = config.kind === "cliproxy" ? cliproxyEndpoint(url) : undefined;
     const base = {
       id,
       kind: config.kind,
       label: sourceLabel(id, config),
-      ...(config.kind === "cliproxy" && url && /^https?:$/.test(url.protocol)
-        ? {
-            origin: url.origin,
-            endpoint: `${url.origin}${url.pathname.replace(/(\/management\.html)?\/*$/i, "")}`,
-          }
-        : {}),
+      ...(endpoint && url ? { origin: url.origin, endpoint } : {}),
       checkedAt,
     } as const;
     const managementKey = yield* readManagementKey(config);
@@ -234,6 +238,7 @@ export const make = Effect.gen(function* () {
   // Shares the refresh lock so a stale in-flight read cannot overwrite a redemption.
   const consumeResetCredit = Effect.fn("UsageLimitSources.consumeResetCredit")(function* (
     input: UsageLimitSourceConsumeResetCreditInput,
+    automatic?: AutomaticResetCredit & { readonly endpoint: string | undefined },
   ) {
     const settings = yield* settingsService.getSettings.pipe(
       Effect.mapError(() => new UsageLimitSourceError({ detail: "Could not read hub settings." })),
@@ -244,6 +249,12 @@ export const make = Effect.gen(function* () {
         detail: "The usage limit source is missing or disabled.",
       });
     }
+    if (
+      automatic &&
+      (!automatic.endpoint || automatic.endpoint !== cliproxyEndpoint(URL.parse(config.url)))
+    ) {
+      return { outcome: "nothingToReset" } as const;
+    }
     const managementKey = yield* readManagementKey(config);
     if (managementKey.length === 0) {
       return yield* new UsageLimitSourceError({ detail: missingManagementKey(config) });
@@ -252,6 +263,20 @@ export const make = Effect.gen(function* () {
       { url: config.url, managementKey },
       input.accountId,
       input.creditId,
+      automatic && {
+        ...automatic,
+        canRedeem: Effect.gen(function* () {
+          const latest = yield* settingsService.getSettings.pipe(Effect.orElseSucceed(() => null));
+          const current = latest?.usageLimitSources[input.sourceId];
+          return (
+            current?.enabled === true &&
+            current.kind === "cliproxy" &&
+            current.url === config.url &&
+            (yield* readManagementKey(current)) === managementKey &&
+            (yield* automatic.canRedeem)
+          );
+        }),
+      },
     );
     // A redemption changes the reading, so a refused re-read must not bring back the one before it.
     const snapshot = yield* readSource(input.sourceId, config);

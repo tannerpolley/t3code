@@ -40,6 +40,14 @@ export type ProviderWorkspaceSnapshot = ServerProvider &
     readonly workspaceModelsPending?: boolean;
   };
 
+export interface AutomaticResetCredit {
+  readonly creditId: string;
+  readonly expiresAt: string;
+  readonly email: string;
+  readonly workspaceId?: string | undefined;
+  readonly canRedeem: Effect.Effect<boolean>;
+}
+
 export interface ProviderInstance {
   readonly instanceId: ProviderInstanceId;
   readonly driverKind: ProviderDriverKind;
@@ -61,7 +69,7 @@ export interface ProviderInstance {
   /** Moves a long-lived service onto a newly updated binary before its version is read back. */
   readonly afterUpdate?: Effect.Effect<void, ProviderDriverError>;
   readonly consumeResetCredit?: (
-    creditId: string | undefined,
+    creditId: string | AutomaticResetCredit | undefined,
   ) => Effect.Effect<ProviderConsumeResetCreditOutcome, ProviderDriverError>;
   readonly orchestrationAdapter: ProviderAdapter.ProviderAdapterV2["Service"];
   readonly textGeneration: ProviderTextGeneration;

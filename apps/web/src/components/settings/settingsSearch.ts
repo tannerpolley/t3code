@@ -1105,6 +1105,12 @@ export const SETTINGS_SEARCH_ITEMS = [
     providerSettingsOnly: true,
   },
   {
+    id: "auto-use-expiring-reset-credits",
+    title: msg("Automatically use expiring reset credits"),
+    to: "/settings/providers",
+    providerSettingsOnly: true,
+  },
+  {
     id: "text-generators",
     title: msg("Text generators"),
     to: "/settings/providers",

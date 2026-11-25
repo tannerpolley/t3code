@@ -1,5 +1,6 @@
 import * as NodeServices from "@effect/platform-node/NodeServices";
 import { it as effectIt } from "@effect/vitest";
+import type { AutomaticResetCredit } from "@t3tools/provider-core/server/driver";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
 import * as FileSystem from "effect/FileSystem";
@@ -104,7 +105,11 @@ describe("claudeResetCreditsToContract", () => {
       ["weekly_a", "Weekly reset", 1],
       ["fable_a", "Fable reset", 2],
     ]);
-    expect(credits).toMatchObject({ availableCount: 4, nextCreditId: "weekly_a" });
+    expect(credits).toMatchObject({
+      availableCount: 4,
+      nextCreditId: "weekly_a",
+      nextExpiresAt: "2026-12-10T22:00:00.000Z",
+    });
   });
 
   it("offers nothing to redeem without a usable next grant or an eligible account", () => {
@@ -178,13 +183,18 @@ const ClaimBody = Schema.fromJsonString(
 );
 const decodeClaimBody = Schema.decodeEffect(ClaimBody);
 
-const consume = (client: HttpClient.HttpClient, ids = { grantId: "grant_a", requestId: "r-1" }) =>
+const consume = (
+  client: HttpClient.HttpClient,
+  ids = { grantId: "grant_a", requestId: "r-1" },
+  automatic?: AutomaticResetCredit,
+) =>
   Effect.gen(function* () {
     const login = yield* writeLogin;
     return yield* ClaudeResetCredits.consumeClaudeResetCredit({
       ...login,
       version: "2.1.0",
       ...ids,
+      automatic,
     }).pipe(
       Effect.provideService(HostProcess.Platform, "linux"),
       Effect.provideService(HttpClient.HttpClient, client),
@@ -193,6 +203,42 @@ const consume = (client: HttpClient.HttpClient, ids = { grantId: "grant_a", requ
   });
 
 effectIt.layer(NodeServices.layer)("consumeClaudeResetCredit", (it) => {
+  it.effect("uses the expiry of Claude's selected grant before posting a claim", () =>
+    Effect.gen(function* () {
+      const expiresAt = "2099-01-01T00:00:00.000Z";
+      for (const selected of ["grant_a", "grant_b"]) {
+        const methods: string[] = [];
+        const client = HttpClient.make((request) =>
+          Effect.sync(() => {
+            methods.push(request.method);
+            const body =
+              request.method === "POST"
+                ? { result: "reset" }
+                : {
+                    cedar_ember: {
+                      eligible: true,
+                      next_grant_id: selected,
+                      grants: [
+                        grant({ ends_at: expiresAt }),
+                        grant({ id: "grant_b", type: "weekly", ends_at: "2099-02-01T00:00:00Z" }),
+                      ],
+                    },
+                  };
+            return HttpClientResponse.fromWeb(request, Response.json(body));
+          }),
+        );
+        const result = yield* consume(client, undefined, {
+          creditId: "grant_a",
+          expiresAt,
+          email: "user@example.test",
+          workspaceId: "org-1",
+          canRedeem: Effect.succeed(true),
+        });
+        expect(result._tag).toBe("Success");
+        expect(methods).toEqual(selected === "grant_a" ? ["GET", "POST"] : ["GET"]);
+      }
+    }),
+  );
   it.effect("claims the grant for the organization", () =>
     Effect.gen(function* () {
       const client = HttpClient.make((request) =>

@@ -132,6 +132,10 @@ Claude resets are not available when the server runs on macOS, where Claude keep
 Keychain. On narrow screens, numbered rows below
 the bar show each account's quota, countdown, and credits. Tap a row to open its details.
 
+To use expiring credits automatically, enable **Automatically use expiring reset credits** under
+**Settings → Providers → Usage providers** on the environment that holds the accounts. While its
+server is running, it can redeem a credit from ten minutes before expiry until one minute remains.
+
 The same account signed in on more than one environment, or reported by a hub as well, counts once.
 Filter with the environment dropdown to see what a single machine has.
 

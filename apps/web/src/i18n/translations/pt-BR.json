@@ -11543,6 +11543,7 @@
       "v": "v"
     }
   ],
+  "1a565539ffd96d2a": "Usa um crédito de redefinição guardado nas contas deste dispositivo pouco antes de expirar.",
   "39f64d971ba424b5": "Nenhuma fonte de uso configurada.",
   "dbd877abdc2c7c81": "Fonte de cotas HTTP",
   "4cf6a373a7535324": "{name} · Desativado",
@@ -11964,6 +11965,7 @@
   "f8d32e19131fd5b3": "agentes cli codex claude cursor grok fx kiro opencode antigravity google entrar sair instalar assinatura instâncias autenticação chave de api modelos configuração caminho do binário diretório de configuração codex_home shadow home endpoint argumentos variáveis de ambiente nome de exibição cor de destaque personalizado favorito oculto compactação automática sessões nativas importar retomar",
   "ad371af21e5b4b01": "Provedores de uso",
   "9d9d31a4f3d5ff69": "fontes de uso CLIProxyAPI proxy de CLI hub cota assinatura limites chave de gerenciamento adicionar remover",
+  "5888d4308daf54f7": "Usar automaticamente créditos de redefinição prestes a expirar",
   "d65fa0946585b245": "Geradores de texto",
   "e6fd69a8a3bb69e2": "modelo api chave de api openai openrouter anthropic ollama lm studio endpoint personalizado url base títulos de threads mensagens de commit",
   "f2b07faba1229ce7": "Intervalo de verificação de saúde",

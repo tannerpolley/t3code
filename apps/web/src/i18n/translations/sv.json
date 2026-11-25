@@ -11551,6 +11551,7 @@
       "v": "v"
     }
   ],
+  "1a565539ffd96d2a": "Använder en sparad återställningskredit för kontona på den här enheten strax innan den löper ut.",
   "39f64d971ba424b5": "Inga användningskällor har konfigurerats.",
   "dbd877abdc2c7c81": "HTTP-källa för kvoter",
   "4cf6a373a7535324": "{name} · Inaktiverad",
@@ -11972,6 +11973,7 @@
   "f8d32e19131fd5b3": "agenter cli codex claude cursor grok fx kiro opencode antigravity google logga in logga ut installera prenumeration instanser autentisering api-nyckel modeller konfiguration binär sökväg konfigurationskatalog codex_home skugghem slutpunkt argument miljövariabler visningsnamn accentfärg anpassad favorit dold automatisk komprimering inbyggda sessioner importera återuppta",
   "ad371af21e5b4b01": "Användningsleverantörer",
   "9d9d31a4f3d5ff69": "användningskällor CLIProxyAPI CLI-proxy hubb kvot prenumeration gränser hanteringsnyckel lägg till ta bort",
+  "5888d4308daf54f7": "Använd återställningskrediter automatiskt innan de löper ut",
   "d65fa0946585b245": "Textgeneratorer",
   "e6fd69a8a3bb69e2": "modell api api-nyckel openai openrouter anthropic ollama lm studio anpassad slutpunkt bas-url trådtitlar commit-meddelanden",
   "f2b07faba1229ce7": "Intervall för hälsokontroll",

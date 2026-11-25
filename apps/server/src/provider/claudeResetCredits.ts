@@ -3,6 +3,7 @@ import type {
   ServerProviderResetCreditOption,
   ServerProviderResetCredits,
 } from "@t3tools/contracts";
+import type { AutomaticResetCredit } from "@t3tools/provider-core/server/driver";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
@@ -26,6 +27,7 @@ const Config = Schema.Struct({
     Schema.Struct({
       organizationUuid: Schema.optional(Schema.String),
       accountUuid: Schema.optional(Schema.Unknown),
+      emailAddress: Schema.optional(Schema.String),
     }),
   ),
 });
@@ -141,7 +143,9 @@ export function claudeResetCreditsToContract(
         grant.usable_now &&
         (grant.ends_at == null || isFutureTimestamp(grant.ends_at, nowMs)),
     );
-  const next = live.find((grant) => grant.id === parsed.value.next_grant_id);
+  const next = live.find(
+    (grant) => grant.id === parsed.value.next_grant_id && grant.resets_left > 0,
+  );
   const expiresAt = (grant: typeof Grant.Type | undefined) => {
     const at = grant?.ends_at ? DateTime.make(grant.ends_at) : Option.none();
     return Option.isSome(at) ? DateTime.formatIso(at.value) : undefined;
@@ -207,10 +211,8 @@ const withClaudeHeaders = (token: string, version: string) =>
     "user-agent": `claude-cli/${version} (external, cli)`,
   });
 
-export const readClaudeResetCredits = Effect.fn("readClaudeResetCredits")(
-  function* (configDir: string, version: string) {
-    const token = yield* readAccessToken(configDir);
-    if (!token) return undefined;
+const readCreditsForToken = Effect.fn("readClaudeResetCredits.forToken")(
+  function* (token: string, version: string) {
     const client = yield* HttpClient.HttpClient;
     const response = yield* client.execute(
       HttpClientRequest.get(`${API_BASE}/api/oauth/usage`, {
@@ -224,6 +226,15 @@ export const readClaudeResetCredits = Effect.fn("readClaudeResetCredits")(
       body.cedar_ember,
       DateTime.toEpochMillis(yield* DateTime.now),
     );
+  },
+  Effect.timeout("10 seconds"),
+  Effect.orElseSucceed(() => undefined),
+);
+
+export const readClaudeResetCredits = Effect.fn("readClaudeResetCredits")(
+  function* (configDir: string, version: string) {
+    const token = yield* readAccessToken(configDir);
+    if (token) return yield* readCreditsForToken(token, version);
   },
   Effect.timeout("10 seconds"),
   Effect.orElseSucceed(() => undefined),
@@ -263,6 +274,7 @@ export const consumeClaudeResetCredit = Effect.fn("consumeClaudeResetCredit")(fu
   readonly version: string;
   readonly grantId: string;
   readonly requestId: string;
+  readonly automatic?: AutomaticResetCredit | undefined;
 }) {
   if (!GRANT_ID.test(input.grantId) || !REQUEST_ID.test(input.requestId)) {
     return yield* new ClaudeResetCreditError({ reason: "malformedCredit" });
@@ -278,6 +290,25 @@ export const consumeClaudeResetCredit = Effect.fn("consumeClaudeResetCredit")(fu
     return yield* new ClaudeResetCreditError({ reason: "signedOut" });
   }
   const client = yield* HttpClient.HttpClient;
+  if (input.automatic) {
+    const { creditId, expiresAt, email, workspaceId, canRedeem } = input.automatic;
+    const accountEmail = config.oauthAccount?.emailAddress?.trim().toLowerCase();
+    if (
+      input.grantId !== creditId ||
+      (accountEmail && accountEmail !== email) ||
+      (workspaceId && workspaceId !== organization)
+    ) {
+      return undefined;
+    }
+    const credits = yield* readCreditsForToken(token, input.version);
+    if (
+      !credits?.availableCount ||
+      credits.nextCreditId !== creditId ||
+      credits.nextExpiresAt !== expiresAt ||
+      !(yield* canRedeem)
+    )
+      return undefined;
+  }
   const response = yield* client
     .execute(
       HttpClientRequest.post(

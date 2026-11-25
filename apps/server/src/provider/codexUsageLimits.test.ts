@@ -16,6 +16,26 @@ import {
 const checkedAt = "2026-07-18T10:00:00.000Z";
 
 describe("codexRateLimitsToLimits", () => {
+  it("pairs the first available expiry with its exact grant", () => {
+    const limits = codexRateLimitsToLimits({
+      checkedAt,
+      snapshot: {},
+      resetCredits: {
+        availableCount: 3,
+        credits: [
+          { id: "used", status: "redeemed", expiresAt: 1_783_000_000 },
+          { id: "unlimited", status: "available" },
+          { id: "later", status: "available", expiresAt: 1_785_000_000 },
+          { id: "first", status: "available", expiresAt: 1_784_000_000 },
+        ],
+      },
+    });
+    expect(limits.resetCredits).toEqual({
+      availableCount: 3,
+      nextCreditId: "first",
+      nextExpiresAt: "2026-07-14T03:33:20.000Z",
+    });
+  });
   it("shows an Enterprise monthly credit allowance in reads and notifications without a duration", () => {
     const snapshot = {
       limitId: "codex",
