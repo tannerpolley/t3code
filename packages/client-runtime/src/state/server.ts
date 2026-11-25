@@ -1723,6 +1723,14 @@ export function createServerEnvironmentAtoms<R, E>(
         );
       },
     }),
+    sidebarLayout: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
+      label: "environment-data:server:sidebar-layout",
+      tag: WS_METHODS.subscribeSidebarLayout,
+    }),
+    updateSidebarLayout: createEnvironmentRpcCommand(runtime, {
+      label: "environment-data:server:update-sidebar-layout",
+      tag: WS_METHODS.sidebarLayoutUpdate,
+    }),
     resourceTelemetry: createEnvironmentRpcSubscriptionAtomFamily(runtime, {
       label: "environment-data:server:resource-telemetry",
       tag: WS_METHODS.subscribeResourceTelemetry,

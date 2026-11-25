@@ -41,6 +41,8 @@ export function sidebarFolderRowId(projectKey: string) {
 export const SidebarProjectFolderHeader = memo(function SidebarProjectFolderHeader(props: {
   group: SidebarProjectSnapshot;
   collapsed: boolean;
+  parent?: string | undefined;
+  depth?: number | undefined;
   hiddenThreads: readonly EnvironmentThreadShell[];
   onToggle: (group: SidebarProjectSnapshot) => void;
   onNewThread: (group: SidebarProjectSnapshot) => void;
@@ -76,6 +78,14 @@ export const SidebarProjectFolderHeader = memo(function SidebarProjectFolderHead
       <button
         type="button"
         data-sidebar-row={rowId}
+        data-sidebar-parent={props.parent}
+        style={
+          props.depth
+            ? {
+                paddingInlineStart: `calc(var(--sidebar-row-content-inset) + ${Math.min(props.depth, 3) * 10}px)`,
+              }
+            : undefined
+        }
         aria-expanded={!collapsed}
         onClick={() => props.onToggle(group)}
         onContextMenu={(event) => {

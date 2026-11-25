@@ -8926,7 +8926,7 @@
   "93c4c53562d30a98": "När du ber om det visar agenter en kort rapport om T3 Code och skickar den till T3-teamet om du godkänner den.",
   "cd9ee803e8727017": "Agenter rapporterar även problem med T3 Code som de själva stöter på, till exempel ett T3-verktyg som misslyckats.",
   "45fa271ea0e1ac8e": "Beta",
-  "3a678332fc7142f7": "Gruppera trådar i sidofältet i projektmappar. Fästa trådar ligger överst, och Snoozade och Klara ligger under mapparna.",
+  "4794257eb633d9ba": "Gruppera trådar i sidopanelen i projektmappar och egna sektioner. Trådarna behåller ordningen när de är aktiva, pausas eller avslutas.",
   "e4e91d155cb6a9b4": "Enkelt sidofält (gruppera per projekt)",
   "f079556d67367fe7": "Visa trådar i mappar på två rader: titeln, sedan gren, pull request och agent.",
   "ac1e5c94d1ad3c6a": "Mapprader på två rader",
@@ -12993,5 +12993,15 @@
   "99451a5d2d40440f": "Återkallad av {by}.",
   "3ee30a50b70fffab": "Återkallad av {by}: {reason}",
   "92e129bf413a1220": "återkallad",
-  "800966eb58181745": "Kontrollerar vilka språk modellen stöder…"
+  "800966eb58181745": "Kontrollerar vilka språk modellen stöder…",
+  "cef42f1eea1b516e": "Flytta till en sektion i {environment}",
+  "53215a0961be77a6": "Flytta till sektion",
+  "73a4bafa48c244aa": "Ny sektion",
+  "5fd5eaf0499d5247": "Ta bort från sektionen",
+  "74f489e47ca59e05": "Byt namn på sektionen",
+  "cd9047bb4c235453": "Ta bort sektion",
+  "54d9df5245fa49a7": "Det gick inte att spara sidopanelens layout. Försök igen.",
+  "7070d28e490778c2": "Sektionsnamn",
+  "7c95a36da22a5eff": "Ny sektion",
+  "e0d0ac58b0ddb151": "Byt namn på sektionen"
 }

@@ -8920,7 +8920,7 @@
   "93c4c53562d30a98": "Wenn du darum bittest, zeigen Agenten dir einen kurzen Bericht über T3 Code und senden ihn mit deiner Zustimmung an das T3-Team.",
   "cd9ee803e8727017": "Agenten melden auch selbstständig Probleme mit T3 Code, auf die sie stoßen, etwa ein fehlgeschlagenes T3-Tool.",
   "45fa271ea0e1ac8e": "Beta",
-  "3a678332fc7142f7": "Threads in der Seitenleiste in Projektordnern gruppieren. Angeheftete Threads bleiben oben, Zurückgestellte und Erledigte bleiben unter den Ordnern.",
+  "4794257eb633d9ba": "Gruppiert Unterhaltungen in der Seitenleiste in Projektordnern und eigenen Abschnitten. Die Reihenfolge bleibt beim Arbeiten, Zurückstellen und Abschließen erhalten.",
   "e4e91d155cb6a9b4": "Schlichte Seitenleiste (nach Projekt gruppieren)",
   "f079556d67367fe7": "Ordner-Threads zweizeilig anzeigen: den Titel, darunter Branch, Pull Request und Agent.",
   "ac1e5c94d1ad3c6a": "Zweizeilige Ordnerzeilen",
@@ -12986,5 +12986,15 @@
   "99451a5d2d40440f": "Zurückgezogen von {by}.",
   "3ee30a50b70fffab": "Zurückgezogen von {by}: {reason}",
   "92e129bf413a1220": "zurückgezogen",
-  "800966eb58181745": "Prüfe, welche Sprachen das Modell unterstützt…"
+  "800966eb58181745": "Prüfe, welche Sprachen das Modell unterstützt…",
+  "cef42f1eea1b516e": "In Abschnitt auf {environment} verschieben",
+  "53215a0961be77a6": "In Abschnitt verschieben",
+  "73a4bafa48c244aa": "Neuer Abschnitt",
+  "5fd5eaf0499d5247": "Aus Abschnitt entfernen",
+  "74f489e47ca59e05": "Abschnitt umbenennen",
+  "cd9047bb4c235453": "Abschnitt löschen",
+  "54d9df5245fa49a7": "Das Seitenleistenlayout konnte nicht gespeichert werden. Versuche es erneut.",
+  "7070d28e490778c2": "Abschnittsname",
+  "7c95a36da22a5eff": "Neuer Abschnitt",
+  "e0d0ac58b0ddb151": "Abschnitt umbenennen"
 }

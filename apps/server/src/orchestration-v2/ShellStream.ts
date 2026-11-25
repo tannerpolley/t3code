@@ -266,6 +266,7 @@ function omitOlderSettledShellsWith(
     readonly threads: ReadonlyArray<OrchestrationV2ThreadShell>;
     readonly snapshotSequence: number;
     readonly now: DateTime.Utc;
+    readonly placedThreadIds?: ReadonlySet<string>;
   },
   facts: Pick<
     ShellTrimFacts,
@@ -281,6 +282,7 @@ function omitOlderSettledShellsWith(
   const threads = input.threads.filter(
     (thread) =>
       !isOlderSettledThreadShell(thread, beforeMs) ||
+      input.placedThreadIds?.has(thread.id) ||
       thread.pinnedAt != null ||
       (thread.snoozedUntil != null && DateTime.toEpochMillis(thread.snoozedUntil) > nowMs) ||
       isLiveSubagentShell(thread) ||
@@ -347,6 +349,7 @@ export function omitOlderSettledShells(input: {
 interface ShellSubscriberOptions {
   readonly omitIdleSubagents: boolean;
   readonly omitOlderSettled: boolean;
+  readonly placedThreadIds?: ReadonlySet<string>;
 }
 
 function trimShellSnapshot(
@@ -359,7 +362,7 @@ function trimShellSnapshot(
     : base.threads;
   if (!options.omitOlderSettled) return { ...base, threads };
   const older = omitOlderSettledShellsWith(
-    { threads, snapshotSequence: base.snapshotSequence, now: options.now },
+    { ...options, threads, snapshotSequence: base.snapshotSequence },
     facts,
   );
   return { ...base, threads: older.threads, olderSettled: older.olderSettled };
@@ -396,6 +399,7 @@ function shellSubscriberThreadIds(
       : !options.omitOlderSettled ||
           beforeMs === undefined ||
           !isOlderSettledThreadShell(entry, beforeMs) ||
+          options.placedThreadIds?.has(entry.id) ||
           entry.pinnedAt != null ||
           entry.snoozedUntil != null ||
           entry.mayBeLive ||
