@@ -1,7 +1,7 @@
 import type { ThreadLinkedIssue } from "@t3tools/contracts";
 import * as Config from "effect/Config";
 
-/** Repositories whose managed issue workers publish and merge their own PR. */
+/** Repositories that opt out of managed worker PR watches and may grant worker publication. */
 export const IssueDraftPrRepositories = Config.String("T3CODE_ISSUE_DRAFT_PR_REPOSITORIES").pipe(
   Config.withDefault(""),
   Config.map(
@@ -22,8 +22,12 @@ export const isDraftPrRepository = (
 
 export const issueWorkerBrief = (issue: ThreadLinkedIssue, canPublishDraft: boolean) => {
   const repository = `${issue.host}/${issue.repository}`;
+  const brief = `Implement issue #${issue.number}: ${issue.title}\n${issue.url}\nRead the issue and its comments, complete the authorized work, and report the result. Status and closeout comments are authorized.`;
+  if (repository.toLowerCase() === "github.com/tannerpolley/t3code") {
+    return `${brief} Follow the worker checks in AGENTS.md. Have a fresh read-only reviewer review the diff and resolve blockers. Commit the branch locally and return the worktree path, branch, exact commit SHA, targeted check results, and review verdict. The repository orchestrator owns full validation and publication.`;
+  }
   const publishing = canPublishDraft
     ? `The repository owner explicitly requests that you publish and merge after checks pass. First have a fresh read-only reviewer subagent review this worktree's diff against the issue, and fix its blockers. Then push only this issue branch to ${repository} and open the PR there ready for review, or mark an existing draft ready, with Closes #${issue.number} and the review verdict in the body; if blockers remain, keep any PR a draft and report them instead. Once the PR is ready and mergeable, merge it with gh pr merge --rebase, or --squash when the branch contains merge commits. If main moved and the PR conflicts, merge origin/main into the branch, re-run your checks, push, and retry. Then report the merge SHA and finish. Force-pushing, issue edits, and other GitHub mutations retain separate approval.`
     : "Other GitHub mutations and publishing retain separate approval.";
-  return `Implement issue #${issue.number}: ${issue.title}\n${issue.url}\nRead the issue and its comments, complete the authorized work, and report the result. Status and closeout comments are authorized. ${publishing}`;
+  return `${brief} ${publishing}`;
 };

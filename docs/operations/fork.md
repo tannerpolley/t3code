@@ -53,8 +53,8 @@ Delegating a Writer always uses the parent's checkout. An issue on a Writer is a
 - `main` is the only long-lived branch, and GitHub `main` mirrors local `main`.
 - **Each task:**
   - Has a GitHub issue, and gets a short-lived branch, cut from `main`, in a worktree under the project's `.worktrees/` folder.
-  - Lands through a pull request: push the branch to `origin`, open a pull request (`gh pr create`) whose body says `Closes #<issue>`, and link it to the worker's thread and the orchestrator's (`link_pull_request`). Review happens on that branch.
-  - After review, merge with `gh pr merge <n> --rebase --delete-branch` so `main` stays linear, then `git fetch` and `git merge --ff-only origin/main` locally. Run it from the main checkout: from a worktree it merges but then fails to switch to `main`, which is harmless. Close the issue if it is still open.
+  - The worker gets a fresh review, commits the branch locally, and reports its worktree path, branch, exact commit SHA, targeted check results, and review verdict. The orchestrator validates that commit, pushes the branch to `origin`, and opens a pull request whose body says `Closes #<issue>`. Link it to the worker's thread and the orchestrator's (`link_pull_request`).
+  - After validation, merge with `gh pr merge <n> --rebase --match-head-commit <validated-sha>` or use `--squash` for a branch with merge commits. Then run `git fetch` and `git merge --ff-only origin/main` from the main checkout. Check that GitHub closed the issue.
   - Then delete the local branch and its worktree. A post-merge hook deletes merged local branches that aren't checked out.
 - **Upstream syncs** follow the same path: one issue per sync, and a pull request for the sync branch.
 - **Releases** are tags on `main`: `release/vX.Y.Z`.
@@ -70,13 +70,25 @@ PATH=$M/node_modules/.bin:$PATH CI=true T3CODE_PROJECT_ROOT=$M node scripts/setu
 
 ## Checks
 
+For a managed handoff, the orchestrator checks that the worker worktree is clean and still at the reviewed commit. Fetch `origin/main` and incorporate its current tip into the branch before validation. Review any changes that resolution introduced. Run from that worktree:
+
+```sh
+vp run check:changed --full-validation origin/main
+```
+
+On Linux, each subprocess in either `check:changed` mode holds `~/.t3code-validation.lock` for the duration of its command. Keep the lock file in place. Full validation runs full typecheck, affected package suites, and the selected Vitest files. Each selected file must be discoverable. Vitest rejects focused tests, uses at most two workers, and the web and server suites use one worker each for Playwright. Require a zero exit status and verify the worktree is still clean at the validated SHA. If generated inputs change during a run, repeat validation.
+
+Fetch `origin/main` immediately before GitHub merge. Incorporate any new target tip and repeat validation even when GitHub reports a clean merge. The GitHub merge request binds the head SHA. The target check is a separate operation and can race another writer after the fetch. Send validation failures back to the issue owner for repair.
+
+The commit hook launches repo-wide Knip. After their targeted checks, managed workers can use `git -c core.hooksPath=/dev/null commit` so the orchestrator runs Knip under the same lock.
+
 - Type check one package: `nice -n 10 ../../node_modules/.bin/tsc-rs --noEmit` inside it. Plain `tsc` can take 20+ minutes.
 - Tests: `vp test run <files>`.
   - Run Git tests with `GIT_CONFIG_GLOBAL=/dev/null`, because the owner's global hooks interfere. One failure about binary diff statistics on Git 2.43 comes from the environment, not the code.
   - A branch that adds an MCP tool must also pass `apps/server/src/mcp/toolkits/core.test.ts`, which checks tool labels.
 - GitHub Actions are off on the GitHub copy: every workflow is disabled. Upstream's build and test workflows need its paid Blacksmith runners and would wait in the queue forever, and the rest serve upstream's own repository. A workflow that a sync adds starts out enabled: turn it off with `gh workflow disable -R tannerpolley/t3code <name>`.
 - The owner's launcher sets `T3CODE_PR_WATCH_NO_CHECKS_REPOSITORIES=github.com/tannerpolley/t3code` for the desktop's server. This comma-separated list of `host/owner/repo` keys skips the initial wait for checks on those repositories. Checks that do report, such as review-bot checks, still count. Set the same variable on a standalone server that should use this policy.
-- The owner's launcher sets `T3CODE_ISSUE_DRAFT_PR_REPOSITORIES=github.com/tannerpolley/t3code`. This server setting is empty by default and accepts a comma-separated list of `host/owner/repo` keys. It authorizes new T3-generated issue worker briefs, including Todo starts, to publish the issue branch and a ready-for-review PR after checks and a fresh reviewer pass, then merge that PR themselves and report the merge SHA. Managed workers in these repositories get no automatic PR watch; the orchestrator builds, installs, and closes out after the worker's completion wake. Other repositories keep the orchestrator merge and the automatic watch. Set the same variable before starting a standalone server that should grant this authority.
+- The owner's launcher sets `T3CODE_ISSUE_DRAFT_PR_REPOSITORIES=github.com/tannerpolley/t3code` to suppress automatic PR watches on the fork's workers. They hand reviewed local commits to the orchestrator, which validates, publishes, merges, builds, installs, and closes out. For other repositories, this setting still authorizes workers to publish and merge their own PRs. It accepts a comma-separated list of `host/owner/repo` keys and is empty by default.
 
 ## Dev preview
 

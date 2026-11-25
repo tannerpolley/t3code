@@ -23,7 +23,7 @@ export function needsManagedPullRequestWatch(
 ): boolean {
   return (
     isManagedIssueImplementor(thread) &&
-    // Opted-in workers merge their own PR, so nothing waits on a watch.
+    // Opted-in repositories handle delivery without an automatic worker watch.
     !(
       thread.linkedIssue !== undefined &&
       isDraftPrRepository(draftPrRepositories, thread.linkedIssue)
