@@ -229,10 +229,6 @@ export function createRepositoryIssueEnvironmentAtoms<R, E>(
         environmentId,
         input: { host: input.host.toLowerCase(), repository: input.repository.toLowerCase() },
       }),
-    workMilestone: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:issues:milestone",
-      tag: WS_METHODS.issuesWorkMilestone,
-    }),
     setWorkerLimit: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:issues:worker-limit",
       tag: WS_METHODS.issuesSetWorkerLimit,
@@ -248,10 +244,6 @@ export function createRepositoryIssueEnvironmentAtoms<R, E>(
     endRepository: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:issues:end-repository",
       tag: WS_METHODS.issuesEndRepository,
-    }),
-    setPaused: createEnvironmentRpcCommand(runtime, {
-      label: "environment-data:issues:pause",
-      tag: WS_METHODS.issuesSetPaused,
     }),
     assignOrchestrator: createEnvironmentRpcCommand(runtime, {
       label: "environment-data:issues:assign-orchestrator",
@@ -280,6 +272,7 @@ export function createRepositoryIssueEnvironmentAtoms<R, E>(
       onSuccess: (target, registry) =>
         Effect.sync(() => {
           const { host, repository, number } = target.input;
+          registry.update(localChanges(target.environmentId), (revision) => revision + 1);
           registry.refresh(
             workStatus({
               environmentId: target.environmentId,

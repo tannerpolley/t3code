@@ -33,18 +33,13 @@ content: the List view at `/issues`, its detail panel and its agent tools (`list
 `set_issue_state`, which repository-managed threads and every thread below them don't see because
 `propose_issue_change` is their gated path). Upstream's other trackers come along unchanged.
 
-The fork adds the work on top: the default Board view at `/issues` and the per-repository Issues panel
-beside a thread, with the stages Done / Ready for review / In progress / Queued / Backlog
-(`packages/shared/src/issueStage.ts` owns the rule and its names), and a work section inside
-upstream's issue panel. Queued and milestone issues share one admission path: the repository's
-periodic reconcile starts a managed worker for each unblocked queued issue, then for milestone
-issues, and the worker limit admits queued issues' workers first. The roadmap uses conditional GitHub REST issue pages for its unfiltered
-listing, avoiding the search and viewer GraphQL queries. Issue details and the issues, edits, state
-changes and comments that `propose_issue_change` and status comments write go through upstream's
-service. A fork-owned GitHub extension (`apps/server/src/issues/IssueGitHubExtension.ts`) supplies relationships,
-milestones, Project fields, marked-comment updates, and the identity and activity needed for
-retries and the inbox. `t3_issue_post` uses the extension because it can target repositories
-outside the configured projects and returns the new issue or comment URL.
+The fork adds the GitHub status board at `/issues`, the repository Issues panel beside a thread,
+and the work section in the issue panel. Admission uses GitHub Todo, prioritizes the explicit
+queue, and observes hold labels, native blockers, Inbox openings and durable claims.
+The board and admission share conditional GitHub REST issue pages. Status writes use upstream's
+GitHub driver. The fork's GitHub extension supplies relationships, Project fields, marked-comment
+updates, and the identity and activity needed for retries and the Inbox. `t3_issue_post` can target
+repositories outside configured projects and returns the new issue or comment URL.
 Thread links live only in upstream's `thread.issues[]`: a managed claim
 (`linkedIssue`) writes its link in the same event, and a claim still counts as live work after
 its link is removed. At each start, a backfill moves the retired `issue_thread_links` rows and

@@ -40,7 +40,8 @@ it.effect(
           : Effect.succeed({
               issue: issue(input.number),
               state: "open",
-              milestoneNumber: null,
+              planningStatus: "Todo",
+              labels: [],
               parent: null,
               subIssues: [],
               blockedBy: [],
@@ -81,12 +82,10 @@ it.effect(
           projectId,
           launchCommandId: CommandId.make("limit-root"),
           revision: 1,
-          paused: false,
           workerLimit: 1,
           readOnlyLimit: 4,
           publishStatusComments: false,
           publishCloseoutComments: false,
-          milestones: [],
           suspendedIssues: [],
         },
       });
@@ -292,20 +291,15 @@ it.effect(
       failReads = false;
       assert.equal(committed.orchestration!.workerLimit, 2);
       assert.equal(committed.orchestration!.revision, lowered.orchestration!.revision + 1);
-      const paused = yield* service.setPaused({
-        ...reference,
-        paused: true,
-        clientRequestId: CommandId.make("pause-limit"),
-      });
       const max = yield* service.setWorkerLimit({
         ...reference,
         workerLimit: 32,
-        expectedRevision: paused.orchestration!.revision,
+        expectedRevision: committed.orchestration!.revision,
         clientRequestId: CommandId.make("max-limit"),
       });
       yield* worker.drain();
       assert.equal(max.orchestration!.workerLimit, 32);
-      assert.equal(yield* status(third), "queued");
+      assert.equal(yield* status(third), "starting");
       const unchanged = yield* service.setWorkerLimit({
         ...reference,
         workerLimit: 32,
@@ -313,11 +307,6 @@ it.effect(
         clientRequestId: CommandId.make("same-limit"),
       });
       assert.equal(unchanged.orchestration!.revision, max.orchestration!.revision);
-      yield* service.setPaused({
-        ...reference,
-        paused: false,
-        clientRequestId: CommandId.make("unpause-limit"),
-      });
       yield* worker.drain();
       assert.equal(yield* status(third), "starting");
       assert.equal(yield* status(stopped), "queued");

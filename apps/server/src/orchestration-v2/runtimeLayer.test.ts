@@ -9840,7 +9840,8 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
                   Effect.succeed({
                     issue,
                     state: "open",
-                    milestoneNumber: null,
+                    planningStatus: "Todo",
+                    labels: [],
                     parent: null,
                     subIssues: [],
                     blockedBy: [],

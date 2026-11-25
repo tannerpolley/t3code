@@ -446,7 +446,8 @@ const reviewIssue = (number: number, repository = "tannerpolley/t3code") => ({
 const reviewRead = (issue: ReturnType<typeof reviewIssue>) => ({
   issue,
   state: "open" as const,
-  milestoneNumber: 1,
+  planningStatus: "Todo",
+  labels: [],
   parent: null,
   subIssues: [],
   blockedBy: [],
@@ -504,7 +505,7 @@ function reviewHarness(
     repositoryIdentity,
     resolveLinkedIssue: (input) => Effect.succeed(reviewIssue(input.number, input.repository)),
     capabilities: () => Effect.succeed(ISSUE_HOSTS.github!.capabilities),
-    milestoneIssues: () => Effect.succeed({ issues: [], complete: true }),
+    repositoryIssuesPage: () => Effect.succeed({ items: [], nextPage: null }),
     workReads: () => Effect.succeed(new Map()),
   });
   const harness = makeHarness({
@@ -583,20 +584,10 @@ const createReviewRoot = Effect.fn("test.createReviewRoot")(function* (
 
       launchCommandId: CommandId.make(`review-create:${repository}`),
       revision: 1,
-      paused: false,
       workerLimit: 4,
       readOnlyLimit: 4,
       publishStatusComments: false,
       publishCloseoutComments: false,
-      milestones: [
-        {
-          number: 1,
-          modelRoleId: "implementor-complex",
-
-          status: "running",
-          fingerprint: "",
-        },
-      ],
       suspendedIssues: [],
     },
   });

@@ -84,13 +84,15 @@ interface InboxIssue {
   readonly body?: string | null | undefined;
   readonly user?: InboxActor | null | undefined;
   readonly labels?: ReadonlyArray<{ readonly name: string }> | null | undefined;
-  readonly milestone?: { readonly number: number } | null | undefined;
+  readonly status?: { readonly name: string } | null | undefined;
+  readonly author_association?: string | undefined;
   readonly created_at: string;
   readonly updated_at: string;
   readonly html_url: string;
   readonly pull_request?: unknown | undefined;
 }
 interface InboxComment {
+  readonly author_association?: string | undefined;
   readonly id: number;
   readonly body?: string | null | undefined;
   readonly user?: InboxActor | null | undefined;
@@ -183,9 +185,9 @@ export interface IssueGitHubExtension {
     scope: IssueRepositoryScope,
     state: RepositoryIssueListState,
     page: number,
-    milestoneNumber?: number,
+    order?: "oldest",
     etag?: string,
-  ) => Effect.Effect<PageResponse<IssueSummaryType> & { readonly missing?: true }, IssueReadError>;
+  ) => Effect.Effect<PageResponse<IssueSummaryType>, IssueReadError>;
   readonly listMilestonePage: (
     scope: IssueRepositoryScope,
     state: RepositoryIssueListState,
@@ -339,6 +341,7 @@ const RawIssueSchema = Schema.Struct({
   title: Schema.String,
   state: Schema.Literals(["open", "closed"]),
   state_reason: Schema.optional(Schema.NullOr(Schema.String)),
+  status: Schema.optional(Schema.NullOr(Schema.Struct({ name: Schema.String }))),
   user: Schema.optional(Schema.NullOr(RawActorSchema)),
   assignees: Schema.optional(Schema.NullOr(Schema.Array(RawActorSchema))),
   labels: Schema.optional(Schema.NullOr(Schema.Array(RawLabelSchema))),
@@ -407,7 +410,15 @@ const WorkIssueConnection = Schema.Struct({
 });
 const WorkIssueDetail = Schema.Struct({
   ...WorkIssueNode.fields,
-  milestone: Schema.NullOr(Schema.Struct({ number: IssueNumber })),
+  status: Schema.optional(Schema.NullOr(Schema.Struct({ name: Schema.String }))),
+  labels: Schema.optional(
+    Schema.NullOr(
+      Schema.Struct({
+        totalCount: NonNegativeInt,
+        nodes: Schema.Array(Schema.Struct({ name: Schema.String })),
+      }),
+    ),
+  ),
   parent: Schema.NullOr(WorkIssueNode),
   subIssues: WorkIssueConnection,
   blockedBy: WorkIssueConnection,
@@ -448,10 +459,12 @@ const workIssueLink = (host: string, node: typeof WorkIssueNode.Type): ThreadLin
   title: node.title,
   url: node.url,
 });
-const workIssueFields = (paginated = false) => {
+const workIssueFields = (host: string, paginated = false) => {
   const connection = (field: string, cursor: string) =>
     `${field}(first: 100${paginated ? `, after: $${cursor}` : ""}) { totalCount nodes { ${WORK_ISSUE_FIELDS} } pageInfo { hasNextPage endCursor } }`;
-  return `${WORK_ISSUE_FIELDS} milestone { number } parent { ${WORK_ISSUE_FIELDS} }
+  const planning =
+    host === "github.com" ? "status { name } labels(first: 100) { totalCount nodes { name } }" : "";
+  return `${WORK_ISSUE_FIELDS} ${planning} parent { ${WORK_ISSUE_FIELDS} }
     ${connection("subIssues", "sub")}
     ${connection("blockedBy", "block")}`;
 };
@@ -472,7 +485,10 @@ function workIssuePage(
   return {
     issue: workIssueLink(host, node),
     state: node.state === "OPEN" ? "open" : "closed",
-    milestoneNumber: node.milestone?.number ?? null,
+    ...(node.status == null ? {} : { planningStatus: node.status.name }),
+    ...(node.labels != null && node.labels.totalCount === node.labels.nodes.length
+      ? { labels: node.labels.nodes.map(({ name }) => name) }
+      : {}),
     parent: node.parent === null ? null : workIssueLink(host, node.parent),
     parentComplete: true,
     subIssues: [...children.values()],
@@ -543,7 +559,6 @@ type IssueOperation = IssueReadError["operation"];
 class IssueResponseError extends IssueReadError.extend<IssueResponseError>("IssueResponseError")({
   status: Schema.Int,
 }) {}
-const isIssueResponseError = Schema.is(IssueResponseError);
 
 interface ApiResponse {
   readonly status: number;
@@ -555,9 +570,9 @@ const issueListEndpoint = (
   scope: IssueRepositoryScope,
   state: RepositoryIssueListState,
   page: number,
-  milestoneNumber?: number,
+  order?: "oldest",
 ) =>
-  `repos/${encodeRepositoryPath(scope.repository)}/issues?state=${state}&sort=updated&direction=desc&per_page=100&page=${page}${milestoneNumber === undefined ? "" : `&milestone=${milestoneNumber}`}`;
+  `repos/${encodeRepositoryPath(scope.repository)}/issues?state=${state}&sort=${order === "oldest" ? "created&direction=asc" : "updated&direction=desc"}&per_page=100&page=${page}`;
 const milestoneListEndpoint = (
   scope: IssueRepositoryScope,
   state: RepositoryIssueListState,
@@ -642,6 +657,7 @@ function normalizeIssue(host: string, repository: string, issue: RawIssue): Issu
     url: issueUrl(host, repository, issue.number),
     state: issue.state,
     stateReason: issue.state_reason ?? null,
+    ...(issue.status == null ? {} : { planningStatus: issue.status.name }),
     author: issue.user == null ? null : normalizeActor(issue.user),
     assignees: issue.assignees?.map(normalizeActor) ?? [],
     labels:
@@ -819,13 +835,15 @@ const InboxIssue = Schema.Struct({
   body: Schema.optional(Schema.NullOr(Schema.String)),
   user: Schema.optional(Author),
   labels: Labels,
-  milestone: Schema.optional(Schema.NullOr(Schema.Struct({ number: Schema.Number }))),
+  status: RawIssueSchema.fields.status,
+  author_association: Schema.optional(Schema.String),
   created_at: Schema.String,
   updated_at: Schema.String,
   html_url: Schema.String,
   pull_request: Schema.optional(Schema.Unknown),
 });
 const InboxComment = Schema.Struct({
+  author_association: Schema.optional(Schema.String),
   id: Schema.Number,
   body: Schema.optional(Schema.NullOr(Schema.String)),
   user: Schema.optional(Author),
@@ -1156,7 +1174,7 @@ export const make = Effect.fn("IssueGitHubHost.make")(function* (
           graphql: {
             query: `query($owner: String!, $name: String!, $number: Int!, $sub: String, $block: String) {
       repository(owner: $owner, name: $name) { issue(number: $number) {
-        ${workIssueFields(true)}
+        ${workIssueFields(scope.host, true)}
       } }
     }`,
             variables: {
@@ -1224,7 +1242,7 @@ export const make = Effect.fn("IssueGitHubHost.make")(function* (
         const rows = yield* readIssueAliases(
           scope.host,
           numbers.slice(offset, offset + 20).map((number) => ({ ...scope, number })),
-          workIssueFields(),
+          workIssueFields(scope.host),
           "issues.workReads",
         );
         for (const { ref, node: raw } of rows) {
@@ -1362,81 +1380,55 @@ export const make = Effect.fn("IssueGitHubHost.make")(function* (
     );
   });
 
-  const listIssuePage = Effect.fn("IssueService.listIssuePage")(
-    function* (
-      scope: IssueRepositoryScope,
-      state: RepositoryIssueListState,
-      page: number,
-      milestoneNumber?: number,
-      etag?: string,
+  const listIssuePage = Effect.fn("IssueService.listIssuePage")(function* (
+    scope: IssueRepositoryScope,
+    state: RepositoryIssueListState,
+    page: number,
+    order?: "oldest",
+    etag?: string,
+  ) {
+    const endpoint = issueListEndpoint(scope, state, page, order);
+    const response = yield* executeApi({
+      operation: "list",
+      scope,
+      endpoint,
+      ifNoneMatch: etag,
+      maxOutputBytes: LIST_MAX_OUTPUT_BYTES,
+    });
+    const nextPage =
+      response.status === 304 && response.headers["link"] === undefined
+        ? undefined
+        : nextPageFromHeaders(response.headers, page);
+    if (
+      nextPage === undefined &&
+      !(response.status === 304 && response.headers["link"] === undefined)
     ) {
-      const endpoint = issueListEndpoint(scope, state, page, milestoneNumber);
-      const response = yield* executeApi({
-        operation: "list",
-        scope,
-        endpoint,
-        ifNoneMatch: etag,
-        maxOutputBytes: LIST_MAX_OUTPUT_BYTES,
-      });
-      const nextPage =
-        response.status === 304 && response.headers["link"] === undefined
-          ? undefined
-          : nextPageFromHeaders(response.headers, page);
-      if (
-        nextPage === undefined &&
-        !(response.status === 304 && response.headers["link"] === undefined)
-      ) {
-        return yield* readError(
-          "list",
-          "invalid-response",
-          "GitHub returned invalid pagination metadata.",
-        );
-      }
-      if (response.status === 304) {
-        return { notModified: true as const, nextPage, etag: response.headers["etag"] };
-      }
-      const raw = yield* decodeRawIssueList(response.body).pipe(
-        Effect.mapError(() =>
-          readError("list", "invalid-response", "GitHub returned an invalid issue list."),
-        ),
+      return yield* readError(
+        "list",
+        "invalid-response",
+        "GitHub returned invalid pagination metadata.",
       );
-      const result = {
-        items: raw
-          .filter((issue) => !Object.hasOwn(issue, "pull_request"))
-          .map((issue) => normalizeIssue(scope.host, scope.repository, issue)),
-        nextPage: nextPage ?? null,
-      };
-      const pageResult = {
-        ...result,
-        etag: response.headers["etag"],
-      };
-      return pageResult;
-    },
-    (effect, scope, _state, _page, milestoneNumber) =>
-      milestoneNumber === undefined
-        ? effect
-        : effect.pipe(
-            // GitHub also uses 422 for its spam guard; only a milestone 404 proves it is missing.
-            Effect.catchIf(
-              (error) => isIssueResponseError(error) && error.status === 422,
-              (listError) =>
-                executeApi({
-                  operation: "list",
-                  scope,
-                  endpoint: `repos/${encodeRepositoryPath(scope.repository)}/milestones/${milestoneNumber}`,
-                  maxOutputBytes: LIST_MAX_OUTPUT_BYTES,
-                }).pipe(
-                  Effect.matchEffect({
-                    onSuccess: () => Effect.fail(listError),
-                    onFailure: (lookupError) =>
-                      isIssueResponseError(lookupError) && lookupError.status === 404
-                        ? Effect.succeed({ items: [], nextPage: null, missing: true as const })
-                        : Effect.fail(listError),
-                  }),
-                ),
-            ),
-          ),
-  );
+    }
+    if (response.status === 304) {
+      return { notModified: true as const, nextPage, etag: response.headers["etag"] };
+    }
+    const raw = yield* decodeRawIssueList(response.body).pipe(
+      Effect.mapError(() =>
+        readError("list", "invalid-response", "GitHub returned an invalid issue list."),
+      ),
+    );
+    const result = {
+      items: raw
+        .filter((issue) => !Object.hasOwn(issue, "pull_request"))
+        .map((issue) => normalizeIssue(scope.host, scope.repository, issue)),
+      nextPage: nextPage ?? null,
+    };
+    const pageResult = {
+      ...result,
+      etag: response.headers["etag"],
+    };
+    return pageResult;
+  });
 
   const listMilestonePage = Effect.fn("IssueService.listMilestonePage")(function* (
     scope: IssueRepositoryScope,
@@ -1563,6 +1555,7 @@ export const make = Effect.fn("IssueGitHubHost.make")(function* (
     ...RawIssueIdentitySchema.fields,
     body: Schema.NullOr(Schema.String),
     state: Schema.Literals(["open", "closed"]),
+    status: RawIssueSchema.fields.status,
     milestone: Schema.NullOr(Schema.Struct({ number: IssueNumber })),
   });
   const baseline = (
@@ -1581,6 +1574,7 @@ export const make = Effect.fn("IssueGitHubHost.make")(function* (
       url: raw.html_url,
     },
     body: raw.body ?? "",
+    ...(raw.status == null ? {} : { planningStatus: raw.status.name }),
     state: raw.state,
     milestoneNumber: raw.milestone?.number ?? null,
   });

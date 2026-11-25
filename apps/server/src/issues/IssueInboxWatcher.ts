@@ -7,10 +7,14 @@ import { CommandId, type IssueInboxEventKind, ThreadId } from "@t3tools/contract
 import * as Clock from "effect/Clock";
 import * as DateTime from "effect/DateTime";
 import * as Effect from "effect/Effect";
+import * as Option from "effect/Option";
 import * as SqlClient from "effect/sql/SqlClient";
 
 import { ThreadManagementService } from "../orchestration-v2/ThreadManagementService.ts";
 import { readIssueQueue } from "./IssueQueueStore.ts";
+import * as TrackerIssueService from "../issue/IssueService.ts";
+import { setGitHubIssueStatus } from "./trackerIssueRef.ts";
+import { issueAutomationEnabled } from "./IssueEligibility.ts";
 import { IssueService } from "./IssueService.ts";
 import {
   CROSS_PROJECT_LABEL,
@@ -18,6 +22,7 @@ import {
   HIGH_PRIORITY_LABEL,
   classifyWrite,
   foreignMarker,
+  parseSourceMarker,
   fromLabel,
   hasLabel,
   snippet,
@@ -80,6 +85,8 @@ export const isoSeconds = (millis: number) =>
 export const make = Effect.gen(function* () {
   const sql = yield* SqlClient.SqlClient;
   const issues = yield* IssueService;
+  const tracker = yield* Effect.serviceOption(TrackerIssueService.IssueService);
+  const automation = yield* issueAutomationEnabled;
   const threads = yield* ThreadManagementService;
 
   const ensureLabels = (
@@ -169,6 +176,22 @@ export const make = Effect.gen(function* () {
             `).map((row) => [row.issue_number, row]),
     );
     const inserts: NewEvent[] = [];
+    let inserted = 0;
+    const recordEvent = Effect.fnUntraced(function* (event: NewEvent) {
+      const rows = yield* sql`
+        INSERT INTO issue_inbox_events (host, repository_id, repository, event_key,
+          issue_number, issue_title, kind, author, source_project, tagged, high_priority,
+          needs_triage, url, snippet, occurred_at)
+        VALUES (${repo.host}, ${repo.repositoryId}, ${repo.repository}, ${event.key},
+          ${event.issueNumber}, ${event.issueTitle}, ${event.kind}, ${event.author},
+          ${event.sourceProject}, ${event.tagged ? 1 : 0}, ${event.highPriority ? 1 : 0},
+          ${event.needsTriage ? 1 : 0}, ${event.url}, ${event.snippet}, ${event.occurredAt})
+        ON CONFLICT (host, repository_id, event_key) DO NOTHING
+        RETURNING event_id
+      `;
+      inserted += rows.length;
+      return rows.length > 0;
+    });
     const issueRows = new Map<number, IssueRow>();
     // Classifies an issue as another project's once, from the marker its opening or body carries,
     // and makes it due for missing receiver labels. Later removals stay removed.
@@ -216,21 +239,40 @@ export const make = Effect.gen(function* () {
             })
           : null;
       noteIssue(issue, labels, origin?.origin === "external" ? origin : null);
-      if (origin?.origin !== "external") continue;
-      inserts.push({
-        key: `opened:${issue.number}`,
-        kind: "issue_opened",
-        issueNumber: issue.number,
-        issueTitle: issue.title,
-        author: issue.user?.login ?? null,
-        sourceProject: origin.sourceProject,
-        tagged: true,
-        highPriority: true,
-        needsTriage: issue.milestone == null,
-        url: issue.html_url,
-        snippet: snippet(body),
-        occurredAt: issue.created_at,
-      });
+      const ownerDefault =
+        automation &&
+        repo.host.toLowerCase() === "github.com" &&
+        repo.rootThreadId !== null &&
+        issue.created_at >= state.watched_since &&
+        !known.has(issue.number) &&
+        issue.author_association === "OWNER" &&
+        issue.state === "open" &&
+        (issue.status == null || issue.status.name === "Backlog") &&
+        !hasLabel(labels, "needs you") &&
+        !hasLabel(labels, "needs orchestrator") &&
+        !/<!-- t3-issue-change:/u.test(body) &&
+        Option.isSome(tracker);
+      if (origin?.origin === "external") {
+        const event: NewEvent = {
+          key: `opened:${issue.number}`,
+          kind: "issue_opened",
+          issueNumber: issue.number,
+          issueTitle: issue.title,
+          author: issue.user?.login ?? null,
+          sourceProject: origin.sourceProject,
+          tagged: true,
+          highPriority: true,
+          needsTriage: !ownerDefault && issue.status?.name !== "Todo",
+          url: issue.html_url,
+          snippet: snippet(body),
+          occurredAt: issue.created_at,
+        };
+        // The unread opening must exist before a cross-project issue can become Todo.
+        if (ownerDefault) yield* recordEvent(event);
+        else inserts.push(event);
+      }
+      if (ownerDefault)
+        yield* setGitHubIssueStatus(tracker.value, { ...repo, number: issue.number }, "Todo");
     }
 
     for (const comment of comments) {
@@ -240,8 +282,37 @@ export const make = Effect.gen(function* () {
         author: comment.user,
         repositoryKey,
       });
-      if (origin.origin !== "external") continue;
       const issue = listed.get(comment.number);
+      const ownerReply =
+        automation &&
+        repo.rootThreadId !== null &&
+        comment.author_association === "OWNER" &&
+        origin.origin === "own" &&
+        parseSourceMarker(body) === null &&
+        !/<!-- t3-issue-/u.test(body);
+      if (ownerReply && issue?.state !== "closed") {
+        const ref = { ...repo, number: comment.number };
+        const labels =
+          issue?.labels?.map(({ name }) => name) ?? (yield* issues.workRead(ref)).labels ?? [];
+        if (hasLabel(labels, "needs you")) {
+          const accepted = yield* recordEvent({
+            key: `owner-reply:${comment.id}`,
+            kind: "comment",
+            issueNumber: comment.number,
+            issueTitle: issue?.title ?? known.get(comment.number)?.title ?? "",
+            author: comment.user?.login ?? null,
+            sourceProject: null,
+            tagged: true,
+            highPriority: true,
+            needsTriage: false,
+            url: comment.html_url,
+            snippet: snippet(body),
+            occurredAt: comment.created_at,
+          });
+          if (accepted) yield* issues.setLabels(ref, ["Needs orchestrator"], ["Needs you"]);
+        }
+      }
+      if (origin.origin !== "external") continue;
       const labels =
         issue?.labels?.map((label) => label.name) ??
         ((issueRows.get(comment.number) ?? known.get(comment.number))?.cross_project === 1
@@ -310,21 +381,7 @@ export const make = Effect.gen(function* () {
     };
     return yield* sql.withTransaction(
       Effect.gen(function* () {
-        let inserted = 0;
-        for (const event of inserts) {
-          const rows = yield* sql`
-              INSERT INTO issue_inbox_events (host, repository_id, repository, event_key,
-                issue_number, issue_title, kind, author, source_project, tagged, high_priority,
-                needs_triage, url, snippet, occurred_at)
-              VALUES (${repo.host}, ${repo.repositoryId}, ${repo.repository}, ${event.key},
-                ${event.issueNumber}, ${event.issueTitle}, ${event.kind}, ${event.author},
-                ${event.sourceProject}, ${event.tagged ? 1 : 0}, ${event.highPriority ? 1 : 0},
-                ${event.needsTriage ? 1 : 0}, ${event.url}, ${event.snippet}, ${event.occurredAt})
-              ON CONFLICT (host, repository_id, event_key) DO NOTHING
-              RETURNING event_id
-            `;
-          inserted += rows.length;
-        }
+        for (const event of inserts) yield* recordEvent(event);
         for (const row of issueRows.values())
           yield* sql`
               INSERT INTO issue_inbox_issues (host, repository_id, issue_number, title,

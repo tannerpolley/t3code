@@ -73,6 +73,7 @@ const roadmapRow = (
     state: issue.state.category,
     // GitHub's REST spelling, which the work states and the done details read.
     stateReason: issue.state.closeReason?.replaceAll("-", "_") ?? null,
+    planningStatus: issue.state.name,
     author: issue.author === null ? null : actor(issue.author),
     assignees: issue.assignees.map(actor),
     labels: issue.labels.map((label) => ({

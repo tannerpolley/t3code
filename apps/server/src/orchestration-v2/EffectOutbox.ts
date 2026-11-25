@@ -146,6 +146,11 @@ export const OrchestrationEffectRequestV2 = Schema.Union([
     reason: Schema.optional(Schema.String),
   }),
   Schema.Struct({
+    type: Schema.Literal("issue.board.sync"),
+    issue: ThreadLinkedIssue,
+    status: Schema.Literals(["In progress", "In review"]),
+  }),
+  Schema.Struct({
     type: Schema.Literal("issue.status.refresh"),
     issue: ThreadLinkedIssue,
     revision: Schema.Number,
@@ -196,6 +201,7 @@ export const REPLAY_SAFE_EFFECT_TYPES_AFTER_PROCESS_LOSS = [
   "delegated-tasks.stop",
   "issue.github.comment",
   "issue.status.refresh",
+  "issue.board.sync",
   "issue.change.execute",
   "issue.suspension.interrupt",
   "issue.suspension.notify",
@@ -265,7 +271,7 @@ const isEffectOutboxError = Schema.is(EffectOutboxError);
 
 const independentLaneTypes = {
   title: ["thread-title.generate"],
-  "issue-comment": ["issue.github.comment", "issue.status.refresh"],
+  "issue-comment": ["issue.github.comment", "issue.status.refresh", "issue.board.sync"],
   "issue-change": ["issue.change.execute"],
 } as const;
 export type EffectWorkerLane = "lifecycle" | keyof typeof independentLaneTypes;

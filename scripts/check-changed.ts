@@ -283,7 +283,7 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
       );
   const timeoutSeconds = Option.getOrElse(
     yield* override("timeout", input.timeout, "CHECK_CHANGED_TIMEOUT"),
-    () => 900,
+    () => (input.fullValidation ? 1_800 : 900),
   );
 
   const lines = (...args: Array<string>) => gitLines(root, args);
@@ -447,6 +447,7 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
     Effect.scoped(
       Effect.gen(function* () {
         const [command, commandArgs] = vitePlusCommand(args, platform);
+        if (input.fullValidation) yield* Console.log(`\n> vp ${args.join(" ")}`);
         const handle = yield* spawner.spawn(
           ChildProcess.make(command, commandArgs, {
             cwd,
@@ -455,11 +456,12 @@ const checkChanged = Effect.fn("checkChanged")(function* (input: {
             forceKillAfter: "5 seconds",
           }),
         );
-        const [output, exitCode] = yield* Effect.all(
-          [Stream.mkString(Stream.decodeText(handle.all)), handle.exitCode],
-          { concurrency: 2 },
-        );
-        return { ok: exitCode === 0, output };
+        const lines = Stream.decodeText(handle.all);
+        const output = input.fullValidation
+          ? lines.pipe(Stream.splitLines, Stream.runForEach(Console.log), Effect.as(""))
+          : Stream.mkString(lines);
+        const [text, exitCode] = yield* Effect.all([output, handle.exitCode], { concurrency: 2 });
+        return { ok: exitCode === 0, output: text };
       }),
     ).pipe(Effect.catch((error) => Effect.succeed({ ok: false, output: error.message })));
 
@@ -657,7 +659,7 @@ export const checkChangedCommand = Command.make(
     ),
     timeout: Flag.Int("timeout").pipe(
       Flag.withDescription(
-        "Seconds before a step is killed; also CHECK_CHANGED_TIMEOUT. Defaults to 900.",
+        "Seconds before a step is killed; also CHECK_CHANGED_TIMEOUT. Defaults to 900 or 1800 with --full-validation.",
       ),
       Flag.optional,
     ),

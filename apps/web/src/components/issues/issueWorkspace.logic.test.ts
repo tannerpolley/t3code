@@ -287,12 +287,11 @@ describe("repositoryWorkStatus", () => {
     nextThreadId: ThreadId.make("next"),
     summary: "Continue",
     modelSelection: { instanceId: ProviderInstanceId.make("codex"), model: "test" },
-    wasPaused: false,
   });
   const held = (count: number) => Array.from({ length: count }, () => ({}));
   it.each([
     ["active", { paused: false, suspendedIssues: [] }, "Active", false],
-    ["paused", { paused: true, suspendedIssues: [] }, "Paused", true],
+    ["legacy pause", { paused: true, suspendedIssues: [] }, "Active", false],
     [
       "awaiting approval",
       { paused: false, handoff: handoff("awaiting_approval"), suspendedIssues: [] },
@@ -319,7 +318,7 @@ describe("repositoryWorkStatus", () => {
   it("a recreated repository outranks Active and names both IDs", () => {
     expect(
       repositoryWorkStatus(
-        { paused: false, suspendedIssues: [] },
+        { suspendedIssues: [] },
         { registeredRepositoryId: "1", liveRepositoryId: "2" },
       ),
     ).toEqual({

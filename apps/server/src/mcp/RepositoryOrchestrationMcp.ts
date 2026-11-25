@@ -24,10 +24,6 @@ export interface RepositoryMcpMethods {
     scope: McpInvocationScope,
     input: import("@t3tools/contracts").RepositoryHandoffRequestInput,
   ) => Effect.Effect<import("@t3tools/contracts").RepositoryWorkResult, OrchestratorMcpFailure>;
-  readonly workMilestone: (
-    scope: McpInvocationScope,
-    input: import("@t3tools/contracts").RepositoryWorkInput,
-  ) => Effect.Effect<import("@t3tools/contracts").RepositoryWorkResult, OrchestratorMcpFailure>;
   readonly queueIssue: (
     scope: McpInvocationScope,
     input: import("@t3tools/contracts").IssueQueueInput,
@@ -54,10 +50,6 @@ export interface RepositoryMcpMethods {
   readonly endRepositoryOrchestration: (
     scope: McpInvocationScope,
     input: import("@t3tools/contracts").RepositoryWorkEndInput,
-  ) => Effect.Effect<import("@t3tools/contracts").RepositoryWorkResult, OrchestratorMcpFailure>;
-  readonly setRepositoryPaused: (
-    scope: McpInvocationScope,
-    input: import("@t3tools/contracts").RepositoryWorkControlInput,
   ) => Effect.Effect<import("@t3tools/contracts").RepositoryWorkResult, OrchestratorMcpFailure>;
   readonly cancelIssueRequest: (
     scope: McpInvocationScope,
@@ -147,14 +139,6 @@ export function makeRepositoryMcpMethods({
           .pipe(Effect.mapError((error) => failure("invalid_request", error.message)));
       },
     ),
-    workMilestone: Effect.fn("OrchestratorMcpService.workMilestone")(function* (scope, input) {
-      yield* requireRepositoryController(scope);
-      if (Option.isNone(issueWork))
-        return yield* failure("orchestration_error", "Issue work is unavailable.");
-      return yield* issueWork.value
-        .workMilestone(input)
-        .pipe(Effect.mapError((error) => failure("invalid_request", error.message)));
-    }),
     queueIssue: Effect.fn("OrchestratorMcpService.queueIssue")(function* (scope, input) {
       yield* requireRepositoryController(scope);
       if (Option.isNone(issueWork))
@@ -238,16 +222,6 @@ export function makeRepositoryMcpMethods({
           return yield* failure("orchestration_error", "Issue work is unavailable.");
         return yield* issueWork.value
           .endRepository(input)
-          .pipe(Effect.mapError((error) => failure("invalid_request", error.message)));
-      },
-    ),
-    setRepositoryPaused: Effect.fn("OrchestratorMcpService.setRepositoryPaused")(
-      function* (scope, input) {
-        yield* requireRepositoryController(scope);
-        if (Option.isNone(issueWork))
-          return yield* failure("orchestration_error", "Issue work is unavailable.");
-        return yield* issueWork.value
-          .setPaused(input)
           .pipe(Effect.mapError((error) => failure("invalid_request", error.message)));
       },
     ),

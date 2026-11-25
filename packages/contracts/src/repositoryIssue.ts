@@ -87,6 +87,18 @@ const IssueWorkStatus = Schema.Struct({
   paused: Schema.optionalKey(Schema.Literal(true)),
 });
 
+export const GITHUB_ISSUE_STATUSES = [
+  "Backlog",
+  "Todo",
+  "In progress",
+  "In review",
+  "Done",
+  "Not planned",
+  "Duplicate",
+] as const;
+export type GitHubIssueStatus = (typeof GITHUB_ISSUE_STATUSES)[number];
+export const ISSUE_ADMISSION_HOLD_LABELS = ["Needs you", "Needs orchestrator"] as const;
+
 export const RepositoryIssueSummary = Schema.Struct({
   suspensionReason: Schema.optional(Schema.String),
   number: IssueNumber,
@@ -94,6 +106,7 @@ export const RepositoryIssueSummary = Schema.Struct({
   url: IssueUrl,
   state: Schema.Literals(["open", "closed"]),
   stateReason: Schema.NullOr(Schema.String),
+  planningStatus: Schema.optional(Schema.String),
   author: Schema.NullOr(RepositoryIssueActor),
   assignees: Schema.Array(RepositoryIssueActor),
   labels: Schema.Array(RepositoryIssueLabel),
@@ -262,7 +275,8 @@ export type IssueDetailInput = typeof IssueDetailInput.Type;
 export const IssueWorkRead = Schema.Struct({
   issue: ThreadLinkedIssue,
   state: Schema.Literals(["open", "closed"]),
-  milestoneNumber: Schema.NullOr(IssueNumber),
+  planningStatus: Schema.optional(Schema.String),
+  labels: Schema.optional(Schema.Array(Schema.String)),
   parent: Schema.NullOr(ThreadLinkedIssue),
   subIssues: Schema.Array(ThreadLinkedIssue),
   blockedBy: Schema.Array(
