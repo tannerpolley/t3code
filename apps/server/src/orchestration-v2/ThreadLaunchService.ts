@@ -8,6 +8,7 @@ import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
   CommandId,
   type ChatAttachment,
+  type CodexRoleSpeed,
   type MessageId,
   type ModelSelection,
   type OrchestrationV2Actor,
@@ -116,6 +117,7 @@ export interface ThreadLaunchInput {
   /** The caller chose `title`, so a first message keeps it. */
   readonly titleRenamed?: boolean;
   readonly modelSelection: ModelSelection;
+  readonly codexRoleSpeed?: CodexRoleSpeed;
   readonly runtimeMode: RuntimeMode;
   readonly interactionMode: ProviderInteractionMode;
   readonly workspaceStrategy: ThreadLaunchWorkspaceStrategy;
@@ -1690,6 +1692,9 @@ const make = Effect.gen(function* () {
                 title: input.title,
                 ...(input.titleRenamed === true ? { titleRenamed: true } : {}),
                 modelSelection: input.modelSelection,
+                ...(input.codexRoleSpeed === undefined
+                  ? {}
+                  : { codexRoleSpeed: input.codexRoleSpeed }),
                 runtimeMode: input.runtimeMode,
                 interactionMode: input.interactionMode,
                 branch: initialBranch,

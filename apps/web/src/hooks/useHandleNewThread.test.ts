@@ -1,5 +1,11 @@
 import { describe, expect, it, vi } from "vite-plus/test";
-import type { EnvironmentId, ProjectId, RuntimeMode } from "@t3tools/contracts";
+import {
+  ProviderInstanceId,
+  type EnvironmentId,
+  type ModelSelection,
+  type ProjectId,
+  type RuntimeMode,
+} from "@t3tools/contracts";
 
 const testState = vi.hoisted(() => {
   type ProjectFile = { readonly defaultThreadEnvMode?: "local" | "worktree" } | null;
@@ -24,6 +30,7 @@ const testState = vi.hoisted(() => {
     readonly promotedTo: null;
     readonly threadId: string;
   } | null = null;
+  let sourceModelSelection: ModelSelection | null = null;
   let openDraftRoute: { readonly kind: "draft"; readonly draftId: string } | null = null;
   const router = {
     state: {
@@ -84,6 +91,12 @@ const testState = vi.hoisted(() => {
     get openDraftRoute() {
       return openDraftRoute;
     },
+    get sourceModelSelection() {
+      return sourceModelSelection;
+    },
+    openThread(selection: ModelSelection) {
+      sourceModelSelection = selection;
+    },
     openEmptyDraft(draftId: string) {
       openDraftRoute = { kind: "draft", draftId };
     },
@@ -98,6 +111,8 @@ const testState = vi.hoisted(() => {
       },
     ) {
       storedDraft = nextStoredDraft;
+      sourceModelSelection = null;
+      draftStore.setModelSelection.mockClear();
       openDraftRoute = null;
       draftSession = {
         envMode: "local",
@@ -160,7 +175,8 @@ vi.mock("@t3tools/client-runtime/environment", () => ({
   scopeProjectRef: (environmentId: string, projectId: string) => ({ environmentId, projectId }),
   scopeThreadRef: (environmentId: string, threadId: string) => ({ environmentId, threadId }),
 }));
-vi.mock("@t3tools/contracts", () => ({
+vi.mock("@t3tools/contracts", async (original) => ({
+  ...(await original<typeof import("@t3tools/contracts")>()),
   DEFAULT_RUNTIME_MODE: "default",
   DEFAULT_SERVER_SETTINGS: {},
 }));
@@ -211,7 +227,6 @@ vi.mock("../composerDraftStore", () => {
 vi.mock("../lib/chatThreadActions", async (importOriginal) => ({
   ...(await importOriginal<typeof import("../lib/chatThreadActions")>()),
   hasExplicitComposerModelSelection: () => false,
-  resolveNewThreadModelSelectionOverride: () => null,
 }));
 vi.mock("../providerInstances", () => ({ resolveDefaultProviderModelSelection: () => null }));
 vi.mock("../lib/t3ProjectFileDefaults", () => ({
@@ -237,7 +252,15 @@ vi.mock("../state/entities", () => {
   };
   return {
     readProjects: () => [project],
-    readThreadShell: () => null,
+    readThreadShell: () =>
+      testState.sourceModelSelection === null
+        ? null
+        : {
+            modelSelection: testState.sourceModelSelection,
+            latestRun: null,
+            itemCount: 1,
+            runtime: null,
+          },
     readThreadShells: () => [],
     useProjects: () => [],
     useThread: () => null,
@@ -253,7 +276,13 @@ vi.mock("../state/server", () => ({
   primaryServerSettingsAtom: "primary-settings",
 }));
 vi.mock("../threadRoutes", () => ({
-  resolveThreadRouteTarget: () => testState.openDraftRoute,
+  resolveThreadRouteTarget: () =>
+    testState.sourceModelSelection === null
+      ? testState.openDraftRoute
+      : {
+          kind: "server",
+          threadRef: { environmentId: "environment-ssh", threadId: "thread-source" },
+        },
 }));
 vi.mock("../uiStateStore", () => ({
   legacyProjectCwdPreferenceKey: () => "remote-project",
@@ -266,6 +295,33 @@ import {
   resolveDefaultProjectRef,
   useNewThreadHandler,
 } from "./useHandleNewThread";
+
+it("carries a Codex model and effort into a new thread without copying its speed", async () => {
+  testState.reset(null);
+  testState.openThread({
+    instanceId: ProviderInstanceId.make("codex"),
+    model: "gpt-6.2-sol",
+    options: [
+      { id: "serviceTier", value: "default" },
+      { id: "fastMode", value: true },
+      { id: "reasoningEffort", value: "high" },
+    ],
+  });
+  const opened = await useNewThreadHandler()({
+    environmentId: "environment-ssh",
+    projectId: "project-remote",
+  } as never);
+
+  expect(testState.draftStore.setModelSelection).toHaveBeenCalledWith(
+    opened?.draftId,
+    {
+      instanceId: "codex",
+      model: "gpt-6.2-sol",
+      options: [{ id: "reasoningEffort", value: "high" }],
+    },
+    { replaceOptions: true },
+  );
+});
 
 describe.each([
   ["new", null],

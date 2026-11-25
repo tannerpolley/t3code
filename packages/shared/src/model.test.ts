@@ -14,8 +14,88 @@ import {
   readCustomModelEntries,
   modelSelectionsEqual,
   pickModelSelection,
+  resolveCodexSpeed,
   withImplicitFastModeDefault,
 } from "./model.ts";
+
+const fastDescriptor = {
+  currentValue: "priority",
+  options: [
+    { id: "default", label: "Normal", isDefault: true },
+    { id: "priority", label: "Fast" },
+  ],
+};
+
+it.each<{
+  name: string;
+  input: Parameters<typeof resolveCodexSpeed>[0];
+  expected: ReturnType<typeof resolveCodexSpeed>;
+}>([
+  {
+    name: "bare custom slug cannot borrow another model's Ultra fast",
+    input: { defaultSpeed: "ultrafast" },
+    expected: { tier: "default", speed: "standard" },
+  },
+  {
+    name: "custom model with a declared Ultra fast tier",
+    input: {
+      defaultSpeed: "ultrafast",
+      descriptor: { options: [{ id: "ultrafast", label: "Ultra fast" }] },
+    },
+    expected: { tier: "ultrafast", speed: "ultrafast" },
+  },
+  {
+    name: "leaves the tier to Codex when T3 is unset, even with a Fast catalog default",
+    input: { descriptor: fastDescriptor },
+    expected: { tier: undefined, speed: undefined },
+  },
+  {
+    name: "advertised model with no controls still has Normal speed",
+    input: { threadTier: "ultrafast", defaultSpeed: "ultrafast" },
+    expected: { tier: "default", speed: "standard" },
+  },
+  {
+    name: "Normal thread choice outranks the role and environment",
+    input: {
+      descriptor: fastDescriptor,
+      threadTier: "default",
+      roleTier: "fast",
+      defaultSpeed: "ultrafast",
+    },
+    expected: { tier: "default", speed: "standard" },
+  },
+  {
+    name: "clearing a thread choice restores its Fast role over the environment",
+    input: {
+      descriptor: fastDescriptor,
+      roleTier: "fast",
+      defaultSpeed: "normal",
+    },
+    expected: { tier: "priority", speed: "fast" },
+  },
+  {
+    name: "Ultra fast falls back to Fast on the model",
+    input: { descriptor: fastDescriptor, defaultSpeed: "ultrafast" },
+    expected: { tier: "priority", speed: "fast" },
+  },
+  {
+    name: "an explicit Ultra fast choice falls back to Fast, not to lower settings",
+    input: {
+      descriptor: fastDescriptor,
+      threadTier: "ultrafast",
+      roleTier: "default",
+      defaultSpeed: "normal",
+    },
+    expected: { tier: "priority", speed: "fast" },
+  },
+  {
+    name: "recorded usage remains Ultra fast across catalog and settings changes",
+    input: { descriptor: fastDescriptor, defaultSpeed: "normal", recordedTier: "ultrafast" },
+    expected: { tier: "ultrafast", speed: "ultrafast" },
+  },
+])("resolves effective Codex speed: $name", ({ input, expected }) => {
+  expect(resolveCodexSpeed(input)).toEqual(expected);
+});
 
 const codexCaps: ModelCapabilities = createModelCapabilities({
   optionDescriptors: [

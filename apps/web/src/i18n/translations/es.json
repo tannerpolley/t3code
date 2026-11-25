@@ -9816,7 +9816,6 @@
   "44eac2e9f0540171": "No se pudo restablecer la instancia del proveedor",
   "e58b52d05807b929": "Actualizando proveedores",
   "1d7cade347f52bbd": "Permisos limitados",
-  "c165e95dd1b35bfd": "Esta sesión puede ver los proveedores de {environment}, pero no cambiar sus ajustes.",
   "909f245bc73b0f32": "Esta instancia del proveedor ya no está disponible en este dispositivo.",
   "daf14fa8c7bedb74": "No hay proveedores configurados.",
   "2757a250104b4b7e": "Avanzado",
@@ -13738,5 +13737,14 @@
   "08aed48ad712a390": "Mover la incidencia #{number}",
   "758bdb04da8055e3": "Crear, dividir y cambiar el estado de incidencias en GitHub requiere aprobación cuando está activada la opción de preguntar antes de que los agentes creen, dividan o muevan incidencias. Editar el texto, cerrar o reabrir incidencias y cambiar su incidencia principal o sus bloqueos requiere aprobación si el hilo del agente está en modo Aprobación obligatoria.",
   "37fb3df559fec40b": "Restaurando el orquestador",
-  "47056f69de6e20fb": "Muestra las incidencias abiertas del repositorio en la sección Incidencias de los detalles del hilo, agrupadas por etapa, y las abre junto al hilo."
+  "47056f69de6e20fb": "Muestra las incidencias abiertas del repositorio en la sección Incidencias de los detalles del hilo, agrupadas por etapa, y las abre junto al hilo.",
+  "e351e22d0be49f2b": "Velocidad de Codex: {speed} en {environment}",
+  "72dc8979fc87df5c": "Velocidad de Codex: {speed}",
+  "f94eea5cf4e7d9d6": "Predeterminada",
+  "7b44f2dcd82a0ea1": "Esta sesión no tiene permiso para gestionar proveedores en {environment}.",
+  "7aa202a739c5f90d": "Se aplica en el siguiente turno a los hilos y agentes de Codex que usan la velocidad predeterminada. Los modelos usan la velocidad más rápida disponible hasta la que elijas.",
+  "e2a5cf66eeec090e": "Velocidad predeterminada",
+  "afecbf6b765a2fb0": "Ultrarrápida",
+  "3c8f3dd37881c169": "Codex velocidad normal rápida ultrarrápida nivel de servicio",
+  "1becfb4db7ffe135": "Predeterminado de Codex"
 }

@@ -7,7 +7,7 @@ import { act, render } from "../../test/render";
 import { CommandPalette } from "./CommandPalette";
 import { openCommandPalette } from "../commandPaletteBus";
 import { dispatchCommandPalette, useCommandPaletteStore } from "../commandPaletteStore";
-import { primaryServerKeybindingsAtom } from "../state/server";
+import { primaryServerKeybindingsAtom, serverEnvironment } from "../state/server";
 import { useUiStateStore } from "../uiStateStore";
 import { toastManager } from "./ui/toast";
 
@@ -15,11 +15,15 @@ const scopes = vi.hoisted(() => ({
   denied: undefined as string | undefined,
   sourceControl: undefined as unknown,
   deletedSection: undefined as string | undefined,
+  secondEnvironment: false,
+  updateSettings: vi.fn(),
 }));
 const setup = (deniedScope?: string, sourceControl?: unknown) => {
   scopes.denied = deniedScope;
   scopes.sourceControl = sourceControl;
   scopes.deletedSection = undefined;
+  scopes.secondEnvironment = false;
+  scopes.updateSettings.mockClear();
 };
 const githubAvailable = {
   versionControlSystems: [],
@@ -55,7 +59,6 @@ vi.mock("../hooks/useEnvironmentTheme", () => ({ useEnvironmentThemeDefinitions:
 vi.mock("../hooks/useSettings", async (original) => ({
   ...(await original<typeof import("../hooks/useSettings")>()),
   useClientSettings: () => DEFAULT_CLIENT_SETTINGS,
-  useUpdateEnvironmentSettings: () => () => undefined,
 }));
 vi.mock("../hooks/useScratchProject", () => ({
   useScratchProject: () => ({ scratchEnvironmentId: () => null }),
@@ -74,7 +77,10 @@ vi.mock("../hooks/useOpenPanelPullRequestUrl", () => ({ useOpenPanelPullRequestU
 vi.mock("../connection/useDesktopLocalBootstraps", () => ({ useDesktopLocalBootstraps: () => [] }));
 vi.mock("../state/use-atom-command", () => ({
   // The add-project destination step starts a clone and follows its project id.
-  useAtomCommand: () => async () => ({ _tag: "Success", value: { projectId: "project-cloned" } }),
+  useAtomCommand: (command: unknown) =>
+    command === serverEnvironment.updateSettings
+      ? scopes.updateSettings
+      : async () => ({ _tag: "Success", value: { projectId: "project-cloned" } }),
 }));
 vi.mock("../state/use-atom-query-runner", () => ({
   // Doubles as the add-project folder scan, which finds nothing to track.
@@ -108,6 +114,20 @@ vi.mock("../state/environments", async (original) => ({
           newProjectsRoot: "/workspace/",
         },
       },
+      ...(scopes.secondEnvironment
+        ? [
+            {
+              environmentId: "remote",
+              label: "Remote",
+              connection: { phase: "connected" },
+              entry: { target: { _tag: "PrimaryConnectionTarget" } },
+              serverConfig: {
+                environment: { platform: { os: "linux" }, capabilities: {} },
+                settings: {},
+              },
+            },
+          ]
+        : []),
     ],
   }),
   usePrimaryEnvironmentId: () => "local",
@@ -135,6 +155,11 @@ vi.mock("../state/queries", async (original) => ({
 vi.mock("../state/session", async (original) => ({
   ...(await original<typeof import("../state/session")>()),
   useEnvironmentScope: (_environmentId: unknown, scope: string) => scope !== scopes.denied,
+  useEnvironmentsWithScope: (
+    environments: ReadonlyArray<{ environmentId: string }>,
+    scope: string,
+  ) =>
+    new Set(scope === scopes.denied ? [] : environments.map(({ environmentId }) => environmentId)),
   readEnvironmentScope: () => true,
 }));
 vi.mock("../state/filesystem", async (original) => ({
@@ -148,6 +173,20 @@ vi.mock("../state/query", async (original) => ({
 vi.mock("./settings/useAvailableSettingsSearchItems", () => ({
   useAvailableSettingsSearchItems: () => [],
 }));
+
+it("sets Codex speed on the environment named in the palette command", async () => {
+  setup();
+  scopes.secondEnvironment = true;
+  await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
+  await act(() => openCommandPalette());
+  await page.getByRole("combobox").fill("Codex speed: Fast");
+  await expect.element(page.getByText("Codex speed: Fast on Local", { exact: true })).toBeVisible();
+  await page.getByText("Codex speed: Fast on Remote", { exact: true }).click();
+  expect(scopes.updateSettings).toHaveBeenCalledExactlyOnceWith({
+    environmentId: "remote",
+    input: { patch: { codexDefaultSpeed: "fast" } },
+  });
+});
 
 // The real palette and Base UI input must agree that confirming composition is typing.
 describe.each(["repository", "folder", "destination"] as const)("add-project %s", (step) => {

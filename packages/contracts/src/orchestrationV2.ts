@@ -150,6 +150,13 @@ export type OrchestrationV2LinkOrigin = typeof OrchestrationV2LinkOrigin.Type;
 export const linkOriginIsFenced = (origin: OrchestrationV2LinkOrigin) =>
   origin.access !== "full-access";
 
+const CodexRoleSpeed = Schema.Struct({
+  instanceId: ProviderInstanceId,
+  model: TrimmedNonEmptyString,
+  tier: TrimmedNonEmptyString,
+});
+export type CodexRoleSpeed = typeof CodexRoleSpeed.Type;
+
 /**
  * The thread in a linked environment that delegated this one, when it did:
  * this thread is that parent's subagent, run here instead of there.
@@ -585,6 +592,7 @@ export const OrchestrationV2AppThread = Schema.Struct({
   title: TrimmedNonEmptyString,
   providerInstanceId: ProviderInstanceId,
   modelSelection: ModelSelection,
+  codexRoleSpeed: Schema.optional(CodexRoleSpeed),
   runtimeMode: RuntimeMode,
   interactionMode: ProviderInteractionMode,
   branch: Schema.NullOr(GitRefName),
@@ -1545,6 +1553,8 @@ export const OrchestrationV2ProviderTurn = Schema.Struct({
   turnTokenUsage: Schema.optional(TurnTokenUsage),
   /** The model the provider reported running this turn's root agent, which can differ from the requested one. */
   model: Schema.optional(TrimmedNonEmptyString),
+  /** The tier sent at the start of a native turn, for transcripts that omit it. */
+  serviceTier: Schema.optional(TrimmedNonEmptyString),
   /** True when the provider dropped this turn's request before persisting it to native history. */
   promptDropped: Schema.optional(Schema.Literal(true)),
 });
@@ -3669,6 +3679,7 @@ export const OrchestrationV2Command = Schema.Union([
     title: TrimmedNonEmptyString,
     titleRenamed: Schema.optional(Schema.Boolean),
     modelSelection: ModelSelection,
+    codexRoleSpeed: Schema.optional(CodexRoleSpeed),
     runtimeMode: RuntimeMode,
     interactionMode: ProviderInteractionMode,
     branch: Schema.NullOr(GitRefName),
@@ -4188,6 +4199,7 @@ export const OrchestrationV2Command = Schema.Union([
     task: TrimmedNonEmptyString,
     title: Schema.optional(TrimmedNonEmptyString),
     modelSelection: ModelSelection,
+    codexRoleSpeed: Schema.optional(CodexRoleSpeed),
     runtimeMode: RuntimeMode,
     interactionMode: ProviderInteractionMode,
     workspaceStrategy: Schema.optional(OrchestrationV2ThreadLaunchWorkspaceStrategy),

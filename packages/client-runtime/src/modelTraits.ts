@@ -142,7 +142,11 @@ export function buildTraitsTriggerDisplay(
       continue;
     }
     if (descriptor.id === "serviceTier" && descriptor.type === "select") {
-      const currentValue = getProviderOptionCurrentValue(descriptor);
+      const currentValue = getProviderOptionCurrentValue(
+        descriptor,
+        input.modelSelection,
+        input.reportedModelSelection,
+      );
       const fastTier = descriptor.options.find(({ label }) => label === "Fast");
       const ultrafastTier = descriptor.options.find(({ label }) => label === "Ultrafast");
       if (

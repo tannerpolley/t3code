@@ -1086,6 +1086,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     ],
   },
   {
+    id: "codex-default-speed",
+    title: msg("Default speed"),
+    to: "/settings/providers",
+    searchTerms: [msg("Codex speed normal fast ultra fast service tier")],
+    providerSettingsOnly: true,
+  },
+  {
     id: "usage-providers",
     title: msg("Usage providers"),
     to: "/settings/providers",

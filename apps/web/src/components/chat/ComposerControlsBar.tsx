@@ -52,6 +52,7 @@ export function ComposerControlsBar(props: {
   selectedProviderModels: ServerProvider["models"];
   composerModelOptions: ReturnType<typeof useComposerProviderModel>["composerModelOptions"];
   reportedModelSelection: ChatComposerProps["reportedModelSelection"];
+  codexSpeed: ChatComposerProps["codexSpeed"];
   promptUltrathink: PromptUltrathink;
   onPromptEdit: (edit: (prompt: string) => string) => void;
   effortDisplay: EffortDisplay;
@@ -164,7 +165,13 @@ export function ComposerControlsBar(props: {
     promptUltrathink,
     onPromptEdit,
   });
-  const effort = describeComposerEffort(traitsInput, props.effortDisplay, controlSize, m);
+  const effort = describeComposerEffort(
+    traitsInput,
+    props.effortDisplay,
+    controlSize,
+    m,
+    props.codexSpeed,
+  );
   const restingBlockDefs = showModeBlock
     ? [
         {

@@ -6,6 +6,7 @@ import {
   repositoryAdmitsWork,
   repositoryPhase,
 } from "@t3tools/contracts";
+import { codexRoleSpeedFromSelection } from "@t3tools/shared/model";
 import type {
   DelegatedToolAdditions,
   NodeId,
@@ -433,6 +434,10 @@ export function makeIssueWorkCommands({
       .getThreadShell(recipientId)
       .pipe(mapDispatchError(command));
     if (recipient === null) return;
+    const codexRoleSpeed =
+      workerAdapter.driver === "codex"
+        ? codexRoleSpeedFromSelection(command.workerModelSelection)
+        : undefined;
     yield* dispatchDelegatedTaskRequest(
       {
         type: "delegated_task.request",
@@ -453,6 +458,7 @@ Read the issue and comments, produce the requested deliverable, and report when 
               ),
         ...(command.workerRole === undefined ? {} : { role: command.workerRole }),
         modelSelection: command.workerModelSelection,
+        ...(codexRoleSpeed === undefined ? {} : { codexRoleSpeed }),
         runtimeMode: recipient.runtimeMode,
         interactionMode: recipient.interactionMode,
         completionWake: "always",

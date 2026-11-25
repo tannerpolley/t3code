@@ -108,6 +108,21 @@ describe("getComposerProviderState", () => {
     });
   });
 
+  it("dispatches the selected Codex tier for the shared resolver to clamp", () => {
+    const state = getComposerProviderState({
+      provider: PROVIDER,
+      model: MODEL,
+      models: modelWith([
+        selectDescriptor("serviceTier", [
+          { id: "default", label: "Normal", isDefault: true },
+          { id: "priority", label: "Fast" },
+        ]),
+      ]),
+      modelOptions: selections(["serviceTier", "ultrafast"]),
+    });
+    expect(state.modelOptionsForDispatch).toEqual(selections(["serviceTier", "ultrafast"]));
+  });
+
   it("derives promptEffort from the first select descriptor and preserves all others for dispatch", () => {
     const state = getComposerProviderState({
       provider: PROVIDER,

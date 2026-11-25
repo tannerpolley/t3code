@@ -9820,7 +9820,6 @@
   "44eac2e9f0540171": "Anbieterinstanz konnte nicht zurückgesetzt werden",
   "e58b52d05807b929": "Anbieter werden aktualisiert",
   "1d7cade347f52bbd": "Eingeschränkte Berechtigungen",
-  "c165e95dd1b35bfd": "Diese Sitzung kann die Anbieter von {environment} anzeigen, aber ihre Einstellungen nicht ändern.",
   "909f245bc73b0f32": "Diese Anbieterinstanz ist auf diesem Gerät nicht mehr verfügbar.",
   "daf14fa8c7bedb74": "Keine Anbieter konfiguriert.",
   "2757a250104b4b7e": "Erweitert",
@@ -13745,5 +13744,14 @@
   "08aed48ad712a390": "Issue #{number} verschieben",
   "758bdb04da8055e3": "Bei aktivierter Option „Vor dem Erstellen, Aufteilen oder Verschieben von Issues fragen“ müssen Statusänderungen, das Erstellen und das Aufteilen von Issues genehmigt werden. Text- und Beziehungsänderungen sowie das Schließen und Wiederöffnen erfordern eine Genehmigung, wenn der Agenten-Thread im Modus „Genehmigung erforderlich“ läuft.",
   "37fb3df559fec40b": "Orchestrator wird wiederhergestellt",
-  "47056f69de6e20fb": "Zeigt offene Issues des Repositorys nach Arbeitsphase im Abschnitt „Issues“ der Thread-Details und öffnet sie neben dem Thread."
+  "47056f69de6e20fb": "Zeigt offene Issues des Repositorys nach Arbeitsphase im Abschnitt „Issues“ der Thread-Details und öffnet sie neben dem Thread.",
+  "e351e22d0be49f2b": "Codex-Geschwindigkeit: {speed} auf {environment}",
+  "72dc8979fc87df5c": "Codex-Geschwindigkeit: {speed}",
+  "f94eea5cf4e7d9d6": "Standard",
+  "7b44f2dcd82a0ea1": "Diese Sitzung hat keine Berechtigung, Anbieter auf {environment} zu verwalten.",
+  "7aa202a739c5f90d": "Gilt ab dem nächsten Zug für Codex-Threads und Worker mit der Standardeinstellung. Modelle verwenden die schnellste verfügbare Stufe bis zur gewählten Geschwindigkeit.",
+  "e2a5cf66eeec090e": "Standardgeschwindigkeit",
+  "afecbf6b765a2fb0": "Ultraschnell",
+  "3c8f3dd37881c169": "Codex Geschwindigkeit Standard schnell ultraschnell Dienststufe",
+  "1becfb4db7ffe135": "Codex-Standard"
 }

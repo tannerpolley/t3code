@@ -250,6 +250,17 @@ async function setup() {
 }
 
 describe("EnvironmentProviderSettings routing", () => {
+  it("saves Codex speed with settings permission alone", async () => {
+    await setup();
+    state.canManageProviders = false;
+    await setProviders([provider()]);
+    await using _screen = await render(panel({ readOnly: true }));
+    await page.getByRole("combobox", { name: "Default speed" }).click();
+    await page.getByRole("option", { name: "Fast", exact: true }).click();
+    expect(state.updateSettings).toHaveBeenCalledWith({ codexDefaultSpeed: "fast" });
+    expect(state.updateEnvironmentIds).toContain(environmentId);
+  });
+
   it("does not substitute another account when the requested instance was removed", async () => {
     await setup();
     await setProviders([provider()]);

@@ -71,6 +71,8 @@ const clientLaunchHarness = (input: {
   /** The orchestrator refuses the new thread's mode, as under a managed ceiling. */
   readonly refusedByCeiling?: true;
   readonly settings?: Parameters<typeof ServerSettings.layerTest>[0];
+  /** The launch comes from this agent thread instead of an outside client. */
+  readonly caller?: { readonly threadId: ThreadId; readonly modelSelection: ModelSelection };
 }) => {
   const projectId = ProjectId.make("project:client-target");
   const modelSelection = {
@@ -118,19 +120,41 @@ const clientLaunchHarness = (input: {
     Layer.succeed(McpInvocationContext.McpInvocationContext, {
       environmentId: EnvironmentId.make("environment"),
       requestNamespace: "client:session-1",
-      thread: undefined,
-      client: {
-        sessionId: "session-1",
-        label: "Claude Code",
-        access: input.runtimeModeCeiling,
-        hostedAppUrl: input.hostedAppUrl,
-      },
+      thread:
+        input.caller === undefined
+          ? undefined
+          : {
+              threadId: input.caller.threadId,
+              providerSessionId: `provider:${input.caller.threadId}`,
+              providerInstanceId: input.caller.modelSelection.instanceId,
+            },
+      client:
+        input.caller === undefined
+          ? {
+              sessionId: "session-1",
+              label: "Claude Code",
+              access: input.runtimeModeCeiling,
+              hostedAppUrl: input.hostedAppUrl,
+            }
+          : undefined,
       issuedAt: 0,
       capabilities: new Set(["orchestration" as const]),
     }),
     Layer.mock(ThreadManagement.ThreadManagementService)({
       // A thread exists once a launch started it.
       getThreadShell: (threadId) => {
+        if (threadId === input.caller?.threadId)
+          return Effect.succeed({
+            id: threadId,
+            modelSelection: input.caller.modelSelection,
+            runtimeMode: "full-access",
+            interactionMode: "default",
+            providerInstanceId: input.caller.modelSelection.instanceId,
+            activeRunId: "run:caller",
+            pendingBackgroundTasks: [],
+            archivedAt: null,
+            deletedAt: null,
+          } as unknown as OrchestrationV2ThreadShell);
         const launch = input.launched.find((candidate) => candidate.threadId === threadId);
         return Effect.succeed(
           launch === undefined
@@ -150,16 +174,18 @@ const clientLaunchHarness = (input: {
       getThreadRecords: (threadId) => {
         const launch = input.launched.find((candidate) => candidate.threadId === threadId);
         const thread =
-          launch !== undefined
-            ? {
-                id: launch.threadId,
-                title: launch.title,
-                mcpClientSessionId: launch.mcpClientSessionId,
-                delegatedFrom: launch.delegatedFrom,
-              }
-            : threadId === OTHER_AGENT_THREAD
-              ? { id: threadId, title: "Other bot", mcpClientSessionId: "session-other" }
-              : undefined;
+          threadId === input.caller?.threadId
+            ? { id: threadId, title: "Caller" }
+            : launch !== undefined
+              ? {
+                  id: launch.threadId,
+                  title: launch.title,
+                  mcpClientSessionId: launch.mcpClientSessionId,
+                  delegatedFrom: launch.delegatedFrom,
+                }
+              : threadId === OTHER_AGENT_THREAD
+                ? { id: threadId, title: "Other bot", mcpClientSessionId: "session-other" }
+                : undefined;
         return thread === undefined
           ? Effect.die("no records for an unknown thread")
           : Effect.succeed({
@@ -356,6 +382,58 @@ it.effect(
         message: "Example Corp limits threads to Supervised.",
       });
     }),
+);
+
+it.effect("a thread launched from a Codex thread drops the caller's speed override", () =>
+  Effect.gen(function* () {
+    const codex = ProviderInstanceId.make("codex");
+    const launched: Array<ThreadLaunch.ThreadLaunchInput> = [];
+    const { projectId, dependencies } = clientLaunchHarness({
+      runtimeModeCeiling: "full-access",
+      launched,
+      caller: {
+        threadId: ThreadId.make("thread:caller"),
+        modelSelection: {
+          instanceId: codex,
+          model: "gpt-codex",
+          options: [
+            { id: "reasoningEffort", value: "high" },
+            { id: "serviceTier", value: "ultrafast" },
+          ],
+        },
+      },
+      providers: [
+        {
+          instanceId: codex,
+          driver: ProviderDriverKind.make("codex"),
+          enabled: true,
+          installed: true,
+          status: "ready",
+          version: null,
+          auth: { status: "authenticated" },
+          checkedAt: "2026-01-01T00:00:00Z",
+          models: [],
+          slashCommands: [],
+          skills: [],
+        },
+      ],
+    });
+    const toolkit = yield* ProjectToolkit.pipe(
+      Effect.provide(
+        McpToolAccess.HandlersLayer.layer(ProjectHandlers.layer).pipe(Layer.provide(dependencies)),
+      ),
+    );
+    const result = yield* toolkit
+      .handle("t3_thread_launch", { projectId, title: "Child" })
+      .pipe(Stream.unwrap, Stream.runCollect, Effect.provide(dependencies));
+
+    expect(result.at(-1)?.result).not.toHaveProperty("code");
+    expect(launched[0]?.modelSelection).toEqual({
+      instanceId: codex,
+      model: "gpt-codex",
+      options: [{ id: "reasoningEffort", value: "high" }],
+    });
+  }),
 );
 
 it.effect("a launch steps an inherited mode down to the provider's, and refuses one it lacks", () =>
