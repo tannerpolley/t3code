@@ -279,7 +279,7 @@ export function useResetCredit(environmentId: EnvironmentId) {
 
   const redeem = async () => {
     setConfirming(false);
-    if (!choice?.input || !readEnvironmentScope(environmentId, AuthProvidersManageScope)) return;
+    if (!choice || !readEnvironmentScope(environmentId, AuthProvidersManageScope)) return;
     setBusy(true);
     setStatus(null);
     const result = await consume({ environmentId, input: choice.input });
@@ -296,7 +296,7 @@ export function useResetCredit(environmentId: EnvironmentId) {
   };
 
   const confirm = (next: ResetCreditChoice) => {
-    if (!next.input || !readEnvironmentScope(environmentId, AuthProvidersManageScope)) return;
+    if (!readEnvironmentScope(environmentId, AuthProvidersManageScope)) return;
     setChoice(next);
     setConfirming(true);
   };
@@ -362,7 +362,7 @@ export function ResetCredits({
       {resetCreditChoices(credits, input, now, false, m).map((choice) => (
         <div key={choice.key} className="flex flex-wrap items-center gap-x-3 gap-y-1">
           <span className="tabular-nums">{choice.summary}</span>
-          {choice.availableCount > 0 && choice.input ? (
+          {choice.availableCount > 0 ? (
             <Button
               size="xs"
               variant="outline"

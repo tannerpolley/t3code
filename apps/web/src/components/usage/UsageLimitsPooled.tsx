@@ -220,7 +220,7 @@ function SegmentPopover({
           {choices.map((choice) => (
             <span key={choice.key} className="flex items-center gap-3">
               <span className="tabular-nums">{choice.summary}</span>
-              {choice.availableCount > 0 && choice.input ? (
+              {choice.availableCount > 0 ? (
                 <Button
                   size="xs"
                   variant="outline"

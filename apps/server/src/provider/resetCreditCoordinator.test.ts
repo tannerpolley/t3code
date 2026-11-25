@@ -67,7 +67,7 @@ describe("ResetCreditCoordinator", () => {
         undefined,
         "a",
       ).pipe(Effect.ignore);
-      yield* redeem("acct", (key) => record(key), undefined, "a");
+      yield* redeem("acct", (key) => record(key).pipe(Effect.as(undefined)), undefined, "a");
       yield* redeem("acct", (key) => record(key).pipe(Effect.as("reset" as const)), undefined, "b");
       yield* redeem(
         "acct",
@@ -93,7 +93,7 @@ describe("ResetCreditCoordinator", () => {
       yield* redeem("acct", () => Effect.fail("unanswered replay"), undefined, "grant", true).pipe(
         Effect.ignore,
       );
-      yield* redeem("acct", () => Effect.void, undefined, "grant", true);
+      yield* redeem("acct", () => Effect.as(Effect.void, undefined), undefined, "grant", true);
       yield* redeem("acct", consume, undefined, "grant");
       yield* redeem("acct", consume, undefined, "grant", true);
       yield* redeem("acct", consume, undefined, "grant");

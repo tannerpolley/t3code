@@ -45,7 +45,7 @@ it("shows a count-only reset balance without offering a manual claim", () => {
     { instanceId: ProviderInstanceId.make("codex") },
     now,
   );
-  expect(choice).toMatchObject({ availableCount: 2, input: null });
+  expect(choice?.availableCount).toBe(0);
   expect(choice?.summary).toContain("2 reset credits banked");
 });
 

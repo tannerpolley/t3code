@@ -7,7 +7,11 @@ import {
   UsageLimitSourceId,
   type UsageLimitSourceSnapshot,
 } from "@t3tools/contracts";
-import type { ProviderInstance } from "@t3tools/provider-core/server/driver";
+import {
+  defaultProviderContinuationIdentity,
+  type ProviderInstance,
+} from "@t3tools/provider-core/server/driver";
+import { fromRunner } from "@t3tools/provider-core/server/textGenerationOperations";
 import * as DateTime from "effect/DateTime";
 import * as Deferred from "effect/Deferred";
 import * as Effect from "effect/Effect";
@@ -48,11 +52,40 @@ const hub = (id: string, email = "user@example.test"): UsageLimitSourceSnapshot 
 
 const decodeProvider = Schema.decodeUnknownSync(ServerProvider);
 
+function makeLocalInstance(report: ServerProvider): ProviderInstance {
+  const { instanceId, driver } = report;
+  const unused = () => Effect.die("The hub owns this credit");
+  return {
+    instanceId,
+    driverKind: driver,
+    displayName: report.displayName,
+    enabled: true,
+    continuationIdentity: defaultProviderContinuationIdentity({ instanceId, driverKind: driver }),
+    snapshot: {
+      getSnapshot: Effect.succeed(report),
+      refresh: Effect.succeed(report),
+      streamChanges: Stream.empty,
+      resolveMaintenance: unused,
+      applyUsageLimits: unused,
+    },
+    orchestrationAdapter: {
+      instanceId,
+      driver,
+      getCapabilities: unused,
+      planSelectionTransition: unused,
+      openSession: unused,
+    },
+    textGeneration: fromRunner("ResetCreditExpiryTest", unused),
+    consumeResetCredit: unused,
+  };
+}
+
 const start = (
   sources: UsageLimitSources.UsageLimitSources["Service"],
   localReport?: ServerProvider,
-) =>
-  ResetCreditExpiry.start.pipe(
+) => {
+  const instance = localReport ? makeLocalInstance(localReport) : undefined;
+  return ResetCreditExpiry.start.pipe(
     Effect.provide([
       Layer.succeed(UsageLimitSources.UsageLimitSources, sources),
       Layer.mock(ProviderRegistry.ProviderRegistry)({
@@ -60,22 +93,14 @@ const start = (
         getProviders: Effect.succeed(localReport ? [localReport] : []),
       }),
       Layer.mock(ProviderInstanceRegistry.ProviderInstanceRegistry)({
-        listInstances: Effect.succeed(
-          localReport
-            ? [
-                {
-                  enabled: true,
-                  instanceId: localReport.instanceId,
-                  consumeResetCredit: () => Effect.die("The hub owns this credit"),
-                } as ProviderInstance,
-              ]
-            : [],
-        ),
+        getInstance: (id) => Effect.succeed(instance?.instanceId === id ? instance : undefined),
+        listInstances: Effect.succeed(instance ? [instance] : []),
         streamChanges: Stream.empty,
       }),
       Settings.layerTest({ autoUseExpiringResetCredits: true }),
     ]),
   );
+};
 
 it.effect("serializes duplicate accounts and paces retries after unconfirmed redemption", () =>
   Effect.gen(function* () {

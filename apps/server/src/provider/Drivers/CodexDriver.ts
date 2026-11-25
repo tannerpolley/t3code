@@ -383,7 +383,7 @@ export const CodexDriver: ProviderDriver<
               if (automatic) {
                 if (
                   account?.type !== "chatgpt" ||
-                  account.email.trim().toLowerCase() !== automatic.email ||
+                  account.email?.trim().toLowerCase() !== automatic.email ||
                   (limits.accountId?.trim() || undefined) !== automatic.workspaceId ||
                   credits.nextExpiresAt !== automatic.expiresAt ||
                   !(yield* automatic.canRedeem)

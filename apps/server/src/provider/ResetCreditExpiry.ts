@@ -1,4 +1,9 @@
-import type { ProviderInstanceId, UsageLimitSourceId } from "@t3tools/contracts";
+import type {
+  ProviderConsumeResetCreditOutcome,
+  ProviderInstanceId,
+  UsageLimitSourceError,
+  UsageLimitSourceId,
+} from "@t3tools/contracts";
 import type { AutomaticResetCredit } from "@t3tools/provider-core/server/driver";
 import { accountKeyResolver } from "@t3tools/shared/usageLimits";
 import * as Clock from "effect/Clock";
@@ -6,15 +11,18 @@ import * as Effect from "effect/Effect";
 import * as Equal from "effect/Equal";
 import * as Layer from "effect/Layer";
 import * as Queue from "effect/Queue";
+import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import { forkParked } from "../serverActivation.ts";
 import * as Settings from "../serverSettings.ts";
 import * as UsageLimitSources from "../usage/UsageLimitSources.ts";
+import type { ProviderDriverError } from "./Errors.ts";
 import * as ProviderInstanceRegistry from "./ProviderInstanceRegistry.ts";
 import * as ProviderRegistry from "./ProviderRegistry.ts";
 
 const MINUTE = 60_000;
+const encodeKey = Schema.encodeEffect(Schema.fromJsonString(Schema.Unknown));
 
 type Owner =
   | { readonly instanceId: ProviderInstanceId }
@@ -84,7 +92,9 @@ export const start = Effect.gen(function* () {
       // Use the hub when it holds the same account, even when its credit list is unreadable.
       owners.add(account);
       const credits = report.usageLimits?.resetCredits;
-      const ownerKey = JSON.stringify([account, report.owner, email, report.workspaceId]);
+      const ownerKey = yield* encodeKey([account, report.owner, email, report.workspaceId]).pipe(
+        Effect.orDie,
+      );
       if (
         report.usageLimits?.unavailable ||
         !credits ||
@@ -101,9 +111,9 @@ export const start = Effect.gen(function* () {
       const expiry = Date.parse(expiresAt);
       if (!Number.isFinite(expiry)) continue;
       selected.push({
-        key: JSON.stringify([account, creditId]),
+        key: yield* encodeKey([account, creditId]).pipe(Effect.orDie),
         ownerKey,
-        signature: JSON.stringify([ownerKey, expiresAt]),
+        signature: yield* encodeKey([ownerKey, expiresAt]).pipe(Effect.orDie),
         owner: report.owner,
         creditId,
         expiresAt,
@@ -199,7 +209,10 @@ export const start = Effect.gen(function* () {
         return currentTime >= credit.opens && currentTime <= credit.closes;
       }),
     } satisfies AutomaticResetCredit;
-    const outcome = yield* (
+    const redeem: Effect.Effect<
+      ProviderConsumeResetCreditOutcome,
+      UsageLimitSourceError | ProviderDriverError
+    > =
       "sourceId" in owner
         ? sources
             .consumeResetCredit(
@@ -207,8 +220,8 @@ export const start = Effect.gen(function* () {
               { ...automatic, endpoint: owner.endpoint },
             )
             .pipe(Effect.map((result) => result.outcome))
-        : (instance?.consumeResetCredit?.(automatic) ?? Effect.succeed("nothingToReset" as const))
-    ).pipe(Effect.result);
+        : (instance?.consumeResetCredit?.(automatic) ?? Effect.succeed("nothingToReset" as const));
+    const outcome = yield* Effect.result(redeem);
     const status = outcome._tag === "Success" ? outcome.success : "unconfirmed";
     yield* Effect.logInfo("Automatic reset credit attempt", {
       owner,
@@ -237,7 +250,7 @@ export const start = Effect.gen(function* () {
       Effect.forkScoped,
     );
 
-    yield* Effect.forever(
+    return yield* Effect.forever(
       Effect.gen(function* () {
         const enabled = (yield* readSettings)?.autoUseExpiringResetCredits;
         const now = yield* Clock.currentTimeMillis;
@@ -263,7 +276,9 @@ export const start = Effect.gen(function* () {
         if (due.length > 0) {
           yield* Effect.all(due, { concurrency: 4, discard: true });
         } else if (Number.isFinite(next)) {
-          yield* Effect.raceFirst(Queue.take(changes), Effect.sleep(next - now));
+          yield* Queue.take(changes).pipe(
+            Effect.timeoutOrElse({ duration: next - now, orElse: () => Effect.void }),
+          );
         } else {
           yield* Queue.take(changes);
         }

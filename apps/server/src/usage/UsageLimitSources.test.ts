@@ -621,7 +621,7 @@ it.effect("sends no consume request when auto-use is disabled during hub prepara
       ServerSettings.layerTest({
         autoUseExpiringResetCredits: true,
         usageLimitSources: {
-          hub: {
+          [UsageLimitSourceId.make("hub")]: {
             kind: "cliproxy",
             url: "https://hub.test",
             enabled: true,
