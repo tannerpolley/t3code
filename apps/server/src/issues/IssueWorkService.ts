@@ -1589,22 +1589,23 @@ ${exhaustionMarker}`,
         if (shell.activeRunId === null && shell.status !== "queued") {
           yield* threads.archiveObservedWorker(threadId);
         }
-        if (
-          !admitsWork ||
-          (!isAutomaticIssueSuspension(suspended.get(shell.linkedIssue.id)) &&
-            shell.activeRunId === null &&
-            shell.status !== "queued" &&
-            (shell.pendingBackgroundTasks?.length ?? 0) === 0 &&
-            ((yield* store.resultAvailable(threadId)) ||
-              (yield* progressFor(threadId, false)).progress.state === "result_available"))
-        )
-          continue;
+        if (!admitsWork) continue;
         // Closed and re-parented attempts still require an explicit Resume decision.
         const priorReason = suspended.get(shell.linkedIssue.id);
         if (priorReason !== undefined && !isAutomaticIssueSuspension(priorReason)) continue;
+        const finished =
+          priorReason === undefined &&
+          shell.activeRunId === null &&
+          shell.status !== "queued" &&
+          (shell.pendingBackgroundTasks?.length ?? 0) === 0 &&
+          ((yield* store.resultAvailable(threadId)) ||
+            (yield* progressFor(threadId, false)).progress.state === "result_available");
+        // An idle worker can still hold a checkout after handing back its result.
+        if (finished && !(yield* store.workerRetainsSlot(threadId))) continue;
         const read = yield* issues
           .workRead(shell.linkedIssue, { cached: true })
           .pipe(Effect.result);
+        if (finished && (read._tag === "Failure" || read.success.state !== "closed")) continue;
         let reason: string | null = null;
         let kind: IssueSuspensionKind = "reparented";
         if (read._tag === "Failure") {
@@ -1612,11 +1613,11 @@ ${exhaustionMarker}`,
             continue;
           kind = "unreadable";
           reason = unreadableRelationshipsSuspensionReason;
-        } else if (issueEligibility(read.success) === "unknown") continue;
-        else if (read.success.state === "closed") {
+        } else if (read.success.state === "closed") {
           kind = "closed";
           reason = CLOSED_ISSUE_SUSPENSION_REASON;
-        } else if (issueEligibility(read.success) === "blocked") {
+        } else if (issueEligibility(read.success) === "unknown") continue;
+        else if (issueEligibility(read.success) === "blocked") {
           kind = "blocked";
           reason = openBlockerSuspensionReason;
         } else {

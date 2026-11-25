@@ -56,6 +56,7 @@ import {
   CheckpointScopeId,
   CommandId,
   EventId,
+  MessageId,
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -3883,6 +3884,8 @@ describe("storage cleanup reports and local file policies", () => {
   );
   it.live.each([
     "finished with no PR",
+    "is archived with a missing worktree",
+    "is archived with unmerged commits",
     "was removed explicitly with unmerged commits",
     "received a merge update",
     "is visible with a merged pull request",
@@ -3956,6 +3959,25 @@ describe("storage cleanup reports and local file policies", () => {
             },
           }),
         ]);
+        if (scenario === "is archived with a missing worktree") {
+          yield* command(repo, ["worktree", "remove", slot]);
+          expect((yield* service.runNow).entries[0]?.reason).toBe(
+            "Cleared a missing issue worktree binding",
+          );
+          expect(getThreads()[0]).toMatchObject({ worktreePath: null, branch: "feature" });
+          return;
+        }
+        if (scenario === "is archived with unmerged commits") {
+          expect((yield* service.runNow).entries[0]?.reason).toBe(
+            "Returned to the issue worktree pool",
+          );
+          expect(getThreads()[0]).toMatchObject({ worktreePath: null, branch: "feature" });
+          expect((yield* command(repo, ["rev-parse", "refs/heads/feature"])).stdout.trim()).toBe(
+            head,
+          );
+          expect((yield* command(slot, ["branch", "--show-current"])).stdout).toBe("");
+          return;
+        }
         if (unsettledStatus !== null || scenario === "is visible with a merged pull request") {
           for (const pullRequest of [null, merged]) {
             if (pullRequest !== null) setBranchPullRequest(pullRequest);
@@ -3969,11 +3991,11 @@ describe("storage cleanup reports and local file policies", () => {
           return;
         }
         if (scenario === "was removed explicitly with unmerged commits") {
+          yield* fs.writeFileString(`${slot}/.env`, "private");
           expect((yield* service.runNow).entries[0]).toMatchObject({
             outcome: "kept",
-            reason: "Issue work is awaiting a merged pull request",
+            reason: "Has local files outside the keep paths",
           });
-          yield* fs.writeFileString(`${slot}/.env`, "private");
           const remove = () =>
             service.removeWorktreeNow({
               projectId: ProjectId.make("project-1"),
@@ -3995,6 +4017,7 @@ describe("storage cleanup reports and local file policies", () => {
           return;
         }
         if (scenario === "received a merge update") {
+          yield* fs.writeFileString(`${slot}/.env`, "private");
           const events = yield* Queue.unbounded<OrchestrationV2DomainEvent>();
           const processed = yield* Deferred.make<void>();
           yield* activate(
@@ -4011,8 +4034,9 @@ describe("storage cleanup reports and local file policies", () => {
             Stream.runDrain,
           );
           expect((yield* service.latestReport)?.entries[0]?.reason).toBe(
-            "Issue work is awaiting a merged pull request",
+            "Has local files outside the keep paths",
           );
+          yield* fs.remove(`${slot}/.env`);
           setBranchPullRequest(merged);
           yield* Queue.offer(events, {
             id: EventId.make("slot-pr-merged"),
@@ -4055,7 +4079,8 @@ describe("storage cleanup reports and local file policies", () => {
       }),
     ),
   );
-  it.live("returns a detached merged worker's slot after an archived binding was rejected", () => {
+  const mergedSlotWorkers = ["archived", "visible interrupted"] as const;
+  it.live.each(mergedSlotWorkers)("reclaims a detached merged %s slot", (workerState) => {
     const database = Sqlite.layerMemory;
     const reviewer = ThreadId.make("reviewer");
     let failReviewerRead = false;
@@ -4181,6 +4206,37 @@ describe("storage cleanup reports and local file policies", () => {
               },
             ],
           });
+          if (threadId === worker && workerState === "visible interrupted") {
+            const runId = RunId.make("interrupted-worker-run");
+            yield* sink.write({
+              events: [
+                {
+                  id: EventId.make("interrupted-worker-run"),
+                  type: "run.created",
+                  threadId,
+                  occurredAt: thread.updatedAt,
+                  payload: {
+                    id: runId,
+                    threadId,
+                    ordinal: 1,
+                    providerInstanceId: modelSelection.instanceId,
+                    modelSelection,
+                    providerThreadId: null,
+                    userMessageId: MessageId.make("interrupted-worker-prompt"),
+                    rootNodeId: null,
+                    activeAttemptId: null,
+                    status: "interrupted",
+                    requestedAt: thread.updatedAt,
+                    startedAt: thread.updatedAt,
+                    completedAt: thread.updatedAt,
+                    checkpointId: null,
+                    contextHandoffId: null,
+                  },
+                },
+              ],
+            });
+            continue;
+          }
           yield* engine.dispatch({
             type: "thread.archive",
             commandId: CommandId.make(`archive-${threadId}`),
@@ -4202,21 +4258,23 @@ describe("storage cleanup reports and local file policies", () => {
           })
           .pipe(Effect.flip);
         expect(oldRelease.message).toContain("archived and cannot change workspace");
-        expect(yield* store.slotsInUse(root)).toBe(1);
+        expect(yield* store.slotsInUse(root)).toBe(0);
 
         failReviewerRead = true;
         const interrupted = yield* service.runNow;
         expect(interrupted.entries[0]).toMatchObject({ outcome: "failed" });
         expect((yield* projections.getThread(sideChat)).worktreePath).toBeNull();
         expect((yield* projections.getThread(reviewer)).worktreePath).toBe(slot);
-        expect(yield* store.slotsInUse(root)).toBe(1);
+        expect(yield* store.slotsInUse(root)).toBe(0);
 
         failReviewerRead = false;
         const report = yield* service.runNow;
         expect(report.entries[0]?.reason).toBe("Returned to the issue worktree pool");
         for (const threadId of [worker, reviewer, sideChat]) {
           const thread = yield* projections.getThread(threadId);
-          expect(thread.archivedAt).not.toBeNull();
+          expect(thread.archivedAt === null).toBe(
+            threadId === worker && workerState === "visible interrupted",
+          );
           expect(thread.worktreePath).toBeNull();
         }
         expect(yield* store.slotsInUse(root)).toBe(0);

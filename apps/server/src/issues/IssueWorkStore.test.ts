@@ -17,6 +17,49 @@ import * as IssueWorkStore from "./IssueWorkStore.ts";
 const dependencies = Layer.mergeAll(IssueWorkStore.layer, EffectOutbox.layer).pipe(
   Layer.provideMerge(SqlitePersistence.layerMemory),
 );
+
+it.effect.each([
+  { name: "archived worker", archived: true, count: 0 },
+  { name: "interrupted worker", run: "interrupted", count: 0 },
+  { name: "worker on a merged branch", merged: true, count: 0 },
+  { name: "closed issue", closed: true, count: 0 },
+  { name: "idle worker on an open issue", count: 1 },
+  { name: "archived worker with pending work", archived: true, run: "waiting", count: 1 },
+])("counts slots for $name", ({ archived, run, merged, closed, count }) =>
+  Effect.gen(function* () {
+    const sql = yield* SqlClient.SqlClient;
+    const store = yield* IssueWorkStore.IssueWorkStore;
+    const root = ThreadId.make("root");
+    const issue = { host: "github.com", repositoryId: "repo", repository: "owner/repo", id: "1" };
+    const rootPayload = JSON.stringify({
+      repositoryOrchestration: { suspendedIssues: closed ? [{ id: "1", kind: "closed" }] : [] },
+    });
+    const workerPayload = JSON.stringify({
+      linkedIssue: issue,
+      branch: "feature",
+      worktreePath: "/repo/.worktrees/slot-1",
+      pullRequests: merged
+        ? [
+            {
+              host: issue.host,
+              repository: issue.repository,
+              snapshot: { state: "merged", headBranch: "feature" },
+            },
+          ]
+        : [],
+    });
+    yield* sql`INSERT INTO orchestration_v2_projection_threads(thread_id, project_id, title, default_provider, runtime_mode, interaction_mode, created_at, updated_at, archived_at, payload_json)
+      VALUES ('root', 'project', 'Root', 'codex', 'full-access', 'default', '2026-11-24', '2026-11-24', NULL, ${rootPayload}),
+        ('worker', 'project', 'Worker', 'codex', 'full-access', 'default', '2026-11-24', '2026-11-24', ${archived ? "2026-11-24" : null}, ${workerPayload})`;
+    yield* sql`INSERT INTO orchestration_v2_projection_repository_orchestration(host, repository_id, repository, root_thread_id, project_id, workspace, launch_command_id, revision, paused, worker_limit, publish_status_comments, publish_closeout_comments, created_at, updated_at)
+      VALUES ('github.com', 'repo', 'owner/repo', 'root', 'project', 'project', 'start', 1, 0, 1, 1, 1, '2026-11-24', '2026-11-24')`;
+    if (run !== undefined)
+      yield* sql`INSERT INTO orchestration_v2_projection_runs(run_id, thread_id, ordinal, provider, status, requested_at, payload_json)
+        VALUES ('run', 'worker', 1, 'codex', ${run}, '2026-11-24', '{}')`;
+    assert.equal(yield* store.slotsInUse(root), count);
+  }).pipe(Effect.provide(dependencies)),
+);
+
 it.effect(
   "publishing reflects durable pending, failed, succeeded and cancelled outbox states",
   () =>
