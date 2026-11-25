@@ -325,15 +325,16 @@ export const makeIssueWorkDispatch = Effect.gen(function* () {
   const isClosedIssue = (issue: ThreadLinkedIssue) =>
     Option.isNone(issueReads)
       ? Effect.succeed(false)
-      : issueReads.value.workRead(issue).pipe(
-          Effect.map(
-            (read) =>
-              read.state === "closed" &&
-              sameIssueRepository(read.issue, issue) &&
-              read.issue.id === issue.id,
-          ),
-          Effect.orElseSucceed(() => false),
-        );
+      : issueReads.value
+          .workRead(issue)
+          .pipe(
+            Effect.map(
+              (read) =>
+                read.state === "closed" &&
+                sameIssueRepository(read.issue, issue) &&
+                read.issue.id === issue.id,
+            ),
+          );
 
   return {
     isClosedIssue,

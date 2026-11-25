@@ -318,7 +318,7 @@ export type ProjectionSettlementCandidate = Pick<
     readonly workerResult?: {
       readonly taskId: NodeId;
       readonly completedAt: number;
-      readonly observed: boolean;
+      readonly readyForAutomaticArchive: boolean;
     };
     readonly workerTemporaryCompletedAt?: number | null;
     /** A temporary worker in its parent's checkout, whose branch links belong to the parent. */
@@ -9669,9 +9669,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
     });
     const isTemporaryWorker = sql`json_extract(t.payload_json, '$.role') IN ${sql.in(temporaryWorkerRoles)}`;
 
-    const workerResultObserved = (task: ReturnType<typeof sql>) => sql`
+    const workerResultReadyForArchive = (task: ReturnType<typeof sql>) => sql`
       (${task}.completion_delivery_state = 'acknowledged'
-       OR json_extract(${task}.payload_json, '$.completionDelivery.observedByRunId') IS NOT NULL)
+       OR json_extract(${task}.payload_json, '$.completionDelivery.observedByRunId') IS NOT NULL
+       OR json_extract(${task}.payload_json, '$.issueAttemptClosedOut') = 1)
     `;
 
     // Manual archiving also accepts a claimed result while its wake is running.
@@ -9682,7 +9683,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         OR ${task}.status NOT IN ('completed', 'failed', 'cancelled', 'interrupted') THEN NULL
       WHEN ${task}.completion_delivery_state IN ('acknowledged', 'delivered')
         OR (${task}.completion_delivery_state = 'disposed'
-          AND (${task}.status IN ('failed', 'cancelled', 'interrupted') OR ${workerResultObserved(task)}))
+          AND (${task}.status IN ('failed', 'cancelled', 'interrupted') OR ${workerResultReadyForArchive(task)}))
         THEN ${task}.updated_at
       WHEN ${task}.completion_delivery_state = 'claimed' THEN (
         SELECT json_extract(wake.payload_json, '$.startedAt')
@@ -9745,7 +9746,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 readonly shares_parent_checkout: number | null;
                 readonly result_task_id: string | null;
                 readonly result_completed_at: string | null;
-                readonly result_observed: number | null;
+                readonly result_ready_for_automatic_archive: number | null;
               }
             >`
             SELECT t.thread_id, t.payload_json,
@@ -9779,7 +9780,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               } AS shares_parent_checkout,
               ${workers === undefined ? sql`NULL` : sql`incoming.subagent_id`} AS result_task_id,
               ${resultCompletedAt} AS result_completed_at,
-              ${workers === undefined ? sql`NULL` : workerResultObserved(sql("incoming"))} AS result_observed,
+              ${workers === undefined ? sql`NULL` : workerResultReadyForArchive(sql("incoming"))} AS result_ready_for_automatic_archive,
               ${nativeSubagentPayload} AS native_subagent_payload_json,
               ${
                 workers === undefined
@@ -10023,7 +10024,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                               workerResult: {
                                 taskId: NodeId.make(row.result_task_id),
                                 completedAt: Date.parse(row.result_completed_at),
-                                observed: row.result_observed === 1,
+                                readyForAutomaticArchive:
+                                  row.result_ready_for_automatic_archive === 1,
                               },
                             }),
                         ...(row.temporary_worker === 1

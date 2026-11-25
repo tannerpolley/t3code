@@ -203,8 +203,10 @@ const make = Effect.gen(function* () {
     for (const { threadId } of yield* projections.getArchivedHandoffSources(now)) {
       const workers = yield* finishedWorkers(projections, now, threadId);
       for (const worker of workers.values()) {
-        if (worker.workerResult?.observed) {
-          yield* orchestrator.archiveObservedWorker(worker.id, worker.workerResult.taskId);
+        if (worker.workerResult?.readyForAutomaticArchive) {
+          yield* orchestrator
+            .archiveFinishedWorker(worker.id, worker.workerResult.taskId)
+            .pipe(Effect.ignore({ log: true }));
         }
       }
     }

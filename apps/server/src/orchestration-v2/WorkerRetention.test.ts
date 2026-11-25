@@ -445,7 +445,7 @@ it.effect.each([43, 44])(
         worktreePath: slot,
       });
       const taskId = yield* recordTask(parent, worker, "pending");
-      yield* threads.archiveObservedWorker(worker);
+      yield* threads.archiveFinishedWorker(worker);
       assert.isNull((yield* projections.getThread(worker)).archivedAt);
       yield* orchestrator.dispatch({
         type: "delegated_task.completion-delivery.acknowledge",
@@ -456,7 +456,7 @@ it.effect.each([43, 44])(
       });
       assert.equal((yield* projections.getThread(worker)).archivedAt !== null, number === 43);
       yield* TestClock.adjust("1 second");
-      yield* threads.archiveObservedWorker(worker);
+      yield* threads.archiveFinishedWorker(worker);
       assert.isNotNull((yield* projections.getThread(worker)).archivedAt);
       yield* threads
         .sendToThread({

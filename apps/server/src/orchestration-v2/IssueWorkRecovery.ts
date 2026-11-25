@@ -451,11 +451,12 @@ export const makeIssueWorkRecovery = Effect.gen(function* () {
         payload: {
           ...nested,
           updatedAt: now,
-          completionDelivery: { state: "disposed", observedByRunId: null },
+          completionDelivery: { ...nested.completionDelivery, state: "disposed" },
         },
       });
     }
     const result = task.result ?? "Closed out the attempt for the closed issue.";
+    const delivery = task.completionDelivery;
     events.push({
       type: "subagent.updated",
       threadId: parentId,
@@ -467,7 +468,11 @@ export const makeIssueWorkRecovery = Effect.gen(function* () {
         result,
         completedAt: task.completedAt ?? now,
         updatedAt: now,
-        completionDelivery: { state: "disposed", observedByRunId: null },
+        issueAttemptClosedOut: true,
+        completionDelivery:
+          delivery === undefined || delivery.state === "pending" || delivery.state === "claimed"
+            ? { state: "disposed", observedByRunId: delivery?.observedByRunId ?? null }
+            : delivery,
       },
     });
     const node = parent.nodes.find((node) => node.id === task.id);

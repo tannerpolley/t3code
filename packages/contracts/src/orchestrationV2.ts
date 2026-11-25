@@ -1225,6 +1225,7 @@ export const OrchestrationV2Subagent = Schema.Struct({
   completionWake: Schema.optional(Schema.Literals(["always", "settled_only"])),
   batchCompletion: Schema.optional(Schema.Boolean),
   completionDelivery: Schema.optional(OrchestrationV2DelegatedCompletionTaskDelivery),
+  issueAttemptClosedOut: Schema.optional(Schema.Literal(true)),
   // The run whose unfinished task was cancelled, committed with its Stop.
   cancelledRunId: Schema.optional(RunId),
   status: Schema.Literals([
@@ -4586,7 +4587,7 @@ export type OrchestrationV2ServerCommand = (
   /** Suspension interrupts retain their provider action until it succeeds. */
   readonly retryInterruptUntilDone?: boolean;
   readonly archiveDelegatedWorker?: true;
-  readonly archiveObservedTaskId?: NodeId;
+  readonly archiveFinishedTaskId?: NodeId;
   readonly archiveClosedIssue?: ThreadLinkedIssue;
   readonly workerArchiveSequence?: number;
   readonly workerDeleteArchivedAt?: DateTime.Utc;
