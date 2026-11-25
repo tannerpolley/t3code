@@ -4,10 +4,12 @@ import * as NodeUtil from "node:util";
 
 import {
   admissionKey,
+  claimDecision,
   eligible,
   githubRepository,
   issueNumber,
-  mergeReviewed,
+  submitReviewed,
+  verifyReviewedMerge,
 } from "./lib/issue-pipeline.ts";
 
 declare const T3: typeof import("../apps/server/src/workflows/api.ts");
@@ -26,6 +28,7 @@ const {
   start,
   step,
   stop,
+  store,
   subject,
   Tick,
   title,
@@ -85,6 +88,15 @@ query($owner: String!, $name: String!, $endCursor: String) {
   }
 }`;
 
+const reviewedPullRequestQuery = `
+query($owner:String!, $name:String!, $number:Int!, $head:GitObjectID!) {
+  repository(owner:$owner, name:$name) {
+    squashMergeAllowed rebaseMergeAllowed mergeCommitAllowed
+    pullRequest(number:$number) { id state baseRefName headRefOid isInMergeQueue isMergeQueueEnabled }
+    object(oid:$head) { ... on Commit { statusCheckRollup { state } } }
+  }
+}`;
+
 const verdictSchema = Schema.Struct({ approved: Schema.Boolean, finding: Schema.String });
 
 const handoff = Effect.fn(function* (name: string, heading: string, reason: string) {
@@ -109,6 +121,7 @@ const worker = workflow(
           repository: Schema.String,
           base: Schema.String,
           number: Schema.String,
+          baseHead: Schema.String,
         }),
       },
       Effect.tryPromise(async (signal) => {
@@ -118,26 +131,50 @@ const worker = workflow(
         const info = JSON.parse(await gh("repo", "view", repository, "--json", "defaultBranchRef"));
         const base: string | undefined = info.defaultBranchRef?.name;
         if (!base) throw new Error("GitHub repository has no default branch");
-        return { repository, base, number };
+        const originRef = `refs/remotes/origin/${base}`;
+        await git("fetch", "--no-tags", "--", "origin", `+refs/heads/${base}:${originRef}`);
+        const baseHead = await git("rev-parse", "--verify", `${originRef}^{commit}`);
+        return { repository, base, number, baseHead };
       }),
     );
-    const { repository, base, number } = scope;
+    const { repository, base, number, baseHead } = scope;
     const issue = { project, url };
-    const detail = yield* within(
+    const claim = store.entry(
+      `issue-pipeline/claims/${repository}/${number}`,
+      Schema.Struct({ runId: Schema.String, applied: Schema.Boolean }),
+    );
+    const admitted = yield* within(
       `issue-pipeline/${repository}/${number}`,
       { limit: 1 },
-      Effect.gen(function* () {
-        const current = yield* step("admission", { returns: T3.IssueDetail }, issues.read(issue));
-        if (
-          !current.writable ||
-          current.state.category !== "open" ||
-          !eligible(current.state.name, current.labels)
-        )
-          return yield* skip("Issue is no longer eligible");
-        yield* step("in-progress", { returns: Schema.Void }, issues.setState(issue, "In progress"));
-        return current;
-      }),
+      step.try(
+        "admission",
+        { returns: Schema.NullOr(T3.IssueDetail) },
+        Effect.gen(function* () {
+          const current = yield* issues.read(issue);
+          if (!current.writable || current.state.category !== "open") return null;
+          const previous = Option.getOrUndefined(yield* claim.get);
+          switch (claimDecision(current.state.name, current.labels, run.id, previous)) {
+            case "skip":
+              return null;
+            case "resume":
+              return current;
+            case "uncertain":
+              return yield* Effect.fail(
+                new Error("The previous In progress write could not be confirmed"),
+              );
+            case "claim":
+              yield* claim.set({ runId: run.id, applied: false });
+              yield* issues.setState(issue, "In progress");
+              yield* claim.set({ runId: run.id, applied: true });
+              return current;
+          }
+        }),
+      ),
     );
+    if (admitted.outcome === "failed")
+      return yield* handoff("admission-blocked", "Could not claim the issue", admitted.reason);
+    const detail = admitted.value;
+    if (!detail) return yield* skip("Issue is no longer eligible");
     yield* subject(detail);
     yield* title(`${repository} #${number} ${detail.title}`);
 
@@ -146,7 +183,7 @@ const worker = workflow(
       project,
       issue,
       model: { instanceId: "codex", model: "gpt-6.2-sol" },
-      workspace: { type: "worktree", baseRef: base, startFromOrigin: true, branch },
+      workspace: { type: "worktree", baseRef: baseHead, branch },
       runtimeMode: "full-access",
       timeout: "30 minutes",
       brief: `Implement GitHub issue ${url} in the provided worktree. Read its body and comments for requirements. Follow repository instructions and run the relevant focused tests. Commit the change on the provided branch and leave the worktree clean. The workflow owns publication and GitHub state. Keep all changes local and report the commit and checks.`,
@@ -172,12 +209,14 @@ const worker = workflow(
         Effect.tryPromise(async (signal) => {
           const { git, run } = commands(worktree, signal);
           const head = await git("rev-parse", "HEAD");
+          await git("merge-base", "--is-ancestor", baseHead, head);
           const patch = await run("git", [
             "diff",
             "--no-ext-diff",
             "--no-textconv",
             "--binary",
-            `origin/${base}...${head}`,
+            baseHead,
+            head,
           ]);
           if (!patch || patch.length > 120_000)
             throw new Error(
@@ -261,8 +300,6 @@ ${patch}`,
             repository,
             "--state",
             "all",
-            "--base",
-            base,
             "--head",
             branch,
             "--json",
@@ -292,50 +329,103 @@ ${patch}`,
       return yield* handoff("pr-blocked", "Could not open the reviewed PR", opened.reason);
     const pr = opened.value;
 
-    const standing = yield* pullRequests.wait(
-      "ci",
-      { project, url: pr },
-      { until: "checks", timeout: "1 hour" },
-    );
-    const merged = yield* step.try(
-      "merge-reviewed-head",
-      { returns: Schema.Void },
+    const address = { project, url: pr };
+    const target = { base, head };
+    const [owner, name] = repository.split("/");
+    const prNumber = pr.split("/").at(-1);
+    const github = (signal: AbortSignal) => {
+      const { gh } = commands(project, signal);
+      const graphql = (query: string, ...args: string[]) =>
+        gh("api", "graphql", "--hostname", "github.com", "-f", `query=${query}`, ...args);
+      const read = async () => {
+        const response = JSON.parse(
+          await graphql(
+            reviewedPullRequestQuery,
+            "-f",
+            `owner=${owner}`,
+            "-f",
+            `name=${name}`,
+            "-F",
+            `number=${prNumber}`,
+            "-f",
+            `head=${head}`,
+          ),
+        );
+        const policy = response.data.repository;
+        return {
+          pr: policy.pullRequest,
+          status: policy.object?.statusCheckRollup?.state ?? null,
+          policy,
+        };
+      };
+      return { graphql, read };
+    };
+
+    const standing = yield* pullRequests.wait("ci", address, {
+      until: "checks",
+      timeout: "1 hour",
+    });
+    const submission = yield* step.try(
+      "submit-reviewed-head",
+      { returns: Schema.Literals(["merged", "queued", "submitted"]) },
       Effect.tryPromise(async (signal) => {
         if (Option.isNone(standing)) throw new Error("Timed out waiting for CI");
         if (standing.value.state !== "merged" && standing.value.checks !== "passing") {
           throw new Error(`CI on the reviewed PR is ${standing.value.checks}`);
         }
-        const { gh } = commands(project, signal);
-        const [owner, name] = repository.split("/");
-        await mergeReviewed(
-          async () => JSON.parse(await gh("pr", "view", pr, "--json", "state,headRefOid")),
-          async () =>
-            JSON.parse(
-              await gh(
-                "api",
-                "graphql",
-                "-f",
-                "query=query($owner:String!,$name:String!,$head:GitObjectID!){repository(owner:$owner,name:$name){object(oid:$head){... on Commit{statusCheckRollup{state}}}}}",
-                "-f",
-                `owner=${owner}`,
-                "-f",
-                `name=${name}`,
-                "-f",
-                `head=${head}`,
-                "--jq",
-                ".data.repository.object.statusCheckRollup.state | tojson",
-              ),
-            ),
-          (expected) => gh("pr", "merge", pr, "--squash", "--match-head-commit", expected),
-          head,
+        const { graphql, read } = github(signal);
+        return submitReviewed(
+          read,
+          (id, expected, method) =>
+            method === "QUEUE"
+              ? graphql(
+                  "mutation($id:ID!,$head:GitObjectID!){enqueuePullRequest(input:{pullRequestId:$id,expectedHeadOid:$head}){mergeQueueEntry{id}}}",
+                  "-f",
+                  `id=${id}`,
+                  "-f",
+                  `head=${expected}`,
+                )
+              : graphql(
+                  "mutation($id:ID!,$head:GitObjectID!,$method:PullRequestMergeMethod!){mergePullRequest(input:{pullRequestId:$id,expectedHeadOid:$head,mergeMethod:$method}){pullRequest{id}}}",
+                  "-f",
+                  `id=${id}`,
+                  "-f",
+                  `head=${expected}`,
+                  "-f",
+                  `method=${method}`,
+                ),
+          target,
         );
       }),
     );
-    if (merged.outcome === "failed")
+    if (submission.outcome === "failed")
       return yield* handoff(
         "merge-blocked",
         "The reviewed PR needs a decision",
-        `${pr}\n${merged.reason}`,
+        `${pr}\n${submission.reason}`,
+      );
+
+    if (submission.value === "queued") {
+      const queued = yield* pullRequests.wait("merge-queue", address, {
+        until: "merged",
+        timeout: "2 hours",
+      });
+      if (Option.isNone(queued))
+        return yield* handoff("queue-blocked", "The PR did not finish in the merge queue", pr);
+    }
+
+    const verified = yield* step.try(
+      "verify-reviewed-merge",
+      { returns: Schema.Void },
+      Effect.tryPromise(async (signal) =>
+        verifyReviewedMerge((await github(signal).read()).pr, target),
+      ),
+    );
+    if (verified.outcome === "failed")
+      return yield* handoff(
+        "merge-unverified",
+        "Could not verify the reviewed merge",
+        `${pr}\n${verified.reason}`,
       );
 
     yield* step("done", { returns: Schema.Void }, issues.setState(issue, "Done"));
@@ -353,8 +443,9 @@ workflow(
   },
   Effect.fn(function* () {
     const selected: string[] = [];
+    const failures: Array<{ project: string; reason: string }> = [];
     for (const [index, project] of projects.entries()) {
-      const started = yield* step(
+      const started = yield* step.try(
         `admit-${index}`,
         { returns: Schema.Array(Schema.String) },
         Effect.gen(function* () {
@@ -364,6 +455,8 @@ workflow(
             const output = await gh(
               "api",
               "graphql",
+              "--hostname",
+              "github.com",
               "--paginate",
               "-f",
               `query=${candidatesQuery}`,
@@ -397,8 +490,9 @@ workflow(
           return result;
         }),
       );
-      selected.push(...started);
+      if (started.outcome === "done") selected.push(...started.value);
+      else failures.push({ project, reason: started.reason });
     }
-    return selected;
+    return { selected, failures };
   }),
 );

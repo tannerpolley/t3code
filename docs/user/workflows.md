@@ -185,7 +185,8 @@ The poll runs each minute. Todo issues with a **Needs you** or **Needs orchestra
 stay out of the queue. Up to four issues run at a time, configurable with
 `T3_ISSUE_PIPELINE_LIMIT`. An implementation runs in its own worktree and a fresh agent
 reviews each committed revision. When local checks pass, the workflow opens a PR and waits
-for GitHub CI. It squash-merges only at the reviewed commit after CI is green.
+for GitHub CI. It merges only at the reviewed commit after CI is green, using the
+repository’s merge queue when required.
 
 A blocked review, local check, publication, or merge opens a question on the Workflows page
 with the details. The question lets you acknowledge the handoff. The issue stays In progress

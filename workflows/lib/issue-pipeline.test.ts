@@ -2,10 +2,12 @@ import { describe, expect, it, vi } from "vite-plus/test";
 
 import {
   admissionKey,
+  claimDecision,
   eligible,
   githubRepository,
   issueNumber,
-  mergeReviewed,
+  submitReviewed,
+  verifyReviewedMerge,
 } from "./issue-pipeline.ts";
 
 describe("issue pipeline admission", () => {
@@ -24,6 +26,21 @@ describe("issue pipeline admission", () => {
     expect(admissionKey(url, { id: "one", status: "skipped" })).toBe(url + "/one");
   });
 
+  it("rechecks holds and recognizes only the current run's confirmed claim", () => {
+    const applied = { runId: "first", applied: true };
+    expect(claimDecision("Backlog", [], "first", applied)).toBe("skip");
+    expect(claimDecision("Todo", [{ name: "Needs you" }], "first", applied)).toBe("skip");
+    expect(claimDecision("In progress", [{ name: "Needs orchestrator" }], "first", applied)).toBe(
+      "skip",
+    );
+    expect(claimDecision("In progress", [], "later", applied)).toBe("skip");
+    expect(claimDecision("In progress", [], "first", applied)).toBe("resume");
+    expect(claimDecision("In progress", [], "first", { ...applied, applied: false })).toBe(
+      "uncertain",
+    );
+    expect(claimDecision("Todo", [], "later", applied)).toBe("claim");
+  });
+
   it("rejects foreign issue URLs and multiple push destinations", () => {
     const repository = githubRepository("git@github.com:Owner/Repo.git");
     expect(issueNumber("https://github.com/Owner/Repo/issues/42", repository)).toBe("42");
@@ -35,42 +52,76 @@ describe("issue pipeline admission", () => {
 });
 
 describe("reviewed PR merge", () => {
+  const target = { base: "main", head: "reviewed" };
+  const opened = {
+    id: "pull-request",
+    state: "OPEN",
+    baseRefName: target.base,
+    headRefOid: target.head,
+    isInMergeQueue: false,
+    isMergeQueueEnabled: false,
+  };
+  const policy = { squashMergeAllowed: true, rebaseMergeAllowed: true, mergeCommitAllowed: true };
+
   it.each([null, "FAILURE", "PENDING"])("blocks a merge when CI reports %s", async (status) => {
-    const merge = vi.fn();
+    const submit = vi.fn();
     await expect(
-      mergeReviewed(
-        async () => ({ state: "OPEN", headRefOid: "reviewed" }),
-        async () => status,
-        merge,
-        "reviewed",
-      ),
+      submitReviewed(async () => ({ pr: opened, status, policy }), submit, target),
     ).rejects.toThrow("CI");
-    expect(merge).not.toHaveBeenCalled();
+    expect(submit).not.toHaveBeenCalled();
   });
 
-  it("rejects a PR whose head moved even when CI is green", async () => {
-    const merge = vi.fn();
+  it.each([
+    [{ ...opened, headRefOid: "new" }, "head changed"],
+    [{ ...opened, baseRefName: "release" }, "target branch changed"],
+    [{ ...opened, baseRefName: "release", state: "MERGED" }, "target branch changed"],
+  ] as const)("blocks publication and closeout after head or target drift", async (pr, message) => {
+    const submit = vi.fn();
     await expect(
-      mergeReviewed(
-        async () => ({ state: "OPEN", headRefOid: "new" }),
-        async () => "SUCCESS",
-        merge,
-        "reviewed",
-      ),
-    ).rejects.toThrow("head changed");
-    expect(merge).not.toHaveBeenCalled();
+      submitReviewed(async () => ({ pr, status: "SUCCESS", policy }), submit, target),
+    ).rejects.toThrow(message);
+    expect(submit).not.toHaveBeenCalled();
+    expect(() => verifyReviewedMerge(pr, target)).toThrow(message);
   });
 
-  it("passes the reviewed head to merge, verifies it, and does not merge again on retry", async () => {
-    let state = "OPEN";
-    const merge = vi.fn(async () => {
-      state = "MERGED";
-    });
-    const read = async () => ({ state, headRefOid: "reviewed" });
-    const check = async () => "SUCCESS";
+  it("uses an enabled merge method with the reviewed head and verifies the result", async () => {
+    const submit = vi.fn();
+    const allowed = { ...policy, squashMergeAllowed: false };
+    const merged = { ...opened, state: "MERGED" };
+    await expect(
+      submitReviewed(
+        async () => ({ pr: opened, status: "SUCCESS", policy: allowed }),
+        submit,
+        target,
+      ),
+    ).resolves.toBe("submitted");
+    await expect(
+      submitReviewed(
+        async () => ({ pr: merged, status: "SUCCESS", policy: allowed }),
+        submit,
+        target,
+      ),
+    ).resolves.toBe("merged");
+    expect(submit.mock.calls).toEqual([["pull-request", "reviewed", "REBASE"]]);
+    expect(() => verifyReviewedMerge(merged, target)).not.toThrow();
+  });
 
-    await mergeReviewed(read, check, merge, "reviewed");
-    await mergeReviewed(read, check, merge, "reviewed");
-    expect(merge.mock.calls).toEqual([["reviewed"]]);
+  it("enqueues at the reviewed head once and requires the PR to finish merging before closeout", async () => {
+    const submit = vi.fn();
+    const queueRequired = { ...opened, isMergeQueueEnabled: true };
+    const queued = { ...queueRequired, isInMergeQueue: true };
+    await expect(
+      submitReviewed(
+        async () => ({ pr: queueRequired, status: "SUCCESS", policy }),
+        submit,
+        target,
+      ),
+    ).resolves.toBe("queued");
+    await expect(
+      submitReviewed(async () => ({ pr: queued, status: "SUCCESS", policy }), submit, target),
+    ).resolves.toBe("queued");
+    expect(submit.mock.calls).toEqual([["pull-request", "reviewed", "QUEUE"]]);
+    expect(() => verifyReviewedMerge(queued, target)).toThrow("could not be verified");
+    expect(() => verifyReviewedMerge({ ...queued, state: "MERGED" }, target)).not.toThrow();
   });
 });
