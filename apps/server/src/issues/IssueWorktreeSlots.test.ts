@@ -125,7 +125,7 @@ it.live("reuses a prepared slot from the fetched default and preserves unsafe sl
     assert.equal(yield* fs.readFileString(path.join(slot, "tracked")), "unsaved");
     yield* run(slot, "update-index", "--no-assume-unchanged", "tracked");
     yield* run(slot, "restore", "tracked");
-    const unknownArtifact = path.join(slot, ".t3", "setup-done");
+    const unknownArtifact = path.join(slot, ".t3", "setup-running");
     yield* fs.writeFileString(unknownArtifact, "do not delete");
     assert.equal(
       yield* release(slot, slotBranch),
@@ -138,7 +138,10 @@ it.live("reuses a prepared slot from the fetched default and preserves unsafe sl
     assert.equal(yield* release(slot, slotBranch), "has a .t3 artifact that overlaps a keep path");
     assert.isTrue(yield* fs.exists(path.join(keptArtifact, ".git")));
     yield* fs.rename(keptArtifact, path.join(slot, ".venv", "kept-artifact"));
+    const setupDone = path.join(slot, ".t3", "setup-done");
+    yield* fs.writeFileString(setupDone, "");
     assert.isNull(yield* release(slot, slotBranch));
+    assert.isFalse(yield* fs.exists(setupDone));
     yield* run(surplus, "switch", "--detach", "origin/main");
     assert.isNull(yield* release(surplus, surplusBranch));
     claims.clear();

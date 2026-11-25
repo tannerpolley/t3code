@@ -31,6 +31,8 @@ const slotArtifacts = new Set([
   "scenarios-second-environment",
   "writer-preview",
 ]);
+// Finished setup markers; `setup-running` still blocks release while setup may be live.
+const slotMarkers = new Set(["setup-done", "setup-failed"]);
 
 export function isIssueWorktreeSlot(path: Path.Path, worktree: string): boolean {
   return (
@@ -191,9 +193,10 @@ const make = Effect.gen(function* () {
     if (stat.type !== "Directory") return ".t3 is not a directory";
     const keep = base.keep.map((entry) => entry.toLowerCase());
     for (const entry of yield* fs.readDirectory(directory)) {
+      const type = (yield* lstatIfPresent(path.join(directory, entry)))?.type;
       if (
-        !slotArtifacts.has(entry) ||
-        (yield* lstatIfPresent(path.join(directory, entry)))?.type !== "Directory"
+        !(slotArtifacts.has(entry) && type === "Directory") &&
+        !(slotMarkers.has(entry) && type === "File")
       )
         return "has local files in .t3 outside the known artifact directories";
       const name = `.t3/${entry}`;
