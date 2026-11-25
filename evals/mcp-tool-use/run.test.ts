@@ -1528,6 +1528,13 @@ it("grades the Writer's choice to ask or edit across question formats", () => {
   assert.isFalse(passes(conflict, { ...mcp, failed: true }));
   assert.isFalse(passes(conflict, write, mcp));
   assert.isFalse(passes(conflict, shellEdit, codex));
+  for (const command of [
+    "cat paper.md",
+    "cat -n paper.md",
+    "head -n 20 paper.md",
+    "wc -l paper.md",
+  ])
+    assert.isTrue(passes(conflict, { tool: "Bash", input: { command }, failed: false }, codex));
 
   const explicit = "writer-explicit-revision";
   assert.isTrue(passes(explicit, write));
