@@ -8928,7 +8928,7 @@
   "93c4c53562d30a98": "When you ask, agents show you a short report about T3 Code and send it to the T3 team if you approve.",
   "cd9ee803e8727017": "Agents also report T3 Code problems they hit on their own, such as a T3 tool that failed.",
   "45fa271ea0e1ac8e": "Beta",
-  "3a678332fc7142f7": "Group sidebar threads into project folders. Pinned threads stay on top, and Snoozed and Settled stay below the folders.",
+  "4794257eb633d9ba": "Group sidebar threads into project folders and custom sections. Threads keep their order when they work, snooze, or settle.",
   "e4e91d155cb6a9b4": "Boring sidebar (group by project)",
   "f079556d67367fe7": "Show folder threads on two lines: the title, then the branch, pull request, and agent.",
   "ac1e5c94d1ad3c6a": "Two-line folder rows",
@@ -12995,5 +12995,15 @@
   "99451a5d2d40440f": "Withdrawn by {by}.",
   "3ee30a50b70fffab": "Withdrawn by {by}: {reason}",
   "92e129bf413a1220": "withdrawn",
-  "800966eb58181745": "Checking which languages the model supports…"
+  "800966eb58181745": "Checking which languages the model supports…",
+  "cef42f1eea1b516e": "Move to section on {environment}",
+  "53215a0961be77a6": "Move to section",
+  "73a4bafa48c244aa": "New section",
+  "5fd5eaf0499d5247": "Remove from section",
+  "74f489e47ca59e05": "Rename section",
+  "cd9047bb4c235453": "Delete section",
+  "54d9df5245fa49a7": "Could not save sidebar layout. Try again.",
+  "7070d28e490778c2": "Section name",
+  "7c95a36da22a5eff": "New section",
+  "e0d0ac58b0ddb151": "Rename section"
 }

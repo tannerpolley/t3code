@@ -6,6 +6,7 @@ import {
   AuthSettingsWriteScope,
   AuthAccessWriteScope,
   DEFAULT_SERVER_SETTINGS,
+  EMPTY_SIDEBAR_LAYOUT,
   EnvironmentId,
   ProviderDriverKind,
   ProviderInstanceId,
@@ -165,6 +166,42 @@ describe("RPC scope middleware", () => {
     }),
   );
 });
+
+it.effect(
+  "allows thread operators to read shared sidebar layout but requires settings write to edit it",
+  () =>
+    Effect.gen(function* () {
+      const tested = [WS_METHODS.subscribeSidebarLayout, WS_METHODS.sidebarLayoutUpdate] as const;
+      const group = WsRpcGroup.omit(
+        ...[...WsRpcGroup.requests.keys()].filter(
+          (tag): tag is Exclude<keyof typeof RPC_REQUIRED_SCOPES, (typeof tested)[number]> =>
+            !(tested as ReadonlyArray<string>).includes(tag),
+        ),
+      );
+      const record = { revision: 2, layout: EMPTY_SIDEBAR_LAYOUT };
+      const client = yield* RpcTest.makeClient(group).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            group.toLayerHandler(WS_METHODS.subscribeSidebarLayout, () => Stream.succeed(record)),
+            group.toLayerHandler(WS_METHODS.sidebarLayoutUpdate, () => Effect.succeed(record)),
+            RpcAuthorization.layer([AuthOrchestrationReadScope, AuthOrchestrationOperateScope]),
+          ),
+        ),
+      );
+      expect(yield* client[WS_METHODS.subscribeSidebarLayout]({}).pipe(Stream.runCollect)).toEqual([
+        record,
+      ]);
+      expect(
+        yield* client[WS_METHODS.sidebarLayoutUpdate]({
+          revision: 2,
+          mutation: { type: "delete", sectionId: "shared" },
+        }).pipe(Effect.flip),
+      ).toMatchObject({
+        _tag: "EnvironmentAuthorizationError",
+        requiredPermission: AuthSettingsWriteScope,
+      });
+    }),
+);
 
 it.effect("allows issue reads but requires a source-control grant before commenting", () =>
   Effect.gen(function* () {

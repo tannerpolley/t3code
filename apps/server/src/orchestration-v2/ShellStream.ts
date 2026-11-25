@@ -9,6 +9,8 @@ import type {
   OrchestrationV2ShellStreamItem,
   OrchestrationV2StoredEvent,
   ProjectId,
+  SidebarLayoutError,
+  SidebarLayoutRecord,
   ThreadId,
 } from "@t3tools/contracts";
 import {
@@ -266,6 +268,7 @@ function omitOlderSettledShellsWith(
     readonly threads: ReadonlyArray<OrchestrationV2ThreadShell>;
     readonly snapshotSequence: number;
     readonly now: DateTime.Utc;
+    readonly placedThreadIds?: ReadonlySet<string>;
   },
   facts: Pick<
     ShellTrimFacts,
@@ -281,6 +284,7 @@ function omitOlderSettledShellsWith(
   const threads = input.threads.filter(
     (thread) =>
       !isOlderSettledThreadShell(thread, beforeMs) ||
+      input.placedThreadIds?.has(thread.id) ||
       thread.pinnedAt != null ||
       (thread.snoozedUntil != null && DateTime.toEpochMillis(thread.snoozedUntil) > nowMs) ||
       isLiveSubagentShell(thread) ||
@@ -347,6 +351,7 @@ export function omitOlderSettledShells(input: {
 interface ShellSubscriberOptions {
   readonly omitIdleSubagents: boolean;
   readonly omitOlderSettled: boolean;
+  readonly placedThreadIds?: ReadonlySet<string>;
 }
 
 function trimShellSnapshot(
@@ -359,7 +364,7 @@ function trimShellSnapshot(
     : base.threads;
   if (!options.omitOlderSettled) return { ...base, threads };
   const older = omitOlderSettledShellsWith(
-    { threads, snapshotSequence: base.snapshotSequence, now: options.now },
+    { ...options, threads, snapshotSequence: base.snapshotSequence },
     facts,
   );
   return { ...base, threads: older.threads, olderSettled: older.olderSettled };
@@ -396,6 +401,7 @@ function shellSubscriberThreadIds(
       : !options.omitOlderSettled ||
           beforeMs === undefined ||
           !isOlderSettledThreadShell(entry, beforeMs) ||
+          options.placedThreadIds?.has(entry.id) ||
           entry.pinnedAt != null ||
           entry.snoozedUntil != null ||
           entry.mayBeLive ||
@@ -419,6 +425,7 @@ export const loadSubscriberShellSnapshot = Effect.fn("ShellStream.loadSubscriber
     ) => Effect.Effect<Effect.Effect<OrchestrationV2ThreadShellSnapshot, E3>, E2>;
     readonly listProjects: Effect.Effect<ReadonlyArray<OrchestrationProjectShell>, E4>;
     readonly latestSequence: Effect.Effect<number, E5>;
+    readonly readSidebarLayout: Effect.Effect<SidebarLayoutRecord | null, SidebarLayoutError>;
     readonly options: ShellSubscriberOptions;
   }) {
     const trims = input.options.omitIdleSubagents || input.options.omitOlderSettled;
@@ -426,10 +433,19 @@ export const loadSubscriberShellSnapshot = Effect.fn("ShellStream.loadSubscriber
       .withTransaction(
         Effect.gen(function* () {
           const index = trims ? yield* input.listShellIndex : null;
+          const layout = input.options.omitOlderSettled
+            ? yield* input.readSidebarLayout.pipe(Effect.orElseSucceed(() => null))
+            : null;
+          const ranks = layout?.layout.threadRanks;
+          const options =
+            ranks === undefined
+              ? input.options
+              : { ...input.options, placedThreadIds: new Set(Object.keys(ranks)) };
           return {
             index,
+            options,
             decodeThreads: yield* input.readThreads(
-              index === null ? undefined : shellSubscriberThreadIds(index, input.options),
+              index === null ? undefined : shellSubscriberThreadIds(index, options),
             ),
             projects: yield* input.listProjects,
             snapshotSequence: yield* input.latestSequence,
@@ -444,7 +460,7 @@ export const loadSubscriberShellSnapshot = Effect.fn("ShellStream.loadSubscriber
     });
     const facts = shellTrimFacts(read.index ?? base.threads);
     return {
-      snapshot: trimShellSnapshot(base, facts, { ...input.options, now: yield* DateTime.now }),
+      snapshot: trimShellSnapshot(base, facts, { ...read.options, now: yield* DateTime.now }),
       subagentThreadIds: facts.subagentThreadIds,
     };
   },

@@ -72,6 +72,7 @@ import * as Ws from "./ws.ts";
 import { RpcGroup, RpcMessage, RpcServer } from "effect/rpc";
 import * as RpcTest from "effect/rpc/RpcTest";
 import * as SqlClient from "effect/sql/SqlClient";
+import * as SidebarLayout from "./sidebarLayout.ts";
 import * as Statement from "effect/sql/Statement";
 import { vi } from "vite-plus/test";
 
@@ -755,11 +756,30 @@ it.effect("shell snapshots omit idle children and older settled threads only on 
       shell("remote-parent", null, null, 40),
       shell("remote-child-parent", "parent", null),
     ];
-    const firstSnapshot = (input: {
-      readonly omitIdleSubagents?: boolean;
-      readonly omitOlderSettled?: boolean;
-    }) =>
-      subscribeOrchestrationV2Shell(input).pipe(
+    const firstSnapshot = (
+      input: {
+        readonly omitIdleSubagents?: boolean;
+        readonly omitOlderSettled?: boolean;
+      },
+      keepPlaced = false,
+    ) =>
+      subscribeOrchestrationV2Shell(
+        input,
+        keepPlaced
+          ? {
+              get: Effect.succeed({
+                revision: 1,
+                layout: {
+                  sidebarProjectSections: [],
+                  projectExpandedById: {},
+                  projectOrder: [],
+                  sidebarOtherProjectsExpanded: true,
+                  threadRanks: { [ThreadId.make("old")]: "m" },
+                },
+              }),
+            }
+          : undefined,
+      ).pipe(
         Effect.flatMap((stream) => stream.pipe(Stream.take(1), Stream.runCollect)),
         Effect.map(([item]) => (item?.kind === "snapshot" ? item.snapshot : null)),
         Effect.provideService(ThreadManagement.ThreadManagementService, {
@@ -826,11 +846,20 @@ it.effect("shell snapshots omit idle children and older settled threads only on 
     assert.deepEqual(withoutOld?.olderSettled?.counts, [
       { projectId: ProjectId.make("project"), count: 2 },
     ]);
+    const withPlaced = yield* firstSnapshot(
+      { omitIdleSubagents: true, omitOlderSettled: true },
+      true,
+    );
+    assert.deepEqual(
+      withPlaced?.threads.map((thread) => thread.id),
+      ["parent", "live", ...recent, "old", "remote-parent", "remote-child-parent"],
+    );
   }).pipe(Effect.scoped, Effect.provide(ReplayTestLayer)),
 );
 
 // Build the production RPC layer; unrelated capabilities fail if this test calls them.
 const layerUnusedConfigRpcServices = Layer.mergeAll(
+  Layer.mock(SidebarLayout.SidebarLayoutService)({}),
   Layer.mock(DocumentText.DocumentText)({}),
   Layer.mock(ServerSecretStore.ServerSecretStore)({}),
   Layer.mock(SecretCheck.SecretCheck)({}),

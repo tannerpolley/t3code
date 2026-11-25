@@ -42,6 +42,7 @@ import {
   ChatGptHandoffState,
 } from "./providerSetup.ts";
 import * as Schema from "effect/Schema";
+import { SidebarLayoutError, SidebarLayoutRecord, SidebarLayoutUpdate } from "./sidebarLayout.ts";
 import * as Rpc from "effect/rpc/Rpc";
 import * as RpcGroup from "effect/rpc/RpcGroup";
 import * as RpcMiddleware from "effect/rpc/RpcMiddleware";
@@ -742,6 +743,8 @@ export const WS_METHODS = {
   subscribeDiscoveredLocalServers: "subscribeDiscoveredLocalServers",
   subscribeDeviceState: "subscribeDeviceState",
   subscribeServerConfig: "subscribeServerConfig",
+  subscribeSidebarLayout: "sidebarLayout.subscribe",
+  sidebarLayoutUpdate: "sidebarLayout.update",
   subscribeServerLifecycle: "subscribeServerLifecycle",
   subscribeAuthAccess: "subscribeAuthAccess",
   subscribeResourceTelemetry: "subscribeResourceTelemetry",
@@ -2301,6 +2304,19 @@ const WsSubscribeTerminalMetadataRpc = Rpc.make(WS_METHODS.subscribeTerminalMeta
   stream: true,
 });
 
+const WsSubscribeSidebarLayoutRpc = Rpc.make(WS_METHODS.subscribeSidebarLayout, {
+  payload: Schema.Struct({}),
+  success: SidebarLayoutRecord,
+  error: SidebarLayoutError,
+  stream: true,
+});
+
+const WsSidebarLayoutUpdateRpc = Rpc.make(WS_METHODS.sidebarLayoutUpdate, {
+  payload: SidebarLayoutUpdate,
+  success: SidebarLayoutRecord,
+  error: SidebarLayoutError,
+});
+
 export const WsSubscribeServerConfigRpc = Rpc.make(WS_METHODS.subscribeServerConfig, {
   payload: Schema.Struct({
     /** Opt-in protects older clients that reject unknown theme event types. */
@@ -2719,6 +2735,8 @@ export const WsRpcGroup = RpcGroup.make(
   WsDeviceActionRpc,
   WsSubscribeDeviceStateRpc,
   WsSubscribeServerConfigRpc,
+  WsSubscribeSidebarLayoutRpc,
+  WsSidebarLayoutUpdateRpc,
   WsSubscribeServerLifecycleRpc,
   WsSubscribeAuthAccessRpc,
   WsSubscribeResourceTelemetryRpc,

@@ -8919,7 +8919,7 @@
   "93c4c53562d30a98": "À votre demande, les agents vous présentent un court rapport sur T3 Code et l'envoient à l'équipe T3 si vous l'approuvez.",
   "cd9ee803e8727017": "Les agents signalent aussi spontanément les problèmes qu'ils rencontrent dans T3 Code, comme un outil T3 qui échoue.",
   "45fa271ea0e1ac8e": "Bêta",
-  "3a678332fc7142f7": "Regroupe les fils de la barre latérale dans des dossiers de projet. Les fils épinglés restent en haut, les fils reportés et clos restent sous les dossiers.",
+  "4794257eb633d9ba": "Regroupez les fils de la barre latérale dans des dossiers de projet et des sections personnalisées. Les fils gardent leur ordre lorsqu’ils sont actifs, mis en veille ou terminés.",
   "e4e91d155cb6a9b4": "Barre latérale classique (regrouper par projet)",
   "f079556d67367fe7": "Affiche les fils des dossiers sur deux lignes : le titre, puis la branche, la pull request et l’agent.",
   "ac1e5c94d1ad3c6a": "Lignes de dossier sur deux lignes",
@@ -12986,5 +12986,15 @@
   "99451a5d2d40440f": "Retirée par {by}.",
   "3ee30a50b70fffab": "Retirée par {by} : {reason}",
   "92e129bf413a1220": "retirée",
-  "800966eb58181745": "Vérification des langues prises en charge par le modèle…"
+  "800966eb58181745": "Vérification des langues prises en charge par le modèle…",
+  "cef42f1eea1b516e": "Déplacer vers une section sur {environment}",
+  "53215a0961be77a6": "Déplacer vers une section",
+  "73a4bafa48c244aa": "Nouvelle section",
+  "5fd5eaf0499d5247": "Retirer de la section",
+  "74f489e47ca59e05": "Renommer la section",
+  "cd9047bb4c235453": "Supprimer la section",
+  "54d9df5245fa49a7": "Impossible d’enregistrer la disposition de la barre latérale. Réessayez.",
+  "7070d28e490778c2": "Nom de la section",
+  "7c95a36da22a5eff": "Nouvelle section",
+  "e0d0ac58b0ddb151": "Renommer la section"
 }
