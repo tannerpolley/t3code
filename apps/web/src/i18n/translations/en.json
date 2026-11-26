@@ -13014,5 +13014,21 @@
   "7aa202a739c5f90d": "Applies on the next turn to Codex threads and workers using the default. Models use the fastest supported speed up to your choice.",
   "afecbf6b765a2fb0": "Ultra fast",
   "e2a5cf66eeec090e": "Default speed",
-  "e351e22d0be49f2b": "Codex speed: {speed} on {environment}"
+  "e351e22d0be49f2b": "Codex speed: {speed} on {environment}",
+  "e2555840cd6b2d65": "Orchestrator",
+  "3beea516f473b63b": "Designer",
+  "219dddeccb47a07d": "Implementor",
+  "985148ecc83b5671": "Reviewer",
+  "2d3330cb24e41e36": "Writer",
+  "0c23bbe7f6469013": "Routine",
+  "d460d2133155a484": "Complex",
+  "4a622dbb8417d547": "Model role presets",
+  "d0aa2973512c3206": "{role} · {level}",
+  "ffaaea2ba6dcba1f": "Inherit parent model",
+  "01bc92c289dbdd0c": "Model for {preset}",
+  "ffc5b096865720b0": "Effort for {preset}",
+  "62f1e3953c9dbbcd": "Default effort",
+  "dc973cc9e1ab2e93": "Clear preset for {preset}",
+  "68e7321d3f3c2390": "Delegated tasks use these presets when the caller specifies a role without a target.",
+  "681416f3db331ab9": "Clear preset"
 }

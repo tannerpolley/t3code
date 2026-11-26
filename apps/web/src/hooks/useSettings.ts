@@ -268,7 +268,10 @@ export async function persistClientSettingsUpdate(
   });
 }
 
-const SERVER_SETTINGS_KEYS = new Set<string>(Struct.keys(ServerSettings.fields));
+const SERVER_SETTINGS_KEYS = new Set<string>([
+  ...Struct.keys(ServerSettings.fields),
+  "setModelRole",
+]);
 
 function splitPatch(patch: UnifiedSettingsPatch): {
   serverPatch: ServerSettingsPatch;

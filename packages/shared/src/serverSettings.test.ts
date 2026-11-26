@@ -33,6 +33,36 @@ const decodeServerSettingsPatch = Schema.decodeUnknownSync(ServerSettingsPatch);
 
 const FOLDED_SERVER_SETTINGS = { ...DEFAULT_SERVER_SETTINGS, projectSettingsFolded: true };
 
+describe("model role presets", () => {
+  it("preserves archived entries and replaces one role level at a time", () => {
+    const legacy = { provider: "both", tier: 2, effort: "medium" };
+    const current = decodeServerSettings({ modelRoles: { reviewer: { complex: legacy } } });
+    const patch = decodeServerSettingsPatch({
+      setModelRole: {
+        role: "reviewer",
+        level: "routine",
+        selection: { instanceId: "codex", model: "gpt-5.4", options: { reasoningEffort: "high" } },
+      },
+    });
+    const updated = applyServerSettingsPatch(current, patch);
+    expect(updated.modelRoles.reviewer).toEqual({
+      complex: legacy,
+      routine: {
+        instanceId: "codex",
+        model: "gpt-5.4",
+        options: [{ id: "reasoningEffort", value: "high" }],
+      },
+    });
+    const clear = decodeServerSettingsPatch({
+      setModelRole: { role: "reviewer", level: "routine", selection: null },
+    });
+    expect(applyServerSettingsPatch(updated, clear).modelRoles.reviewer).toEqual({
+      complex: legacy,
+      routine: null,
+    });
+  });
+});
+
 describe("fallbackTextGenerationModelSelection", () => {
   it("uses Big Pickle when only OpenCode is enabled", () => {
     expect(

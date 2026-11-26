@@ -903,6 +903,7 @@ const delegateToBox = (laptopEnv: Effect.Success<ReturnType<typeof makeLaptop>>)
   laptopEnv
     .call("delegate_task", {
       task: "Run the full suite on the box.",
+      role: "implementor",
       target: {
         environmentId: box.environmentId,
         providerInstanceId: instanceId,
@@ -996,6 +997,7 @@ it.effect("a task delegated to the box wakes the laptop's parent when it ends th
       );
       // ...naming the parent here, so the thread there links back to it.
       expect(yield* Ref.get(thread.delegatedFrom)).toEqual({
+        role: "implementor",
         environmentId: laptop.environmentId,
         threadId: parentThreadId,
         title: "Laptop parent",

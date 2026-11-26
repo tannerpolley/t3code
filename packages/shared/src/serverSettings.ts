@@ -391,6 +391,7 @@ export function applyServerSettingsPatch(
   const selectionPatch = patch.textGenerationModelSelection;
   const {
     migrateModelPreferences,
+    setModelRole,
     setModelFavorites,
     setModelsHidden,
     setProviderModelOrder,
@@ -504,6 +505,17 @@ export function applyServerSettingsPatch(
   const next = deepMerge(current, patchForMerge);
   const nextWithReplacementsBase = {
     ...next,
+    ...(setModelRole === undefined
+      ? {}
+      : {
+          modelRoles: {
+            ...current.modelRoles,
+            [setModelRole.role]: {
+              ...current.modelRoles[setModelRole.role],
+              [setModelRole.level]: setModelRole.selection,
+            },
+          },
+        }),
     favorites,
     providerModelPreferences: nextModelPreferences,
     ...(worktreeCleanupPatch === undefined

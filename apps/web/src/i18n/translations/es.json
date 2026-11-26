@@ -13000,5 +13000,21 @@
   "7aa202a739c5f90d": "Se aplica en el siguiente turno a los hilos y agentes de Codex que usan la velocidad predeterminada. Los modelos usan la velocidad más rápida disponible hasta la que elijas.",
   "afecbf6b765a2fb0": "Ultrarrápida",
   "e2a5cf66eeec090e": "Velocidad predeterminada",
-  "e351e22d0be49f2b": "Velocidad de Codex: {speed} en {environment}"
+  "e351e22d0be49f2b": "Velocidad de Codex: {speed} en {environment}",
+  "e2555840cd6b2d65": "Orquestación",
+  "3beea516f473b63b": "Diseño",
+  "219dddeccb47a07d": "Implementación",
+  "985148ecc83b5671": "Revisión",
+  "2d3330cb24e41e36": "Redacción",
+  "0c23bbe7f6469013": "Rutinaria",
+  "d460d2133155a484": "Compleja",
+  "4a622dbb8417d547": "Ajustes de modelo por rol",
+  "d0aa2973512c3206": "{role} · {level}",
+  "ffaaea2ba6dcba1f": "Heredar el modelo del hilo principal",
+  "01bc92c289dbdd0c": "Modelo para {preset}",
+  "ffc5b096865720b0": "Esfuerzo para {preset}",
+  "62f1e3953c9dbbcd": "Esfuerzo predeterminado",
+  "dc973cc9e1ab2e93": "Borrar el ajuste de {preset}",
+  "68e7321d3f3c2390": "Las tareas delegadas usan estos ajustes cuando se indica un rol sin un destino.",
+  "681416f3db331ab9": "Borrar ajuste"
 }

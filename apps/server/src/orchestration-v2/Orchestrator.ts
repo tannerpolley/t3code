@@ -4142,7 +4142,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       // Only stamped work names a remote parent, so a client cannot claim one.
       ...(command.linkOrigin === undefined || command.delegatedFrom === undefined
         ? {}
-        : { delegatedFrom: command.delegatedFrom }),
+        : {
+            delegatedFrom: {
+              environmentId: command.delegatedFrom.environmentId,
+              threadId: command.delegatedFrom.threadId,
+              title: command.delegatedFrom.title,
+            },
+            ...(command.delegatedFrom.role === undefined
+              ? {}
+              : { delegatedRole: command.delegatedFrom.role }),
+          }),
       ...(command.workflowRun === undefined ? {} : { workflowRun: command.workflowRun }),
       lineage: {
         parentThreadId: null,
@@ -10152,6 +10161,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         }),
         runtimeMode: command.runtimeMode,
         interactionMode: command.interactionMode,
+        ...(command.role === undefined ? {} : { delegatedRole: command.role }),
         ...(command.workspaceStrategy === undefined ? {} : { branch: null, worktreePath: null }),
       };
       const task: OrchestrationV2Subagent = {

@@ -108,6 +108,10 @@ const readDelegatedTaskStatusTranscript = Effect.fn("readDelegatedTaskStatusTran
     const transcript = yield* decodeProviderReplayNdjson(
       text
         .replaceAll(queuedFollowupResult, followupResult)
+        .replaceAll(
+          delegatedPrompt,
+          `Act as the reviewer sub-agent for this task.\\n\\n${delegatedPrompt}`,
+        )
         .replace(
           /"name":"Replay fixture: delegated_task_status"/g,
           () => `"name":${JSON.stringify(threadNames.shift())}`,
@@ -364,6 +368,8 @@ describe("orchestrator MCP toolkit", () => {
         const delegationStartSequence = yield* orchestrator.getThreadEventSequence(parentThreadId);
         const delegatedCall = yield* invoke("delegate_task", {
           task: delegatedPrompt,
+          title: delegatedPrompt,
+          role: "reviewer",
           target: {
             providerInstanceId: codexInstanceId,
             model: codexModel,
@@ -418,6 +424,10 @@ describe("orchestrator MCP toolkit", () => {
           localChild(delegated.childThreadId),
         );
         expect(delegatedChild.thread.lineage.relationshipToParent).toBe("subagent");
+        expect(delegatedChild.thread.delegatedRole).toBe("reviewer");
+        const threads = yield* ThreadManagementService.ThreadManagementService;
+        const childShell = yield* threads.getThreadShell(localChild(delegated.childThreadId));
+        expect(childShell?.delegatedRole).toBe("reviewer");
         expect(isProviderNativeSubagentThread(delegatedChild.thread)).toBe(false);
         const followupStartSequence = yield* orchestrator.getThreadEventSequence(
           localChild(delegated.childThreadId),

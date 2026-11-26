@@ -1,3 +1,4 @@
+import { OrchestratorMcpTaskRole } from "./modelRole.ts";
 import { OrchestrationMessageContext } from "./composerContext.ts";
 import { withRecordIdTable } from "./orchestrationV2IdTable.ts";
 import * as DateTime from "effect/DateTime";
@@ -144,6 +145,7 @@ export const linkOriginIsFenced = (origin: OrchestrationV2LinkOrigin) =>
  * this thread is that parent's subagent, run here instead of there.
  */
 export const OrchestrationV2DelegatedFrom = Schema.Struct({
+  role: Schema.optional(OrchestratorMcpTaskRole),
   environmentId: EnvironmentId,
   threadId: ThreadId,
   title: Schema.String,
@@ -518,6 +520,7 @@ export const OrchestrationV2AppThread = Schema.Struct({
   historyOrigin: Schema.optional(OrchestrationV2ThreadHistoryOrigin),
   linkOrigin: Schema.optional(OrchestrationV2LinkOrigin),
   delegatedFrom: Schema.optional(OrchestrationV2DelegatedFrom),
+  delegatedRole: Schema.optional(OrchestratorMcpTaskRole),
   workflowRun: Schema.optional(OrchestrationV2WorkflowOrigin),
   lineage: OrchestrationV2AppThreadLineage,
   forkedFrom: Schema.NullOr(
@@ -2434,6 +2437,7 @@ export const OrchestrationV2ThreadShell = Schema.Struct({
   historyOrigin: Schema.optional(OrchestrationV2ThreadHistoryOrigin),
   linkOrigin: Schema.optional(OrchestrationV2LinkOrigin),
   delegatedFrom: Schema.optional(OrchestrationV2DelegatedFrom),
+  delegatedRole: Schema.optional(OrchestratorMcpTaskRole),
   workflowRun: Schema.optional(OrchestrationV2WorkflowOrigin),
   latestRunId: Schema.NullOr(RunId),
   latestRunRequestedAt: Schema.optional(Schema.NullOr(Schema.DateTimeUtc)),
@@ -3798,6 +3802,7 @@ export const OrchestrationV2Command = Schema.Union([
     parentNodeId: NodeId,
     task: TrimmedNonEmptyString,
     title: Schema.optional(TrimmedNonEmptyString),
+    role: Schema.optional(OrchestratorMcpTaskRole),
     modelSelection: ModelSelection,
     runtimeMode: RuntimeMode,
     interactionMode: ProviderInteractionMode,

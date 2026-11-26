@@ -7,6 +7,7 @@ The fork is upstream `pingdotgg/main` plus a short keep list. It was rebuilt fro
 - Named, collapsible sidebar sections, and threads that stay where they are placed.
 - Inline math on the text line.
 - Codex Default speed (`codexDefaultSpeed`).
+- Model role presets for delegated tasks.
 - Automatic redemption of expiring credits (`autoUseExpiringResetCredits`).
 - The Linux AppImage build and staged install (`apps/desktop/src/updates/ForkStagedUpdates.ts`).
 - The GitHub issue pipeline Workflow ([docs/user/workflows.md](../user/workflows.md#run-the-forks-github-issue-pipeline)).
@@ -34,3 +35,5 @@ Merge `pingdotgg/main` on a short-lived `sync/upstream-<date>` branch as a real 
 ## One-time cutover from the old fork
 
 The installed app's database comes from the old fork. Before the first build from this `main` opens it, run the conversion in [scripts/fork-sync/README.md](../../scripts/fork-sync/README.md). Until it has run, both build scripts refuse to build.
+
+For each legacy `modelRoles.<role>.<level>` entry, choose one provider instance, use its model from the old tier defaults or your tier overrides, and set the saved effort in Settings → Providers → Model role presets. Legacy entries inherit the parent model until you set a direct selection. [Archived tier defaults](https://github.com/tannerpolley/t3code/blob/archive/fork-main-2026-11-25/packages/contracts/src/ForkSettings.ts#L92-L97)

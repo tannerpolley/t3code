@@ -21,6 +21,7 @@ import {
   ProjectId,
   ProviderDriverKind,
   ProviderInstanceId,
+  type ProviderOptionDescriptor,
   ProviderThreadId,
   ProviderTurnId,
   RunId,
@@ -1592,6 +1593,7 @@ describe("OrchestratorMcpService provider resolution", () => {
     readonly driver: ProviderDriverKind;
     readonly model?: string;
     readonly enabled?: boolean;
+    readonly optionDescriptors?: ReadonlyArray<ProviderOptionDescriptor>;
   }): ServerProvider => ({
     instanceId: input.instanceId,
     driver: input.driver,
@@ -1605,7 +1607,17 @@ describe("OrchestratorMcpService provider resolution", () => {
     models:
       input.model === undefined
         ? []
-        : [{ slug: input.model, name: input.model, isCustom: false, capabilities: null }],
+        : [
+            {
+              slug: input.model,
+              name: input.model,
+              isCustom: false,
+              capabilities:
+                input.optionDescriptors === undefined
+                  ? null
+                  : { optionDescriptors: input.optionDescriptors },
+            },
+          ],
     slashCommands: [],
     skills: [],
   });
@@ -3858,7 +3870,7 @@ describe("OrchestratorMcpService provider resolution", () => {
   );
 
   it.effect(
-    "inherits an available parent instance for driver-only targets and otherwise selects a healthy peer",
+    "prefers explicit and role-preset targets, or inherits a healthy parent before searching for another instance",
     () =>
       Effect.gen(function* () {
         const codexAltInstanceId = ProviderInstanceId.make("codex-alt");
@@ -3868,6 +3880,11 @@ describe("OrchestratorMcpService provider resolution", () => {
           instanceId: codexInstanceId,
           model: "gpt-5.4",
           options: [{ id: "reasoningEffort", value: "high" }],
+        } as const;
+        const presetSelection = {
+          instanceId: codexAltInstanceId,
+          model: "codex-alt-model",
+          options: [{ id: "reasoningEffort", value: "medium" }],
         } as const;
         const task = {
           id: taskId,
@@ -3890,6 +3907,22 @@ describe("OrchestratorMcpService provider resolution", () => {
           completedAt: null,
         };
         const cases = [
+          {
+            name: "role-preset",
+            inheritedEnabled: true,
+            peerEnabled: true,
+            explicit: false,
+            selectedInstanceId: codexAltInstanceId,
+            candidateDriver: driver,
+          },
+          {
+            name: "explicit-overrides-role-preset",
+            inheritedEnabled: true,
+            peerEnabled: true,
+            explicit: true,
+            selectedInstanceId: codexInstanceId,
+            candidateDriver: driver,
+          },
           {
             name: "healthy-inherited",
             inheritedEnabled: true,
@@ -3991,7 +4024,9 @@ describe("OrchestratorMcpService provider resolution", () => {
                   } as never),
                 ),
             }),
-            ServerSettings.layerTest(),
+            ServerSettings.layerTest({
+              modelRoles: { implementor: { routine: presetSelection } },
+            }),
             providerRegistryLayer([
               providerSnapshot({
                 instanceId: codexInstanceId,
@@ -4004,6 +4039,14 @@ describe("OrchestratorMcpService provider resolution", () => {
                 driver: testCase.candidateDriver,
                 model: "codex-alt-model",
                 enabled: testCase.peerEnabled,
+                optionDescriptors: [
+                  {
+                    id: "reasoningEffort",
+                    type: "select",
+                    label: "Reasoning",
+                    options: [{ id: "medium", label: "Medium" }],
+                  },
+                ],
               }),
             ]),
             adapterRegistryLayer(
@@ -4020,7 +4063,7 @@ describe("OrchestratorMcpService provider resolution", () => {
           yield* Effect.gen(function* () {
             const service = yield* OrchestratorMcpService.OrchestratorMcpService;
             const target =
-              testCase.name === "inherited-unavailable"
+              testCase.name === "inherited-unavailable" || testCase.name === "role-preset"
                 ? undefined
                 : testCase.explicit
                   ? ({
@@ -4085,6 +4128,9 @@ describe("OrchestratorMcpService provider resolution", () => {
             const result = yield* service.delegateTask(scope, {
               task: "Summarize the diff.",
               target,
+              ...(testCase.name.endsWith("role-preset")
+                ? { role: "implementor", level: "routine" }
+                : {}),
               mode: "async",
               clientRequestId: `delegate-select-${testCase.name}`,
             });
@@ -4105,7 +4151,12 @@ describe("OrchestratorMcpService provider resolution", () => {
               testCase.selectedInstanceId,
               testCase.name,
             );
-            if (testCase.name === "healthy-inherited") {
+            if (testCase.name === "role-preset") {
+              assert.deepEqual(request.modelSelection, presetSelection);
+            } else if (
+              testCase.name === "healthy-inherited" ||
+              testCase.name === "explicit-overrides-role-preset"
+            ) {
               assert.deepEqual(request.modelSelection, parentModelSelection, testCase.name);
             } else {
               assert.equal(request.modelSelection.model, "codex-alt-model", testCase.name);
