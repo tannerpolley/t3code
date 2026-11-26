@@ -11,7 +11,7 @@ The fork is upstream `pingdotgg/main` plus a short keep list. It was rebuilt fro
 - The Linux AppImage build and staged install (`apps/desktop/src/updates/ForkStagedUpdates.ts`).
 - The GitHub issue pipeline Workflow ([docs/user/workflows.md](../user/workflows.md#run-the-forks-github-issue-pipeline)).
 
-Mobile is out of scope for fork features.
+Mobile runs the fork through its own Android app; see [Android app](#android-app).
 
 ## Branches and checks
 
@@ -26,6 +26,17 @@ Mobile is out of scope for fork features.
 `~/.local/bin/t3-update` (the dock icon's **Build & install update**) and `~/.local/bin/t3-build` (the same steps, for agents) build the AppImage from local `main`. They stage it in `~/.local/opt/t3-code/pending/` and tag `release/vX.Y.Z`. The launcher `~/.local/bin/t3-code` installs a staged build on the next start. These scripts live outside Git.
 
 Restarting T3 stops every running agent turn, so ask before doing it.
+
+### Android app
+
+The Play Store app speaks an older protocol than this server, so the owner's Pixel runs a fork APK built on this PC.
+
+- `scripts/fork-android/build-apk.sh [commit]` (default `origin/main`) builds a release APK in `~/Workspaces/Applications/t3code/.worktrees/android-build` and writes `~/.local/opt/t3-code/android/t3code-fork-<sha>.apk`, with `latest.apk` pointing at it. A commit that is already built is skipped. It needs `~/Android/Sdk` and a JDK; Gradle downloads the NDK on the first run.
+- `scripts/fork-android/install-apk.sh [apk]` installs it with `adb install -r` on the Pixel (`49191FDAQ001KZ`) over USB, and says so when the phone is not connected.
+- The app is `com.tannerpolley.t3code` ("T3 Code Fork"), so it installs beside upstream's `com.t3tools.t3code`. Its versionCode is the commit count, so newer `main` builds install over older ones.
+- It is signed with a key made on the first build at `~/.local/share/t3-android/fork-release.p12` (password in `.pass` beside it). Losing that key means uninstalling the app, and its pairings, before the next install.
+- Over-the-air updates are off, or upstream's update channel would replace the fork's JavaScript.
+- Pair it with the desktop server over Tailscale. Push notifications through T3 Connect do not reach it: the relay sends through upstream's Firebase project, and the fork has neither that project's `google-services.json` nor a package registered in it. Push needs the fork's own Firebase project and its own sender.
 
 ## Upstream syncs
 
