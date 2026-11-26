@@ -41,6 +41,7 @@ export const issuesSearchFromUrl = (raw: Record<string, unknown>): IssuesSearch 
   who:
     raw.who === "assigned" || raw.who === "authored" || raw.who === "mentioned" ? raw.who : "all",
   status: raw.status === "closed" || raw.status === "all" ? raw.status : "open",
+  view: raw.view === "board" ? "board" : undefined,
   hideProjects: projectPairs(raw.hideProjects),
   host: bounded(raw.host),
   q: bounded(raw.q),

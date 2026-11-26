@@ -5916,6 +5916,11 @@
   "225329f7d2adc33c": "Laisser un commentaire",
   "35e166912930bdbf": "Publication du commentaire",
   "7bfcbdbcdd625603": "Commenter",
+  "e0a65d9eacbe986c": "Ce ticket ne peut pas passer au statut {state}.",
+  "625d3c2d5a909f67": "Déplacer le ticket {issue}",
+  "0a01ceef6a792429": "Affichage des tickets",
+  "8d4ecde8e10db0f1": "Liste",
+  "c0ea55a477221d2f": "Tableau",
   "02de63c7a0ebd94c": "Chargement du ticket",
   "80bb66fe1c536e09": "Ouvrir sur {provider}",
   "6899d17239a4b04e": [

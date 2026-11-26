@@ -5916,6 +5916,11 @@
   "225329f7d2adc33c": "Kommentar hinterlassen",
   "35e166912930bdbf": "Kommentar wird gepostet",
   "7bfcbdbcdd625603": "Kommentieren",
+  "e0a65d9eacbe986c": "Dieser Vorgang kann nicht nach „{state}“ verschoben werden.",
+  "625d3c2d5a909f67": "Vorgang {issue} verschieben",
+  "0a01ceef6a792429": "Vorgangsansicht",
+  "8d4ecde8e10db0f1": "Liste",
+  "c0ea55a477221d2f": "Board",
   "02de63c7a0ebd94c": "Issue wird geladen",
   "80bb66fe1c536e09": "Auf {provider} öffnen",
   "6899d17239a4b04e": [

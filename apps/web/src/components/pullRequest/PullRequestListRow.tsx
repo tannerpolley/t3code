@@ -60,6 +60,7 @@ export function PullRequestRowGlyph({
 export function PullRequestRowLines({
   number,
   title,
+  wrapTitle,
   status,
   signals,
   meta,
@@ -68,6 +69,7 @@ export function PullRequestRowLines({
 }: {
   number: ReactNode;
   title: ReactNode;
+  wrapTitle?: boolean;
   status?: ReactNode;
   signals?: ReactNode;
   meta?: ReactNode;
@@ -78,7 +80,11 @@ export function PullRequestRowLines({
     <span className="min-w-0 flex-1">
       <span className="flex min-w-0 items-center gap-1.5">
         {number}
-        <span className="min-w-0 truncate text-sm">{title}</span>
+        <span
+          className={cn("min-w-0 text-sm", wrapTitle ? "line-clamp-2 break-words" : "truncate")}
+        >
+          {title}
+        </span>
         {signals ? (
           <span className="flex shrink-0 items-center gap-1 text-2xs">{signals}</span>
         ) : null}

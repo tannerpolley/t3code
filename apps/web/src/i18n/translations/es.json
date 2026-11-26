@@ -5915,6 +5915,11 @@
   "225329f7d2adc33c": "Deja un comentario",
   "35e166912930bdbf": "Publicando comentario",
   "7bfcbdbcdd625603": "Comentar",
+  "e0a65d9eacbe986c": "Esta incidencia no se puede mover a {state}.",
+  "625d3c2d5a909f67": "Mover incidencia {issue}",
+  "0a01ceef6a792429": "Vista de incidencias",
+  "8d4ecde8e10db0f1": "Lista",
+  "c0ea55a477221d2f": "Tablero",
   "02de63c7a0ebd94c": "Cargando issue",
   "80bb66fe1c536e09": "Abrir en {provider}",
   "6899d17239a4b04e": [
