@@ -65,10 +65,13 @@ import { PullRequestSpeedActions, PullRequestSpeedModeContext } from "./PullRequ
 import { changeRequestTermKind } from "./changeRequestTerm";
 import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
+const LINKED_BY_AGENT = msg("Linked by the agent");
+
 const SOURCE_LABELS: Record<ThreadPullRequestLink["source"], string> = {
   manual: msg("Linked by you"),
   created: msg("Created from this thread"),
-  agent: msg("Linked by the agent"),
+  agent: LINKED_BY_AGENT,
+  child: LINKED_BY_AGENT,
   stack: msg("Found in the stack"),
   "stack-dismissed": msg("Dismissed", { $context: "pull request link source" }),
 };

@@ -34,6 +34,7 @@ import {
 } from "../sourceControl/threadPullRequests.ts";
 import { issueReference, noteReference, pullRequestReference } from "./runReferences.ts";
 import { isProjectPath } from "./WorkflowAgents.ts";
+import * as WorkflowThreads from "./WorkflowThreads.ts";
 import type { ReferenceInput } from "./WorkflowStore.ts";
 
 export class WorkflowForgeError extends Schema.TaggedError<WorkflowForgeError>()(
@@ -282,6 +283,8 @@ export const subjectReference = (what: string, subject: SubjectInput) => {
 export class WorkflowForge extends Context.Service<
   WorkflowForge,
   {
+    readonly projects: () => Effect.Effect<ReadonlyArray<ProjectId>, WorkflowForgeError>;
+    readonly threads: WorkflowThreads.WorkflowThreads["Service"];
     readonly issues: {
       readonly list: (query: IssueQuery) => Effect.Effect<ReadonlyArray<Issue>, WorkflowForgeError>;
       readonly read: (issue: IssueAddress) => Effect.Effect<IssueDetail, WorkflowForgeError>;
@@ -336,6 +339,12 @@ const missing = (what: string) => () =>
   );
 /** For an engine with no trackers behind it: every call says so. */
 export const unavailable = WorkflowForge.of({
+  projects: Effect.fn("WorkflowForge.projects")(() => Effect.succeed([])),
+  threads: {
+    linked: missing("Threads"),
+    archive: missing("Threads"),
+    removeWorktree: missing("Worktrees"),
+  },
   issues: {
     list: missing("Issues"),
     read: missing("Issues"),
@@ -357,6 +366,10 @@ export const layer = Layer.effect(
     const issues = yield* IssueService.IssueService;
     const pullRequests = yield* PullRequestService.PullRequestService;
     const projects = yield* ProjectService.ProjectService;
+    const threads = Option.getOrElse(
+      yield* Effect.serviceOption(WorkflowThreads.WorkflowThreads),
+      () => unavailable.threads,
+    );
 
     const projectIdOf = Effect.fn("WorkflowForge.projectIdOf")(function* (project: string) {
       if (!isProjectPath(project)) return ProjectId.make(project);
@@ -428,6 +441,13 @@ export const layer = Layer.effect(
       noteReference(pullRequestReferenceOf(ref, seen));
 
     return WorkflowForge.of({
+      projects: Effect.fn("WorkflowForge.projects")(function* () {
+        const rows = yield* projects
+          .listShells()
+          .pipe(Effect.mapError(failed("Could not list registered projects")));
+        return rows.map(({ id }) => id);
+      }),
+      threads,
       issues: {
         list: Effect.fn("WorkflowForge.issues.list")(function* (query) {
           const result = yield* issues

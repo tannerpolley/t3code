@@ -548,6 +548,7 @@ export function layerWithRegistry<Error>(
     }),
   );
   const layerOrchestratorProvided = Orchestrator.layer.pipe(
+    Layer.provide(layerDatabase),
     Layer.provide(
       Layer.mergeAll(
         layerCheckpointServiceProvided,

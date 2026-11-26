@@ -13,7 +13,7 @@ import {
   runRanAfter,
   usageLimitBlockedRun,
 } from "@t3tools/shared/orchestrationV2ThreadError";
-import { threadIssueKeysEqual } from "@t3tools/contracts";
+import { threadIssueKeyOf, threadIssueKeysEqual } from "@t3tools/contracts";
 import { canonicalizeGitCafePullRequestUrl } from "@t3tools/source-control-definitions/registry";
 import { threadPullRequestsOf } from "../sourceControl/threadPullRequests.ts";
 import {
@@ -28,6 +28,7 @@ import {
   CommandId,
   type GuestMessageId,
   isCompactionCommandMessage,
+  isDelegatedAppThread,
   isDeliveredProviderTurn,
   isOrchestrationV2WorkActive,
   isProviderNativeSubagentThread,
@@ -118,6 +119,8 @@ import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
+import * as SqlClient from "effect/sql/SqlClient";
+import { listLinkedIssueThreads } from "../issue/linkedThreads.ts";
 import * as Stream from "effect/Stream";
 
 import * as ProjectStore from "./ProjectStore.ts";
@@ -243,6 +246,15 @@ export class OrchestratorDispatchError extends Schema.TaggedError<OrchestratorDi
 ) {
   override get message(): string {
     return `Failed to dispatch orchestration command ${this.commandType} (${this.commandId}).`;
+  }
+}
+
+export class IssueClaimedByChildError extends Schema.TaggedError<IssueClaimedByChildError>()(
+  "IssueClaimedByChildError",
+  { displayKey: TrimmedNonEmptyString, childId: ThreadId },
+) {
+  override get message(): string {
+    return `Issue ${this.displayKey} is already linked to live child ${this.childId}. A parent must explicitly allow a second child.`;
   }
 }
 
@@ -390,6 +402,7 @@ export class OrchestratorCommandIdConflictError extends Schema.TaggedError<Orche
 
 export const OrchestratorV2Error = Schema.Union([
   OrchestratorDispatchError,
+  IssueClaimedByChildError,
   OrchestratorThreadAlreadyExistsError,
   OrchestratorCommandRejectedError,
   OrchestratorProjectionError,
@@ -1690,6 +1703,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const threadForkService = yield* ThreadForkServiceV2;
   const threadDispatch = yield* ThreadCommandExecutor.ThreadCommandExecutor;
   const messageIntake = yield* KeyedLock.make<ThreadId>();
+  const issueLinks = yield* KeyedLock.make<string>();
+  const sql = yield* SqlClient.SqlClient;
   // Read once: the policy is fixed for the server's life, and dispatch takes it as an input.
   const { managedPolicy } = serverSettings;
   const runtimeModeCeiling: RuntimeModeCeiling | undefined =
@@ -4455,6 +4470,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     return decided.success;
   });
 
+  const bookkeepingParent = (thread: Pick<OrchestrationV2AppThread, "lineage">) =>
+    thread.lineage.relationshipToParent === "subagent" && thread.lineage.sideChat !== true
+      ? thread.lineage.parentThreadId
+      : null;
+
   const dispatchThreadMutation = Effect.fn("orchestrationV2.dispatch.threadMutation")(function* (
     command: Extract<
       OrchestrationV2ServerCommand,
@@ -4508,6 +4528,39 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         commandType: command.type,
         cause: `Thread ${command.threadId} is deleted.`,
       });
+    }
+    const parentId = bookkeepingParent(thread);
+    if (
+      command.type === "thread.issue.link" &&
+      isDelegatedAppThread(thread) &&
+      thread.lineage.sideChat !== true &&
+      thread.archivedAt === null &&
+      (parentId === null || command.overrideBy !== parentId) &&
+      !thread.issues?.some((link) => link.source !== "child" && threadIssueKeysEqual(link, command))
+    ) {
+      const { threads } = yield* listLinkedIssueThreads(command).pipe(
+        Effect.provideService(SqlClient.SqlClient, sql),
+        mapDispatchError(command),
+      );
+      for (const candidate of threads) {
+        if (candidate.id === thread.id || candidate.archivedAt !== null) continue;
+        const other = yield* projectionStore
+          .getThreadShell(candidate.id)
+          .pipe(mapDispatchError(command));
+        if (
+          other !== null &&
+          other.archivedAt === null &&
+          isDelegatedAppThread(other) &&
+          other.issues?.some(
+            (link) => link.source !== "child" && threadIssueKeysEqual(link, command),
+          )
+        ) {
+          return yield* new IssueClaimedByChildError({
+            displayKey: command.displayKey,
+            childId: other.id,
+          });
+        }
+      }
     }
     if (
       command.type === "thread.pull-request.watch" &&
@@ -5391,11 +5444,11 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             if (!existing) return thread;
             return { ...thread, issues: links.filter((link) => link !== existing), updatedAt: now };
           }
-          if (existing) return thread;
+          if (existing && existing.source !== "child") return thread;
           return {
             ...thread,
             issues: [
-              ...links,
+              ...links.filter((link) => link !== existing),
               {
                 tracker: command.tracker,
                 host: command.host.trim().toLowerCase(),
@@ -5688,6 +5741,60 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       occurredAt: now,
       payload: updatedThread,
     });
+    if (
+      parentId !== null &&
+      (command.type === "thread.issue.link" || command.type === "thread.pull-request.link")
+    ) {
+      const parent = yield* projectionStore
+        .getThreadShell(parentId)
+        .pipe(mapDispatchError(command));
+      if (parent !== null && parent.deletedAt === null) {
+        const parentThread = yield* projectionStore
+          .getThread(parentId)
+          .pipe(mapDispatchError(command));
+        if (command.type === "thread.issue.link") {
+          const link = updatedThread.issues?.find((entry) => threadIssueKeysEqual(entry, command));
+          const issues = parentThread.issues ?? [];
+          if (link !== undefined && !issues.some((entry) => threadIssueKeysEqual(entry, link))) {
+            yield* emit(
+              events,
+              command,
+            )({
+              type: "thread.issue-synced",
+              threadId: parentId,
+              providerInstanceId: parentThread.providerInstanceId,
+              occurredAt: now,
+              payload: { ...parentThread, issues: [...issues, { ...link, source: "child" }] },
+            });
+          }
+        } else {
+          const link = threadPullRequestsOf(updatedThread).find((entry) =>
+            threadPullRequestKeysEqual(entry, command),
+          );
+          const pullRequests = threadPullRequestsOf(parentThread);
+          if (
+            link !== undefined &&
+            link.source !== "child" &&
+            link.source !== "stack-dismissed" &&
+            !pullRequests.some((entry) => threadPullRequestKeysEqual(entry, link))
+          ) {
+            yield* emit(
+              events,
+              command,
+            )({
+              type: "thread.pull-request-synced",
+              threadId: parentId,
+              providerInstanceId: parentThread.providerInstanceId,
+              occurredAt: now,
+              payload: {
+                ...parentThread,
+                pullRequests: [...pullRequests, { ...link, source: "child", watch: undefined }],
+              },
+            });
+          }
+        }
+      }
+    }
     // Archiving ends the guest share, so its waiting files go too.
     yield* releaseGuestAttachments(command, thread.guestShare, updatedThread.guestShare, effects);
 
@@ -16617,6 +16724,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
         Effect.gen(function* () {
           // Refusals depend on modes the user can change; a recorded rejection would block the retry.
           if (
+            cause._tag === "IssueClaimedByChildError" ||
             cause._tag === "OrchestratorThreadAboveModeLimitError" ||
             cause._tag === "OrchestratorRuntimeModeAboveCeilingError"
           ) {
@@ -16838,6 +16946,16 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       commandThreadId(command),
       dispatchWithReceiptEffect(command),
     );
+    if (command.type === "thread.issue.link" || command.type === "thread.pull-request.link") {
+      const child = yield* projectionStore
+        .getThreadShell(command.threadId)
+        .pipe(mapDispatchError(command));
+      const parentId = child === null ? null : bookkeepingParent(child);
+      const withParent = parentId === null ? dispatch : threadDispatch.withLock(parentId, dispatch);
+      return yield* command.type === "thread.issue.link"
+        ? issueLinks.withLock(threadIssueKeyOf(command), withParent)
+        : withParent;
+    }
     // A fork holds its source's lock, so a source deletion and its fork never interleave. A
     // parent's lock comes before its side chats' locks. A side chat fork from a side chat or a
     // fork onto an existing thread would invert that order; dispatch rejects both, so they skip it.
@@ -17678,6 +17796,7 @@ export const layer: Layer.Layer<
   | ProjectionStoreV2
   | RuntimePolicyV2
   | ServerSettings.ServerSettingsService
+  | SqlClient.SqlClient
   | TaskFolderStore.TaskFolderStore
   | ThreadForkServiceV2
 > = Layer.effect(OrchestratorV2, makeOrchestrator()).pipe(

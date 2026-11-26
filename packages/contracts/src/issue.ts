@@ -518,7 +518,7 @@ export class IssueOperationError extends Schema.TaggedError<IssueOperationError>
 export type IssueError = IssueUnavailableError | IssueOperationError;
 
 /** Who created a thread ↔ issue link. */
-export const ThreadIssueLinkSource = Schema.Literals(["manual", "agent"]);
+export const ThreadIssueLinkSource = Schema.Literals(["manual", "agent", "child"]);
 export type ThreadIssueLinkSource = typeof ThreadIssueLinkSource.Type;
 
 /**

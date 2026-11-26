@@ -8622,6 +8622,112 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
+  it.effect("claims an issue for one live child and mirrors child links to the parent", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const sink = yield* EventSink.EventSinkV2;
+      const projectId = ProjectId.make("child-links-project");
+      const parent = ThreadId.make("child-links-parent");
+      const childIds = [ThreadId.make("child-links-a"), ThreadId.make("child-links-b")];
+      yield* seedProject({
+        projectId,
+        title: "Child links",
+        workspaceRoot: "/work/child-links",
+        defaultModelSelection: null,
+        createdAt: "2026-09-07T00:00:00.000Z",
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        createdBy: "user",
+        creationSource: "web",
+        commandId: CommandId.make("child-links-create"),
+        threadId: parent,
+        projectId,
+        title: "Parent",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+      });
+      const { thread } = yield* orchestrator.getThreadProjection(parent);
+      const now = yield* DateTime.now;
+      yield* sink.write({
+        events: childIds.map((threadId) => ({
+          type: "thread.created" as const,
+          id: EventId.make(`${threadId}:created`),
+          threadId,
+          providerInstanceId: modelSelection.instanceId,
+          occurredAt: now,
+          payload: {
+            ...thread,
+            id: threadId,
+            lineage: {
+              parentThreadId: parent,
+              rootThreadId: parent,
+              relationshipToParent: "subagent",
+            },
+          },
+        })),
+      });
+      const link = (threadId: ThreadId, attempt: string, overrideBy?: ThreadId) =>
+        orchestrator.dispatch({
+          type: "thread.issue.link",
+          commandId: CommandId.make(`${threadId}:${attempt}`),
+          threadId,
+          projectId,
+          tracker: IssueTrackerKind.make("github"),
+          host: "github.com",
+          scope: threadId === childIds[0] ? "Owner/Repo" : "owner/repo",
+          key: "7",
+          url: "https://github.com/owner/repo/issues/7",
+          displayKey: "#7",
+          title: "Fixture",
+          source: "agent",
+          ...(overrideBy === undefined ? {} : { overrideBy }),
+        });
+      const claims = yield* Effect.forEach(
+        childIds,
+        (id) => link(id, "first").pipe(Effect.result),
+        {
+          concurrency: "unbounded",
+        },
+      );
+      assert.lengthOf(
+        claims.filter((claim) => claim._tag === "Success"),
+        1,
+      );
+      const winner = childIds[claims[0]?._tag === "Success" ? 0 : 1]!;
+      const loser = childIds.find((id) => id !== winner)!;
+      const refused = yield* link(loser, "self-override", loser).pipe(Effect.flip);
+      assert(refused._tag === "IssueClaimedByChildError");
+      assert.equal(refused.childId, winner);
+      assert.isEmpty((yield* orchestrator.getThreadShell(loser))?.issues ?? []);
+      yield* link(loser, "parent-override", parent);
+      assert.lengthOf((yield* orchestrator.getThreadShell(loser))?.issues ?? [], 1);
+
+      yield* orchestrator.dispatch({
+        type: "thread.pull-request.link",
+        commandId: CommandId.make("child-links-pr"),
+        threadId: winner,
+        host: "github.com",
+        repository: "owner/repo",
+        number: 8,
+        url: "https://github.com/owner/repo/pull/8",
+        source: "created",
+      });
+      const parentShell = yield* orchestrator.getThreadShell(parent);
+      assert.deepEqual(
+        parentShell?.issues?.map(({ key, source }) => ({ key, source })),
+        [{ key: "7", source: "child" }],
+      );
+      assert.deepEqual(
+        parentShell?.pullRequests?.map(({ number, source }) => ({ number, source })),
+        [{ number: 8, source: "child" }],
+      );
+    }),
+  );
+
   it.effect("rejects archiving an idle parent until its delegated child completes", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;

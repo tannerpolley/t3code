@@ -234,6 +234,7 @@ import * as UsageService from "./usage/UsageService.ts";
 import * as CodexUsageHistory from "./usage/CodexUsageHistory.ts";
 import * as RuntimeLayer from "./orchestration-v2/runtimeLayer.ts";
 import * as ThreadViewers from "./orchestration-v2/ThreadViewers.ts";
+import * as WorkflowThreads from "./workflows/WorkflowThreads.ts";
 import * as WorkflowForge from "./workflows/WorkflowForge.ts";
 import * as SidebarLayout from "./sidebarLayout.ts";
 import * as ProjectStore from "./orchestration-v2/ProjectStore.ts";
@@ -655,6 +656,12 @@ const layerOrchestrationV2Runtime = RuntimeLayer.layerProduction.pipe(
     WorkflowForge.layer.pipe(
       Layer.provide(layerIssueService),
       Layer.provide(layerPullRequestService),
+      Layer.provide(
+        WorkflowThreads.layer.pipe(
+          Layer.provide(RuntimeLayer.layerThreadManagementProvided),
+          Layer.provide(ProjectionStoreV2.layer),
+        ),
+      ),
       Layer.provide(RuntimeLayer.layerProjectService),
     ),
   ),

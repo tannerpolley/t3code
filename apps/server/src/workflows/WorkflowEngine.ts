@@ -126,6 +126,12 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
     (...args: Args) =>
       call(...args).pipe(Effect.provideService(SqlClient.SafeIntegers, false));
   const forge = WorkflowForge.of({
+    projects: plain(trackers.projects),
+    threads: {
+      linked: plain(trackers.threads.linked),
+      archive: plain(trackers.threads.archive),
+      removeWorktree: plain(trackers.threads.removeWorktree),
+    },
     issues: {
       list: plain(trackers.issues.list),
       read: plain(trackers.issues.read),
@@ -429,92 +435,100 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
     for (const definition of latestDefinitions) {
       for (const trigger of definition.triggers) {
         if (trigger.kind !== "issues" && trigger.kind !== "pullRequests") continue;
-        const id = `${definition.name}/${trigger.id}`;
-        const since = yield* store.triggerNext(id);
-        if (since === undefined) {
-          yield* store.triggerSet(id, DateTime.formatIso(now));
-          continue;
-        }
-        const last = lookedAt.get(id);
-        const at = DateTime.toEpochMillis(now);
-        if (last !== undefined && at - last < Duration.toMillis(LOOK_EVERY)) continue;
-        lookedAt.set(id, at);
-        const found =
-          trigger.kind === "issues"
-            ? forge.issues.list({
-                project: trigger.project,
-                // Closed ones too: an item can open and close between two looks.
-                state: "all",
-                sort: "created",
-                limit: LOOK_AT_MOST,
-                labels: trigger.labels,
-                query: trigger.query,
-              })
-            : forge.pullRequests.list({
-                project: trigger.project,
-                state: "all",
-                limit: LOOK_AT_MOST,
-                query: trigger.query,
-              });
-        const sinceMillis = millisOf(since) ?? at;
-        yield* found.pipe(
-          Effect.flatMap(
-            Effect.fnUntraced(function* (entries: ReadonlyArray<Issue | PullRequest>) {
-              // From the mark on, not after it: two items can share a moment. As times, since a
-              // host writes them in its own format and the mark is ours.
-              const fresh = entries
-                .flatMap((entry) => {
-                  const created = millisOf(entry.createdAt);
-                  return created === undefined || created < sinceMillis ? [] : [{ entry, created }];
+        const projects =
+          trigger.project === undefined
+            ? yield* forge.projects().pipe(Effect.orElseSucceed(() => []))
+            : [trigger.project];
+        for (const project of projects) {
+          const id = `${definition.name}/${trigger.id}${trigger.project === undefined ? `/${project}` : ""}`;
+          const since = yield* store.triggerNext(id);
+          if (since === undefined) {
+            yield* store.triggerSet(id, DateTime.formatIso(now));
+            continue;
+          }
+          const last = lookedAt.get(id);
+          const at = DateTime.toEpochMillis(now);
+          if (last !== undefined && at - last < Duration.toMillis(LOOK_EVERY)) continue;
+          lookedAt.set(id, at);
+          const found =
+            trigger.kind === "issues"
+              ? forge.issues.list({
+                  project,
+                  // Closed ones too: an item can open and close between two looks.
+                  state: "all",
+                  sort: "created",
+                  limit: LOOK_AT_MOST,
+                  labels: trigger.labels,
+                  query: trigger.query,
                 })
-                .toSorted((a, b) => a.created - b.created);
-              if (entries.length >= LOOK_AT_MOST && fresh.length === entries.length) {
-                yield* Effect.logWarning(
-                  "More new items than one look reads; older ones among them start no run",
-                  { trigger: id, read: entries.length },
-                );
-              }
-              for (const { entry, created } of fresh) {
-                // The key is the address, so an issue seen twice is still one run. One the
-                // workflow turns down is passed over, so it does not hold back the ones after it.
-                const key = `trigger:${id}:${entry.url}`;
-                if (
-                  !turnedDown.has(key) &&
-                  (yield* store.runByKey(definition.name, key)) === undefined
-                ) {
-                  yield* start(definition.name, entry, { idempotencyKey: key }).pipe(
-                    // What started the run is the first thing it touched.
-                    Effect.flatMap(({ runId }) =>
-                      noteFor(
-                        store,
-                        runId,
-                        null,
-                        "tracker" in entry
-                          ? issueReference(entry, entry)
-                          : pullRequestReferenceOf(entry, entry),
-                      ),
-                    ),
-                    Effect.catchTags({
-                      WorkflowInputError: (error) =>
-                        Effect.andThen(
-                          Effect.sync(() => turnedDown.add(key)),
-                          Effect.logWarning("A workflow turned down an item it was started on", {
-                            trigger: id,
-                            item: entry.url,
-                            error,
-                          }),
-                        ),
-                    }),
+              : forge.pullRequests.list({
+                  project,
+                  state: "all",
+                  limit: LOOK_AT_MOST,
+                  query: trigger.query,
+                });
+          const sinceMillis = millisOf(since) ?? at;
+          yield* found.pipe(
+            Effect.flatMap(
+              Effect.fnUntraced(function* (entries: ReadonlyArray<Issue | PullRequest>) {
+                // From the mark on, not after it: two items can share a moment. As times, since a
+                // host writes them in its own format and the mark is ours.
+                const fresh = entries
+                  .flatMap((entry) => {
+                    const created = millisOf(entry.createdAt);
+                    return created === undefined || created < sinceMillis
+                      ? []
+                      : [{ entry, created }];
+                  })
+                  .toSorted((a, b) => a.created - b.created);
+                if (entries.length >= LOOK_AT_MOST && fresh.length === entries.length) {
+                  yield* Effect.logWarning(
+                    "More new items than one look reads; older ones among them start no run",
+                    { trigger: id, read: entries.length },
                   );
                 }
-                yield* store.triggerSet(id, DateTime.formatIso(DateTime.makeUnsafe(created)));
-              }
-            }),
-          ),
-          Effect.catch((error) =>
-            Effect.logWarning("A workflow could not look for new work", { trigger: id, error }),
-          ),
-        );
+                for (const { entry, created } of fresh) {
+                  // The key is the address, so an issue seen twice is still one run. One the
+                  // workflow turns down is passed over, so it does not hold back the ones after it.
+                  const key = `trigger:${id}:${entry.url}`;
+                  if (
+                    !turnedDown.has(key) &&
+                    (yield* store.runByKey(definition.name, key)) === undefined
+                  ) {
+                    yield* start(definition.name, entry, { idempotencyKey: key }).pipe(
+                      // What started the run is the first thing it touched.
+                      Effect.flatMap(({ runId }) =>
+                        noteFor(
+                          store,
+                          runId,
+                          null,
+                          "tracker" in entry
+                            ? issueReference(entry, entry)
+                            : pullRequestReferenceOf(entry, entry),
+                        ),
+                      ),
+                      Effect.catchTags({
+                        WorkflowInputError: (error) =>
+                          Effect.andThen(
+                            Effect.sync(() => turnedDown.add(key)),
+                            Effect.logWarning("A workflow turned down an item it was started on", {
+                              trigger: id,
+                              item: entry.url,
+                              error,
+                            }),
+                          ),
+                      }),
+                    );
+                  }
+                  yield* store.triggerSet(id, DateTime.formatIso(DateTime.makeUnsafe(created)));
+                }
+              }),
+            ),
+            Effect.catch((error) =>
+              Effect.logWarning("A workflow could not look for new work", { trigger: id, error }),
+            ),
+          );
+        }
       }
     }
   }).pipe(Effect.withSpan("Workflows.fireOpened"));
@@ -876,7 +890,7 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
   const triggerText = (trigger: WorkflowDefinition["triggers"][number]) => {
     if (trigger.kind === "webhook") return `webhook ${trigger.name}`;
     if (trigger.kind !== "schedule") {
-      return `new ${trigger.kind === "issues" ? "issues" : "pull requests"} in ${trigger.project}`;
+      return `new ${trigger.kind === "issues" ? "issues" : "pull requests"} in ${trigger.project ?? "registered projects"}`;
     }
     if (trigger.schedule.type === "interval") {
       return `every ${Duration.format(Duration.millis(trigger.schedule.everyMs))}`;

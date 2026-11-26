@@ -4101,7 +4101,12 @@ const OrchestrationV2InternalCommand = Schema.Union([
 ]);
 export type OrchestrationV2InternalCommand = typeof OrchestrationV2InternalCommand.Type;
 
-export type OrchestrationV2ServerCommand = OrchestrationV2Command | OrchestrationV2InternalCommand;
+type IssueLinkCommand = Extract<OrchestrationV2Command, { type: "thread.issue.link" }>;
+
+export type OrchestrationV2ServerCommand =
+  | Exclude<OrchestrationV2Command, IssueLinkCommand>
+  | (IssueLinkCommand & { readonly overrideBy?: ThreadId })
+  | OrchestrationV2InternalCommand;
 
 export const ORCHESTRATION_V2_WS_METHODS = {
   dispatchCommand: "orchestration.dispatchCommand",
