@@ -42,7 +42,7 @@ export interface OpenedTrigger {
   readonly kind: "issues" | "pullRequests";
   /** Stable across restarts: where this trigger keeps how far it has looked. */
   readonly id: string;
-  readonly project: string | undefined;
+  readonly project: string;
   readonly labels?: ReadonlyArray<string> | undefined;
   readonly query?: string | undefined;
 }
@@ -121,7 +121,7 @@ export const checkTriggers = (
 const openedId = (
   kind: OpenedTrigger["kind"],
   options: {
-    readonly project?: string | undefined;
+    readonly project: string;
     readonly labels?: ReadonlyArray<string>;
     readonly query?: string;
   },
@@ -148,17 +148,10 @@ export const issuesOpened = (options: {
  * A run for each pull request opened against the project's repository from now on, with the pull
  * request as its payload (`PullRequest`). `query` is free text for the host.
  */
-export const pullRequestsOpened = (
-  options: {
-    readonly project?: string;
-    readonly query?: string;
-  } = {},
-): Trigger<PullRequest> => {
+export const pullRequestsOpened = (options: {
+  readonly project: string;
+  readonly query?: string;
+}): Trigger<PullRequest> => {
   checkOptions("pullRequests.opened", options, ["project", "query"]);
-  return {
-    kind: "pullRequests",
-    id: openedId("pullRequests", options),
-    project: options.project,
-    ...options,
-  };
+  return { kind: "pullRequests", id: openedId("pullRequests", options), ...options };
 };

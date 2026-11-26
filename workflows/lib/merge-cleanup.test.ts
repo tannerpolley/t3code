@@ -1,10 +1,11 @@
 import { describe, expect, it } from "vite-plus/test";
-import { completionState, namedGitHubIssues } from "./merge-cleanup.ts";
+import { completionState, namedIssues } from "./merge-cleanup.ts";
 
 describe("merge cleanup issues", () => {
   it("finds local and other repository issue references and ignores examples and PR URLs", () => {
     expect(
-      namedGitHubIssues({
+      namedIssues({
+        provider: "github",
         host: "github.com",
         repository: "Owner/Repo",
         title: "Change for #7",
@@ -14,6 +15,21 @@ describe("merge cleanup issues", () => {
       "https://github.com/owner/repo/issues/7",
       "https://github.com/other/project/issues/12",
       "https://github.com/owner/repo/issues/18",
+    ]);
+  });
+
+  it("finds a GitLab issue in a nested namespace", () => {
+    expect(
+      namedIssues({
+        provider: "gitlab",
+        host: "gitlab.com",
+        repository: "group/subgroup/app",
+        title: "Fixes #7",
+        body: "Also closes https://gitlab.com/group/other/repo/-/issues/12",
+      }),
+    ).toEqual([
+      "https://gitlab.com/group/subgroup/app/-/issues/7",
+      "https://gitlab.com/group/other/repo/-/issues/12",
     ]);
   });
 

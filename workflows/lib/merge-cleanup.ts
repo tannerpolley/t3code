@@ -9,12 +9,15 @@ export function completionState(states: ReadonlyArray<IssueState>) {
   );
 }
 
-export function namedGitHubIssues(input: {
+export function namedIssues(input: {
+  readonly provider: string;
   readonly host: string;
   readonly repository: string;
   readonly title: string;
   readonly body: string;
 }) {
+  if (!["github", "gitlab", "forgejo"].includes(input.provider)) return [];
+  const suffix = input.provider === "gitlab" ? "/-/issues/" : "/issues/";
   const root = `https://${input.host}`;
   const urls = new Set<string>();
   const text = `${input.title}\n${input.body}`.replace(
@@ -22,11 +25,15 @@ export function namedGitHubIssues(input: {
     "",
   );
   for (const match of text.matchAll(
-    /https:\/\/([^/\s]+)\/([\w.-]+\/[\w.-]+)\/issues\/(\d+)\b|(?<![\w/#])(?:([\w.-]+\/[\w.-]+))?#(\d+)\b/g,
+    /https:\/\/([^/\s]+)\/((?:[\w.-]+\/)+?[\w.-]+)(\/-\/issues\/|\/issues\/)(\d+)\b|(?<![\w/#])(?:((?:[\w.-]+\/)+[\w.-]+))?#(\d+)\b/g,
   )) {
-    if (match[1] !== undefined && match[1].toLowerCase() !== input.host.toLowerCase()) continue;
-    const repository = match[2] ?? match[4] ?? input.repository;
-    urls.add(`${root}/${repository.toLowerCase()}/issues/${match[3] ?? match[5]}`);
+    if (
+      match[1] !== undefined &&
+      (match[1].toLowerCase() !== input.host.toLowerCase() || match[3] !== suffix)
+    )
+      continue;
+    const repository = match[2] ?? match[5] ?? input.repository;
+    urls.add(`${root}/${repository.toLowerCase()}${suffix}${match[4] ?? match[6]}`);
   }
   return [...urls];
 }

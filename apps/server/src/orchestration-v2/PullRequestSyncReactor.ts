@@ -464,9 +464,7 @@ export const make = Effect.gen(function* () {
         !snapshotFieldsEqual(link.snapshot, fields) ||
         !stacksEqual(link.stack, nextStack);
       // Persist siblings before terminal snapshots trigger settlement; settled threads get snapshots without new links.
-      for (const layer of isUnsettled(thread) && link.source !== "child"
-        ? (fetchedStack?.stack?.layers ?? [])
-        : []) {
+      for (const layer of isUnsettled(thread) ? (fetchedStack?.stack?.layers ?? []) : []) {
         const layerKey = {
           host: normalizeThreadPullRequestKey(link).host,
           repository: link.repository,

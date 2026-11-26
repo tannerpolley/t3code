@@ -127,7 +127,6 @@ export const IssueToolError = Schema.Union([
   IssueThreadNotFoundError,
   IssueProjectNotFoundError,
   IssueLinkFailedError,
-  Orchestrator.IssueClaimedByChildError,
 ]);
 export type IssueToolError = typeof IssueToolError.Type;
 
@@ -340,12 +339,9 @@ const SetIssueStateTool = Tool.make("set_issue_state", {
   .annotate(Tool.OpenWorld, true);
 
 const LinkIssueTool = Tool.make("link_issue", {
-  description: "Link each issue you work on or file to a thread.",
-  parameters: Schema.Struct({
-    ...IssueTargetInput.fields,
-    ...ThreadTargetInput.fields,
-    allowConcurrentChildren: Schema.optional(Schema.Boolean),
-  }),
+  description:
+    "Link an issue to a thread so T3 Code shows it beside the thread. Link every issue you work on or file.",
+  parameters: Schema.Struct({ ...IssueTargetInput.fields, ...ThreadTargetInput.fields }),
   success: LinkIssueResult,
   failure: IssueToolError,
   dependencies,

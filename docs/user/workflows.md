@@ -201,13 +201,14 @@ return it to Todo and start a new `issue-pipeline` run with a new key and an inp
 
 ## Clean up after a delegated pull request merges
 
-The fork's [merge cleanup workflow](../../workflows/merge-cleanup.ts) watches new pull
-requests in registered projects. Enable Workflows and point `T3CODE_WORKFLOWS` at the fork's
-`workflows` directory. A merged pull request must match the branch of a linked delegated
-thread. The workflow archives that thread, removes its clean worktree and branch, and moves its
-linked issues to Done, the tracker's completed state, or its only closed state. It also reads GitHub issue references in
-the pull request's title and description. Open the workflow run to see which worktrees were kept and why.
+Enable Workflows, point `T3CODE_WORKFLOWS` at the fork's `workflows` directory, and set
+`T3_MERGE_CLEANUP_PROJECTS` to a JSON array of absolute repository roots registered as
+T3 projects. When a project tracks several repositories, register each repository
+separately and run its implementation children in that project.
 
-When a child links an issue or pull request, its parent on the same server also gets the link.
-A second live child cannot claim the same issue unless its parent explicitly opts in through
-`link_issue` with the child's `threadId` and `allowConcurrentChildren: true`.
+The [merge cleanup workflow](../../workflows/merge-cleanup.ts) watches new pull requests.
+After a merge and the creator's current turn, it archives the delegated thread and
+removes its worktree if it is clean and still at the merged head. It deletes the remote
+head branch through the host and keeps the local branch. Issue references in the PR
+title or description identify the issues to complete. The run records any worktree it kept
+and why.

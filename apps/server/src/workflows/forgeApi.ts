@@ -1,6 +1,5 @@
 // Issues and pull requests as a workflow file sees them: triggers, calls for inside a step, and a
 // wait on a pull request for the body.
-import { ThreadId, type ThreadPullRequestKey } from "@t3tools/contracts";
 import * as Duration from "effect/Duration";
 import * as Effect from "effect/Effect";
 import type * as Option from "effect/Option";
@@ -58,7 +57,9 @@ export const issues = {
  */
 export const pullRequests = {
   opened: pullRequestsOpened,
-  linkedThreads: (key: ThreadPullRequestKey) => forge((all) => all.threads.linked(key)),
+  cleanUpCreator: (
+    head: Parameters<WorkflowForge["Service"]["pullRequests"]["cleanUpCreator"]>[0],
+  ) => forge((all) => all.pullRequests.cleanUpCreator(head)),
   list: (query: Parameters<WorkflowForge["Service"]["pullRequests"]["list"]>[0]) => {
     checkOptions("pullRequests.list", query, ["project", "state", "query", "limit"]);
     return forge((all) => all.pullRequests.list(query));
@@ -108,18 +109,4 @@ export const pullRequests = {
       }),
     );
   },
-};
-
-export const threads = {
-  archive: (threadId: string, commandId: string) =>
-    forge((all) => all.threads.archive(ThreadId.make(threadId), commandId)),
-  removeWorktree: (input: {
-    readonly threadId: string;
-    readonly cwd: string;
-    readonly branch: string;
-    readonly headSha: string;
-  }) =>
-    forge((all) =>
-      all.threads.removeWorktree({ ...input, threadId: ThreadId.make(input.threadId) }),
-    ),
 };

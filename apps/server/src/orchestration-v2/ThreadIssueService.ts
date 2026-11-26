@@ -31,7 +31,6 @@ export interface LinkThreadIssueInput {
   readonly displayKey: string;
   readonly title: string;
   readonly source: ThreadIssueLinkSource;
-  readonly overrideBy?: ThreadId | undefined;
 }
 
 export interface UnlinkThreadIssueInput {
@@ -67,22 +66,18 @@ const make = Effect.gen(function* () {
       Effect.map((uuid) => CommandId.make(`server:thread-issue-${tag}:${threadId}:${uuid}`)),
     );
 
-  const isLinked = (threadId: ThreadId, key: ThreadIssueKey, includeChild = true) =>
+  const isLinked = (threadId: ThreadId, key: ThreadIssueKey) =>
     orchestrator
       .getThreadShell(threadId)
       .pipe(
         Effect.map(
-          (thread) =>
-            thread?.issues?.some(
-              (link) =>
-                (includeChild || link.source !== "child") && threadIssueKeysEqual(link, key),
-            ) === true,
+          (thread) => thread?.issues?.some((link) => threadIssueKeysEqual(link, key)) === true,
         ),
       );
 
   const link: ThreadIssueService["Service"]["link"] = Effect.fn("ThreadIssueService.link")(
     function* (input) {
-      if (yield* isLinked(input.threadId, input.ref, false)) return { alreadyLinked: true };
+      if (yield* isLinked(input.threadId, input.ref)) return { alreadyLinked: true };
       yield* orchestrator.dispatch({
         type: "thread.issue.link",
         commandId: yield* commandId("link", input.threadId),
@@ -96,7 +91,6 @@ const make = Effect.gen(function* () {
         displayKey: input.displayKey,
         title: input.title,
         source: input.source,
-        ...(input.overrideBy === undefined ? {} : { overrideBy: input.overrideBy }),
       });
       return { alreadyLinked: false };
     },

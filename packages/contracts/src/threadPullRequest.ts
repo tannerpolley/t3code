@@ -29,7 +29,6 @@ export type ThreadLinkedPullRequest = typeof ThreadLinkedPullRequest.Type;
 export const ThreadPullRequestLinkSource = Schema.Literals([
   "manual",
   "created",
-  "child",
   "agent",
   "stack",
   "stack-dismissed",

@@ -124,7 +124,6 @@ function settlementPullRequestLinks(
   links: ReadonlyArray<SettlementPullRequestLink>,
 ): ReadonlyArray<SettlementPullRequestLink> {
   return visibleThreadPullRequests(links).filter((link) => {
-    if (link.source === "child") return false;
     if (link.snapshot === null || link.snapshot.state === "open") return true;
     const linkedAtMs = Date.parse(link.linkedAt);
     return Number.isNaN(linkedAtMs) || linkTerminalAtMs(link) >= linkedAtMs;

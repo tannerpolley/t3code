@@ -8,9 +8,8 @@ export * as Schedule from "effect/Schedule";
 export * as Schema from "effect/Schema";
 
 export { daily, every, Tick, webhook, WebhookRequest } from "./triggers.ts";
-export { issues, pullRequests, threads } from "./forgeApi.ts";
+export { issues, pullRequests } from "./forgeApi.ts";
 export { cancel, runs, signal, signalAll, start, store, withdraw } from "./stepServices.ts";
-export { WorktreeRemoval } from "./WorkflowThreads.ts";
 export { Issue, IssueDetail, PullRequest, PullRequestStanding } from "./WorkflowForge.ts";
 export {
   invoke,

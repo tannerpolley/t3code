@@ -9,7 +9,6 @@ import {
 import * as Cause from "effect/Cause";
 import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
-import * as Schema from "effect/Schema";
 
 import * as IssueService from "../../../issue/IssueService.ts";
 import * as Orchestrator from "../../../orchestration-v2/Orchestrator.ts";
@@ -55,8 +54,6 @@ function listThreadIssues(
     })),
   };
 }
-
-const isIssueClaimedByChild = Schema.is(Orchestrator.IssueClaimedByChildError);
 
 const make = Effect.gen(function* () {
   const engine = yield* Orchestrator.OrchestratorV2;
@@ -287,21 +284,8 @@ const make = Effect.gen(function* () {
             displayKey: issue.displayKey,
             title: issue.title,
             source: "agent",
-            overrideBy: input.allowConcurrentChildren ? (yield* callerThread())?.id : undefined,
           })
-          .pipe(
-            Effect.catchCause(
-              (
-                cause,
-              ): Effect.Effect<
-                never,
-                Orchestrator.IssueClaimedByChildError | IssueLinkFailedError
-              > => {
-                const error = Cause.squash(cause);
-                return isIssueClaimedByChild(error) ? Effect.fail(error) : linkFailure(cause);
-              },
-            ),
-          );
+          .pipe(Effect.catchCause(linkFailure));
         return { ...identityOf(target), url, alreadyLinked };
       }),
     ),
