@@ -13006,5 +13006,15 @@
   "68375af4f21f9e39": "Investigador",
   "203199494de634a1": "Probador",
   "a10ffc530930e59e": "{pullRequest}, {checks}",
-  "538a08613f07568c": "{count, plural, one {{count} agente hijo} other {{count} agentes hijos}}"
+  "538a08613f07568c": "{count, plural, one {{count} agente hijo} other {{count} agentes hijos}}",
+  "192de2b9424e1da6": "Pregunta de un agente",
+  "8c402efda5958564": "1 de {total}",
+  "612e62ca46e29fb4": "Cerrar preguntas",
+  "b8ec2dcad78ef780": "O escribe tu propia respuesta",
+  "258946ae98c11cea": "Tu propia respuesta",
+  "735fa8731e0670ae": "Enviar",
+  "7f8cb8174c6d288f": "Siguiente",
+  "11abf926b7c35e41": "Más tarde",
+  "7a79d0584eb504c0": "Abrir preguntas automáticamente",
+  "7ea072883f6d0a22": "Muestra un panel flotante cuando un agente hace una pregunta en otro hilo."
 }
