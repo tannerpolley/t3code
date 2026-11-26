@@ -112,10 +112,7 @@ const [group] = buildSidebarProjectSnapshots({
 
 it("shows Boring sidebar device preferences read-only while a project is selected", async () => {
   await ensureClientSettingsHydrated();
-  await persistClientSettingsPatch(
-    { boringSidebarEnabled: true, boringSidebarMultilineRows: false },
-    async () => {},
-  );
+  await persistClientSettingsPatch({ boringSidebarEnabled: true }, async () => {});
   await using screen = await render(
     <SettingsScopeProvider search={{ project: group!.projectKey }} onChange={() => {}}>
       <LabsSettingsPanel />
@@ -123,7 +120,6 @@ it("shows Boring sidebar device preferences read-only while a project is selecte
     { router: "/settings/labs" },
   );
 
-  for (const name of ["Boring sidebar (group by project)", "Two-line folder rows"]) {
-    expect(screen.getByRole("switch", { name }).element().closest("[inert]")).not.toBeNull();
-  }
+  const toggle = screen.getByRole("switch", { name: "Boring sidebar (group by project)" });
+  expect(toggle.element().closest("[inert]")).not.toBeNull();
 });

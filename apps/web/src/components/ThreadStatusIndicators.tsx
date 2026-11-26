@@ -13,6 +13,7 @@ import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell
 import {
   resolveEnvironmentMachineKind,
   type EnvironmentId,
+  type PullRequestChecksState,
   type ScopedThreadRef,
   type ThreadLinkedPullRequest,
   type ThreadPullRequestLink,
@@ -87,6 +88,7 @@ export type ThreadPr = VcsStatusResult["pr"];
 
 export interface LinkedThreadPullRequestStatus {
   readonly pr: NonNullable<ThreadPr>;
+  readonly checksState?: PullRequestChecksState | null | undefined;
   readonly sourceControlProvider: NonNullable<VcsStatusResult["sourceControlProvider"]>;
 }
 
@@ -117,6 +119,7 @@ export function useLinkedThreadPullRequest(
     ? null
     : {
         pr: pullRequestDetailToVcsStatus(detail),
+        checksState: detail.checksState,
         sourceControlProvider: {
           kind: detail.provider,
           name: sourceControlClients.get(detail.provider).label,
@@ -191,6 +194,7 @@ export function linkedPullRequestSnapshotStatus(
       baseRef: snapshot.baseBranch,
       ...(snapshot.updatedAt === null ? {} : { updatedAt: snapshot.updatedAt }),
     },
+    checksState: snapshot.checksState,
     sourceControlProvider: { kind, name: kind, baseUrl: "" },
   };
 }
@@ -788,10 +792,7 @@ export function ThreadTerminalStatusButton({
       }
       label={label}
     >
-      <TerminalIcon
-        className="size-3.5 motion-safe:animate-status-pulse"
-        onAnimationStart={synchronizeTerminalPulse}
-      />
+      <TerminalIcon className="size-3.5" />
     </SharedTooltipTrigger>
   );
 }

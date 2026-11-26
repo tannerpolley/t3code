@@ -134,6 +134,7 @@ const make = Effect.fn("WorkflowEngine.make")(function* (
       create: plain(trackers.issues.create),
     },
     pullRequests: {
+      cleanUpCreator: plain(trackers.pullRequests.cleanUpCreator),
       list: plain(trackers.pullRequests.list),
       read: plain(trackers.pullRequests.read),
       comment: plain(trackers.pullRequests.comment),

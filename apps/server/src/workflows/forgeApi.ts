@@ -57,6 +57,9 @@ export const issues = {
  */
 export const pullRequests = {
   opened: pullRequestsOpened,
+  cleanUpCreator: (
+    head: Parameters<WorkflowForge["Service"]["pullRequests"]["cleanUpCreator"]>[0],
+  ) => forge((all) => all.pullRequests.cleanUpCreator(head)),
   list: (query: Parameters<WorkflowForge["Service"]["pullRequests"]["list"]>[0]) => {
     checkOptions("pullRequests.list", query, ["project", "state", "query", "limit"]);
     return forge((all) => all.pullRequests.list(query));

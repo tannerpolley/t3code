@@ -25,6 +25,7 @@ export type IssueRowTarget = Pick<
 function IssueRowImpl({
   entry,
   selected,
+  wrapTitle,
   showScope,
   showTracker,
   environmentLabel,
@@ -32,6 +33,7 @@ function IssueRowImpl({
 }: {
   entry: EnvironmentIssueEntry;
   selected: boolean;
+  wrapTitle?: boolean | undefined;
   /** Only when the list spans more than one scope, where the key alone is ambiguous. */
   showScope: boolean;
   /** Only when the list spans more than one tracker or host. */
@@ -58,6 +60,7 @@ function IssueRowImpl({
         <PullRequestRowLines
           number={<span className={PULL_REQUEST_ROW_NUMBER_CLASS}>{entry.displayKey}</span>}
           title={entry.title}
+          wrapTitle={wrapTitle ?? false}
           status={
             <>
               {entry.assignees.length > 0 ? (
