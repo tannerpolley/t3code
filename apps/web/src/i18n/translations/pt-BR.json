@@ -5915,6 +5915,11 @@
   "225329f7d2adc33c": "Deixe um comentário",
   "35e166912930bdbf": "Publicando comentário",
   "7bfcbdbcdd625603": "Comentar",
+  "e0a65d9eacbe986c": "Não é possível mover esta issue para {state}.",
+  "625d3c2d5a909f67": "Mover issue {issue}",
+  "0a01ceef6a792429": "Visualização de issues",
+  "8d4ecde8e10db0f1": "Lista",
+  "c0ea55a477221d2f": "Quadro",
   "02de63c7a0ebd94c": "Carregando issue",
   "80bb66fe1c536e09": "Abrir no {provider}",
   "6899d17239a4b04e": [

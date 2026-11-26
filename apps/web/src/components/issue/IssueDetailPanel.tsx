@@ -75,6 +75,7 @@ import { WorkflowRunsAbout } from "../workflows/WorkflowRunsAbout";
 import { ReactionBar } from "../pullRequest/PullRequestReactions";
 import { PullRequestsUnavailableState } from "../pullRequest/PullRequestsUnavailableState";
 import { issueTrackerPresentation, issueStatePresentation } from "./issuePresentation";
+import { useSetIssueState } from "./useSetIssueState";
 
 function IssueReactionBar({
   reactions,
@@ -444,7 +445,7 @@ export function IssueDetailPanel({
 
   const loadComments = useAtomCommand(issueEnvironment.comments, { reportFailure: false });
   const update = useAtomCommand(issueEnvironment.update, { reportFailure: false });
-  const setState = useAtomCommand(issueEnvironment.setState, { reportFailure: false });
+  const setState = useSetIssueState();
   const openLink = useOpenLink(threadRef);
   const [editing, setEditing] = useState<"title" | "body" | null>(null);
   const [titleDraft, setTitleDraft] = useState("");
@@ -535,23 +536,8 @@ export function IssueDetailPanel({
   const moveTo = async (state: string) => {
     if (changingState) return;
     setChangingState(true);
-    const result = await setState({
-      environmentId,
-      input: { ...reference, state },
-    });
+    await setState(environmentId, { ...reference, state });
     setChangingState(false);
-    if (result._tag === "Failure") {
-      toastManager.add({
-        type: "error",
-        title: m(msg("The state could not be changed")),
-        description: readableFailure(
-          squashAtomCommandFailure(result),
-          m(msg("The tracker refused it.")),
-        ),
-      });
-      return;
-    }
-    refreshIssueLists(environmentId);
   };
 
   const currentStateIcon = (

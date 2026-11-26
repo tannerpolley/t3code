@@ -27,7 +27,9 @@ import {
   CalendarArrowDownIcon,
   CircleCheckIcon,
   ClockIcon,
+  Columns3Icon,
   LayersIcon,
+  ListIcon,
   PenLineIcon,
   Plug2Icon,
   UserCheckIcon,
@@ -39,6 +41,7 @@ import { Fragment, useEffect, useEffectEvent, useState, type ReactNode } from "r
 import { RefreshIcon } from "~/components/ui/refresh-icon";
 import { IssueDetailPanel } from "~/components/issue/IssueDetailPanel";
 import { IssueRow, type IssueRowTarget } from "~/components/issue/IssueRow";
+import { IssueBoard } from "~/components/issue/IssueBoard";
 import {
   issueListPreferences,
   writeIssueListPreferences,
@@ -78,6 +81,7 @@ import {
 } from "~/components/ui/empty";
 import { Menu, MenuPopup, MenuRadioGroup, MenuRadioItem, MenuTrigger } from "~/components/ui/menu";
 import { SidebarInset } from "~/components/ui/sidebar";
+import { Toggle, ToggleGroup } from "~/components/ui/toggle-group";
 import { isCommandPaletteOpen } from "~/commandPaletteBus";
 import { isElectron } from "~/env";
 import { useLiveRefresh } from "~/hooks/useLiveRefresh";
@@ -102,6 +106,7 @@ import { useDebouncedValue } from "~/state/queries";
 import { primaryServerKeybindingsAtom } from "~/state/server";
 
 export interface IssuesSearch extends IssueListPreferences {
+  readonly view?: "board" | undefined;
   readonly selectedEnvironmentId?: EnvironmentId | undefined;
   readonly selectedProjectId?: ProjectId | undefined;
   /** Part of the panel tab's identity, so a link reopens the tab a row press opened. */
@@ -335,6 +340,7 @@ export function IssuesPage() {
     const next: IssuesSearch = {
       who: merged.who ?? search.who,
       status: merged.status ?? search.status,
+      ...(merged.view === "board" ? { view: merged.view } : {}),
       ...(merged.hideProjects?.length ? { hideProjects: merged.hideProjects } : {}),
       ...(merged.host ? { host: merged.host } : {}),
       q: merged.q || undefined,
@@ -567,6 +573,31 @@ export function IssuesPage() {
       {groups.map((group) => {
         const presentation = issueTrackerPresentation(group.tracker.tracker);
         const showScope = new Set(group.rows.map((row) => row.scope.toLowerCase())).size > 1;
+        const renderRow = (row: (typeof group.rows)[number]) => {
+          const key = issueEntryKey(row);
+          const selected =
+            renderedSurface?.kind === "issue" &&
+            renderedSurface.environmentId === row.environmentId &&
+            issueEntryKey({
+              ...renderedSurface,
+              host: renderedSurface.host ?? "",
+              projectId: renderedSurface.projectId as ProjectId,
+            }) === key;
+          return (
+            <IssueRow
+              key={`${row.environmentId}:${key}`}
+              entry={row}
+              selected={selected}
+              wrapTitle={search.view === "board"}
+              showScope={search.view !== "board" && showScope}
+              showTracker={showTracker}
+              {...(capableEnvironments.length > 1 && environmentLabels.has(row.environmentId)
+                ? { environmentLabel: environmentLabels.get(row.environmentId) }
+                : {})}
+              onSelect={selectEntry}
+            />
+          );
+        };
         return (
           <section key={issueTrackerKey(group.tracker)} className="flex flex-col gap-1">
             <h2 className="flex items-center gap-1.5 px-3 text-xs font-medium text-muted-foreground">
@@ -606,30 +637,11 @@ export function IssuesPage() {
                 )}
               </p>
             ) : null}
-            {group.rows.map((row) => {
-              const key = issueEntryKey(row);
-              const selected =
-                renderedSurface?.kind === "issue" &&
-                renderedSurface.environmentId === row.environmentId &&
-                issueEntryKey({
-                  ...renderedSurface,
-                  host: renderedSurface.host ?? "",
-                  projectId: renderedSurface.projectId as ProjectId,
-                }) === key;
-              return (
-                <IssueRow
-                  key={`${row.environmentId}:${key}`}
-                  entry={row}
-                  selected={selected}
-                  showScope={showScope}
-                  showTracker={showTracker}
-                  {...(capableEnvironments.length > 1 && environmentLabels.has(row.environmentId)
-                    ? { environmentLabel: environmentLabels.get(row.environmentId) }
-                    : {})}
-                  onSelect={selectEntry}
-                />
-              );
-            })}
+            {search.view === "board" ? (
+              <IssueBoard rows={group.rows} renderRow={renderRow} />
+            ) : (
+              group.rows.map(renderRow)
+            )}
             {group.more.map((environmentId) => {
               const moreFailure = held.get(environmentId)?.moreFailure ?? null;
               return (
@@ -718,6 +730,22 @@ export function IssuesPage() {
                     onSubmit={(q) => updateSearch({ q: q || undefined })}
                   />
                 </div>
+                <ToggleGroup
+                  aria-label={gt("Issue layout")}
+                  value={[search.view ?? "list"]}
+                  onValueChange={([view]) => {
+                    if (view) updateSearch({ view: view === "board" ? "board" : undefined });
+                  }}
+                >
+                  <Toggle value="list">
+                    <ListIcon aria-hidden className="size-4" />
+                    <T context="issue layout">List</T>
+                  </Toggle>
+                  <Toggle value="board">
+                    <Columns3Icon aria-hidden className="size-4" />
+                    <T context="issue layout">Board</T>
+                  </Toggle>
+                </ToggleGroup>
                 <PullRequestCompactFilterMenu
                   label={gt("Sort issues")}
                   triggerIcon={<ArrowDownUpIcon aria-hidden className="size-4" />}

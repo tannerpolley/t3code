@@ -5917,6 +5917,11 @@
   "225329f7d2adc33c": "Leave a comment",
   "35e166912930bdbf": "Posting comment",
   "7bfcbdbcdd625603": "Comment",
+  "e0a65d9eacbe986c": "This issue cannot move to {state}.",
+  "625d3c2d5a909f67": "Move issue {issue}",
+  "0a01ceef6a792429": "Issue layout",
+  "8d4ecde8e10db0f1": "List",
+  "c0ea55a477221d2f": "Board",
   "02de63c7a0ebd94c": "Loading issue",
   "80bb66fe1c536e09": "Open on {provider}",
   "6899d17239a4b04e": [

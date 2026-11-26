@@ -5916,6 +5916,11 @@
   "225329f7d2adc33c": "Lämna en kommentar",
   "35e166912930bdbf": "Publicerar kommentar",
   "7bfcbdbcdd625603": "Kommentera",
+  "e0a65d9eacbe986c": "Det går inte att flytta det här ärendet till {state}.",
+  "625d3c2d5a909f67": "Flytta ärende {issue}",
+  "0a01ceef6a792429": "Ärendevy",
+  "8d4ecde8e10db0f1": "Lista",
+  "c0ea55a477221d2f": "Tavla",
   "02de63c7a0ebd94c": "Läser in ärende",
   "80bb66fe1c536e09": "Öppna på {provider}",
   "6899d17239a4b04e": [
