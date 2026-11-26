@@ -140,7 +140,9 @@ export function SidebarSectionHeader(props: {
         data-testid={`sidebar-${shelf}-shelf-toggle`}
         accessory={<span className="font-normal tabular-nums">{props.count}</span>}
       >
-        {props.label}
+        <span className="text-(length:--sidebar-section-text-size,var(--text-xs)) leading-tight">
+          {props.label}
+        </span>
       </CollapsibleSectionHeader>
     </SortableSidebarMarker>
   );
