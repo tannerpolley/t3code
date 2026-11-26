@@ -1881,27 +1881,29 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   };
 
   const readOpensPullRequestsInRightPanel = useStableCallback(() => routeThreadRef !== null);
-  const handleThreadClick = (event: ReactMouseEvent, threadRef: ScopedThreadRef) => {
-    if (isSidebarNestedLinkClick(event.target)) return;
-    const isMac = isMacPlatform(navigator.platform);
-    const isModClick = isMac ? event.metaKey : event.ctrlKey;
-    const threadKey = scopedThreadKey(threadRef);
-    if (isModClick) {
-      event.preventDefault();
-      toggleThreadSelection(threadKey);
-      return;
-    }
-    if (event.shiftKey) {
-      event.preventDefault();
-      rangeSelectTo(threadKey, orderedThreadKeysRef.current);
-      return;
-    }
-    // macOS keeps counting quick clicks across rows, so only the open row's trailing click is a double-click.
-    if (isTrailingDoubleClick(event.detail) && routeThreadKey === threadKey) {
-      return;
-    }
-    navigateToThread(threadRef);
-  };
+  const handleThreadClick = useStableCallback(
+    (event: ReactMouseEvent, threadRef: ScopedThreadRef) => {
+      if (isSidebarNestedLinkClick(event.target)) return;
+      const isMac = isMacPlatform(navigator.platform);
+      const isModClick = isMac ? event.metaKey : event.ctrlKey;
+      const threadKey = scopedThreadKey(threadRef);
+      if (isModClick) {
+        event.preventDefault();
+        toggleThreadSelection(threadKey);
+        return;
+      }
+      if (event.shiftKey) {
+        event.preventDefault();
+        rangeSelectTo(threadKey, orderedThreadKeysRef.current);
+        return;
+      }
+      // macOS keeps counting quick clicks across rows, so only the open row's trailing click is a double-click.
+      if (isTrailingDoubleClick(event.detail) && routeThreadKey === threadKey) {
+        return;
+      }
+      navigateToThread(threadRef);
+    },
+  );
 
   // Snapshot navigation before partition mutation; background parks use a null plan.
   const planForwardNavigation = (
