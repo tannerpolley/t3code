@@ -288,6 +288,8 @@ export const IssueListInput = Schema.Struct({
   ),
   /** Narrows to one host, named as the host itself. Absent means every host the workspace has. */
   host: Schema.optional(TrimmedNonEmptyString),
+  /** Narrows the listing to this repository or tracker scope. */
+  scope: Schema.optional(TrimmedNonEmptyString),
   /** Rows per scope, which with a continuation is rows per slice. */
   limit: Schema.optional(Schema.Int.check(Schema.isBetween({ minimum: 1, maximum: 200 }))),
   /** Carry on from an earlier answer: only the scopes named here are read, one slice each. */

@@ -270,7 +270,7 @@ it("app-stream-assistant-turn", async () => {
   const counted = await measure(async () => {
     let text = "";
     for (let delta = 0; delta < STREAM_DELTAS; delta++) {
-      text += `word${delta}\n\n`;
+      text += `word${delta} model:codex/gpt-5.4\n\n`;
       await act(() =>
         emitThreadEvent(LIVE, {
           type: "turn-item.updated",
@@ -294,7 +294,7 @@ it("app-stream-assistant-turn", async () => {
   expect(counted.components.ConversationTimeline).toBeLessThanOrEqual(3);
   expect(counted.components.UserTimelineRow).toBeUndefined();
   expect(counted.components.AssistantTimelineRow).toBe(STREAM_DELTAS);
-  // Each delta adds a paragraph; finished blocks keep their render.
+  // Model mentions keep these paragraphs as React islands, so only the new one renders.
   expect(counted.components.MarkdownParagraph).toBe(STREAM_DELTAS);
   await report("app-stream-assistant-turn", [counted], { commits: false });
 });

@@ -46,7 +46,8 @@ import type { Project } from "../types";
 import Sidebar from "./Sidebar";
 import { THREAD_JUMP_HINT_SHOW_DELAY_MS } from "./Sidebar.logic";
 import { SortableThreadRow } from "./sidebar/SidebarThreadRow";
-import { SidebarProvider } from "./ui/sidebar";
+import { sidebarFamilyExpansion } from "./sidebar/sidebarFamilies";
+import { Sidebar as SidebarSurface, SidebarProvider } from "./ui/sidebar";
 
 vi.mock(import("../state/olderSettledShelf"), async (original) => {
   const actual = await original();
@@ -343,7 +344,7 @@ it("keeps a placed project row in keyboard order after sending, settling and rem
   await checkPlacement(reloaded);
 });
 
-it("keeps roles, status and links on one line and collapses finished child agents in place", async () => {
+it("orders sidebar row details and keeps a running family collapsed across a remount", async () => {
   using stack = new DisposableStack();
   const style = document.createElement("style");
   style.textContent = appCss;
@@ -351,7 +352,13 @@ it("keeps roles, status and links on one line and collapses finished child agent
   stack.defer(() => style.remove());
   const previousSettings = getClientSettings();
   stack.defer(() => __setClientSettingsForTests(previousSettings));
-  __setClientSettingsForTests({ ...DEFAULT_CLIENT_SETTINGS, boringSidebarEnabled: true });
+  __setClientSettingsForTests({
+    ...DEFAULT_CLIENT_SETTINGS,
+    boringSidebarEnabled: true,
+    sidebarAgentTextSize: 18,
+  });
+  const previousExpansion = sidebarFamilyExpansion.getState();
+  stack.defer(() => sidebarFamilyExpansion.setState(previousExpansion, true));
 
   const { environmentId, id: projectId, ...rest } = project("T3 Code");
   const parent = threadShell(projectId, 1);
@@ -382,6 +389,7 @@ it("keeps roles, status and links on one line and collapses finished child agent
     runtime: {
       status: "running" as const,
       activeRunId: run.runId,
+      activityStartedAt: time,
       providerInstanceId: root.providerInstanceId,
       providerName: null,
       lastError: null,
@@ -430,6 +438,7 @@ it("keeps roles, status and links on one line and collapses finished child agent
     delegatedRole: "review" as const,
     modelSelection: { ...root.modelSelection, model: "claude-opus-5-5" },
     latestRun: run,
+    lastVisitedAt: "2025-12-31T23:59:00.000Z",
   };
   const archived = {
     ...threadShell(projectId, 4),
@@ -489,9 +498,11 @@ it("keeps roles, status and links on one line and collapses finished child agent
   container.style.height = "760px";
   container.style.marginInlineStart = "auto";
   const reveal = { observedKey: null, pendingKey: null };
-  const tree = () => (
-    <SidebarProvider>
-      <Sidebar routeReveal={reveal} />
+  const tree = (key = "initial") => (
+    <SidebarProvider key={key}>
+      <SidebarSurface collapsible="none" className="h-[760px] w-full min-w-0">
+        <Sidebar routeReveal={reveal} />
+      </SidebarSurface>
     </SidebarProvider>
   );
 
@@ -511,20 +522,53 @@ it("keeps roles, status and links on one line and collapses finished child agent
   expect(implementor.element().closest("li")?.nextElementSibling).toBe(
     doneReviewer.element().closest("li"),
   );
-  const titleBox = implementor
-    .getByText("Implementor", { exact: true })
-    .element()
-    .getBoundingClientRect();
-  expect(titleBox.left).toBeGreaterThan(
-    parentRow.getByText(root.title, { exact: true }).element().getBoundingClientRect().left,
-  );
-  for (const text of ["Sol", "718", "709"]) {
-    const box = implementor.getByText(text, { exact: true }).element().getBoundingClientRect();
-    expect(Math.abs(box.top + box.height / 2 - titleBox.top - titleBox.height / 2)).toBeLessThan(2);
+  const count = parentRow.getByRole("button", { name: "2 child agents" });
+  await expect.element(count).toHaveAttribute("aria-expanded", "true");
+  await count.click();
+  await expect.element(implementor).not.toBeInTheDocument();
+  await screen.rerender(tree("remount"));
+  await expect.element(count).toHaveAttribute("aria-expanded", "false");
+  await expect.element(implementor).not.toBeInTheDocument();
+  {
+    using _timers = fakeTimers({ now: new Date(time) });
+    await act(() => (count.element() as HTMLButtonElement).click());
+    expect(implementor.getByText("0s", { exact: true }).element()).toBeVisible();
+    vi.advanceTimersByTime(1000);
+    expect(implementor.getByText("1s", { exact: true }).element()).toBeVisible();
   }
-  await expect
-    .element(implementor.getByRole("link", { name: /All checks have passed/ }))
-    .toBeVisible();
+  const titleLabel = implementor.getByText("Implementor", { exact: true }).element();
+  const row = implementor.element();
+  const spinner = row.querySelector(".lucide-loader-circle")!;
+  const model = implementor.getByText("Sol", { exact: true }).element();
+  const version = implementor.getByText("6.2", { exact: true }).element();
+  const issue = implementor.getByText("709", { exact: true }).element();
+  const titleBox = titleLabel.getBoundingClientRect();
+  expect(getComputedStyle(titleLabel).fontSize).toBe("18px");
+  const boxes = [model, version, titleLabel, issue, spinner].map((element) =>
+    element.getBoundingClientRect(),
+  );
+  for (const [index, box] of boxes.entries()) {
+    expect(Math.abs(box.top + box.height / 2 - titleBox.top - titleBox.height / 2)).toBeLessThan(2);
+    if (index > 0) expect(box.left).toBeGreaterThan(boxes[index - 1]!.left);
+  }
+  expect(getComputedStyle(spinner).animationTimingFunction).toBe("steps(8)");
+  await vi.waitFor(() => expect(getComputedStyle(spinner).animationPlayState).toBe("running"));
+  const item = row.closest("li")!;
+  item.style.marginBlockStart = "200vh";
+  await vi.waitFor(() => expect(getComputedStyle(spinner).animationPlayState).toBe("paused"));
+  item.style.removeProperty("margin-block-start");
+  await expect.element(implementor.getByText("718", { exact: true })).not.toBeInTheDocument();
+  expect(doneReviewer.element().querySelector(".bg-success")).toBeVisible();
+  vi.mocked(useThreadRouteTarget).mockReturnValue({
+    kind: "server",
+    threadRef: scopeThreadRef(environmentId, reviewer.id),
+  });
+  await screen.rerender(tree("remount"));
+  const openedReviewer = screen.getByRole("button", { name: /^Reviewer,/ });
+  await expect.element(openedReviewer).toHaveAttribute("aria-current", "page");
+  expect(openedReviewer.element().querySelector(".bg-success")).toBeNull();
+  vi.mocked(useThreadRouteTarget).mockReturnValue({ kind: "server", threadRef: rootRef });
+  await screen.rerender(tree("remount"));
   await expect.element(screen.getByText(child.title, { exact: true })).not.toBeInTheDocument();
   await implementor.getByText("Implementor", { exact: true }).hover();
   await expect.element(page.getByText(child.title, { exact: true })).toBeVisible();
@@ -538,12 +582,13 @@ it("keeps roles, status and links on one line and collapses finished child agent
     owner,
     archived,
   ]);
-  await screen.rerender(tree());
+  await screen.rerender(tree("remount"));
   await expect.element(screen.getByRole("button", { name: /^Implementor, Input,/ })).toBeVisible();
 
   vi.mocked(useQuietThreadShells).mockReturnValue([finished, reviewer, root, owner, archived]);
-  await screen.rerender(tree());
-  const count = parentRow.getByRole("button", { name: "2 child agents" });
+  await screen.rerender(tree("remount"));
+  await expect.element(count).toHaveAttribute("aria-expanded", "true");
+  await count.click();
   await expect.element(count).toHaveAttribute("aria-expanded", "false");
   await expect.element(doneReviewer).not.toBeInTheDocument();
   await count.click();

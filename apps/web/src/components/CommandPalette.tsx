@@ -305,6 +305,7 @@ import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 import { readPullRequestListPreferences } from "~/components/pullRequest/pullRequestListPreferences";
 import { readIssueListPreferences } from "~/components/issue/issueListPreferences";
 import { IssueGlyph } from "~/components/issue/issuePresentation";
+import { repoIssueBoardBinding } from "~/state/issues";
 import { useThreadRouteTarget } from "../hooks/useThreadRouteTarget";
 import { threadRecentUse } from "@t3tools/shared/paletteSearch";
 import { SharedTooltipTrigger } from "./ui/shared-tooltip";
@@ -759,13 +760,13 @@ function OpenCommandPaletteDialog(props: {
   const activeThreadKey = activeThread
     ? scopedThreadKey(scopeThreadRef(activeThread.environmentId, activeThread.id))
     : null;
-  const previewPanelThreadRef = activeThread
+  const panelThreadRef = activeThread
     ? scopeThreadRef(activeThread.environmentId, activeThread.id)
     : activeDraftThread
       ? scopeThreadRef(activeDraftThread.environmentId, activeDraftThread.threadId)
       : null;
   const activeThreadPreviewOpen = useRightPanelStore(
-    (state) => selectActiveRightPanel(state.byThreadKey, previewPanelThreadRef) === "preview",
+    (state) => selectActiveRightPanel(state.byThreadKey, panelThreadRef) === "preview",
   );
   const supportsThreadFind =
     environments.find((environment) => environment.environmentId === activeThread?.environmentId)
@@ -1777,6 +1778,22 @@ function OpenCommandPaletteDialog(props: {
       run: async () => {
         await navigate({ to: "/issues", search: readIssueListPreferences() });
       },
+    });
+  }
+
+  if (
+    panelThreadRef !== null &&
+    environments.find((environment) => environment.environmentId === panelThreadRef.environmentId)
+      ?.serverConfig?.environment.capabilities.issues === true &&
+    repoIssueBoardBinding(currentProject?.repositoryIdentity) !== undefined
+  ) {
+    actionItems.push({
+      kind: "action",
+      value: "action:repo-issue-board",
+      searchTerms: ["repo", "repository", "issues", "board"],
+      title: gt("Open repository issue board"),
+      icon: <IssueGlyph.issue className={ITEM_ICON_CLASS} />,
+      run: async () => useRightPanelStore.getState().openLinkedItems(panelThreadRef, true),
     });
   }
 

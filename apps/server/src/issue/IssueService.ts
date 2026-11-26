@@ -247,6 +247,7 @@ const make = Effect.gen(function* () {
     readonly projectId?: IssueListInput["projectId"];
     readonly excludeProjectIds?: IssueListInput["excludeProjectIds"];
     readonly host?: string | undefined;
+    readonly scope?: string | undefined;
     /** The link's `host:port`, for a host whose binding keeps its port. */
     readonly authority?: string | undefined;
   }) =>
@@ -294,12 +295,14 @@ const make = Effect.gen(function* () {
       ),
       Effect.map((bound) => {
         const host = filter.host?.trim().toLowerCase();
+        const scope = filter.scope?.trim().toLowerCase();
         const supported: SupportedProject[] = [];
         const unimplemented = new Map<
           string,
           { tracker: IssueTrackerKind; projectIds: Set<ProjectId> }
         >();
         for (const candidate of bound.flat()) {
+          if (scope !== undefined && candidate.scope.toLowerCase() !== scope) continue;
           if (host !== undefined && candidate.host !== host && candidate.host !== filter.authority)
             continue;
           const api = registry.get(candidate.tracker);
@@ -361,6 +364,8 @@ const make = Effect.gen(function* () {
     const { supported, unimplemented } = yield* listProjects({
       projectId: input.projectId,
       excludeProjectIds: input.excludeProjectIds,
+      scope: input.scope,
+      ...(input.scope === undefined ? {} : { host: input.host }),
     });
     const host = input.host?.trim().toLowerCase();
     const limit = input.limit ?? DEFAULT_LIST_LIMIT;

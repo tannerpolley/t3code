@@ -2,6 +2,14 @@ import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environ
 import { threadRuntimeIsActive } from "@t3tools/client-runtime/state/models";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 
+import { createStore } from "zustand";
+
+export const sidebarFamilyExpansion = createStore<ReadonlyMap<string, boolean>>(() => new Map());
+
+export function setSidebarFamilyExpanded(key: string, expanded: boolean) {
+  sidebarFamilyExpansion.setState((current) => new Map(current).set(key, expanded), true);
+}
+
 export function indexSidebarChildren(
   threads: readonly EnvironmentThreadShell[],
   delegatedUnderParent: ReadonlySet<string>,
@@ -35,7 +43,6 @@ export interface SidebarFamilyRow {
   parentKey: string | undefined;
   depth: number;
   descendantCount: number;
-  hasLiveChildren: boolean;
   expanded: boolean;
   children: readonly SidebarFamilyRow[];
 }
@@ -65,8 +72,7 @@ export function sidebarFamilyRows(
           (count, child) => count + 1 + child.row.descendantCount,
           0,
         ),
-        hasLiveChildren,
-        expanded: hasLiveChildren || (expansion.get(key) ?? hasChildRoute),
+        expanded: expansion.get(key) ?? (hasLiveChildren || hasChildRoute),
         children: children.map((child) => child.row),
       },
       live:

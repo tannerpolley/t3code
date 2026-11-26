@@ -252,6 +252,25 @@ const SOURCE_CONTROL_HOST_TERMS = sourceControlClients.definitions
   .flatMap((definition) => [definition.label, ...(definition.searchKeywords ?? [])])
   .join(" ");
 
+export const SIDEBAR_TEXT_SIZE_SETTINGS = [
+  {
+    key: "sidebarSectionTextSize",
+    id: "sidebar-section-text-size",
+    title: msg("Section text size"),
+  },
+  {
+    key: "sidebarProjectTextSize",
+    id: "sidebar-project-text-size",
+    title: msg("Project text size"),
+  },
+  { key: "sidebarThreadTextSize", id: "sidebar-thread-text-size", title: msg("Thread text size") },
+  {
+    key: "sidebarAgentTextSize",
+    id: "sidebar-agent-text-size",
+    title: msg("Child agent text size"),
+  },
+] as const;
+
 export const SETTINGS_SEARCH_ITEMS = [
   {
     id: "storage-worktree-keep-when",
@@ -506,6 +525,11 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/general",
     searchTerms: [msg("hide fold running monitoring threads inbox sidebar shelf")],
   },
+  ...SIDEBAR_TEXT_SIZE_SETTINGS.map(({ id, title }) => ({
+    id,
+    title,
+    to: "/settings/general" as const,
+  })),
   {
     id: "boring-sidebar",
     title: msg("Boring sidebar (group by project)"),
@@ -813,6 +837,11 @@ export const SETTINGS_SEARCH_ITEMS = [
     title: msg("Show skills in slash menu"),
     to: "/settings/chat",
     searchTerms: [msg("command menu dollar $ slash /")],
+  },
+  {
+    id: "open-questions-automatically",
+    title: msg("Open questions automatically"),
+    to: "/settings/chat",
   },
   {
     id: "composer-rich-text",

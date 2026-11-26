@@ -7,8 +7,14 @@ import {
   type MergedIssueList,
 } from "@t3tools/client-runtime/state/issues";
 import { useAtomValue } from "@effect/atom-react";
+import { sourceControlClients } from "@t3tools/client-runtime/source-control-clients";
 import { selectEnvironmentQueryData } from "@t3tools/client-runtime/state/runtime";
-import type { EnvironmentId, IssueState, ThreadIssueLink } from "@t3tools/contracts";
+import type {
+  EnvironmentId,
+  IssueState,
+  RepositoryIdentity,
+  ThreadIssueLink,
+} from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
 
 import { connectionAtomRuntime } from "../connection/runtime";
@@ -19,6 +25,10 @@ import { formatEnvironmentQueryError, useEnvironmentQuery } from "./query";
 export type { IssueListTarget };
 
 export const issueEnvironment = createIssueEnvironmentAtoms(connectionAtomRuntime);
+
+export function repoIssueBoardBinding(identity: RepositoryIdentity | null | undefined) {
+  return sourceControlClients.issueBindings(identity)[0];
+}
 
 const linkedIssueRef = ({ projectId, tracker, host, scope, key }: ThreadIssueLink) => ({
   projectId,

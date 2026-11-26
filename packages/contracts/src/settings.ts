@@ -413,6 +413,17 @@ export const VoiceTranscriptionDestination = Schema.Union([
 ]);
 export type VoiceTranscriptionDestination = typeof VoiceTranscriptionDestination.Type;
 
+export const MIN_SIDEBAR_TEXT_SIZE = 9;
+export const MAX_SIDEBAR_TEXT_SIZE = 20;
+export const SidebarTextSize = Schema.NullOr(
+  Schema.Int.check(
+    Schema.isBetween({ minimum: MIN_SIDEBAR_TEXT_SIZE, maximum: MAX_SIDEBAR_TEXT_SIZE }),
+  ),
+);
+const sidebarTextSizeSetting = SidebarTextSize.pipe(
+  Schema.withDecodingDefault(Effect.succeed(null)),
+);
+
 export const ClientSettingsSchema = Schema.Struct({
   notificationMode: NotificationMode.pipe(
     Schema.withDecodingDefault(Effect.succeed("off" as const)),
@@ -532,6 +543,7 @@ export const ClientSettingsSchema = Schema.Struct({
 
   pullRequestLinksOpenInApp: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
 
+  openQuestionsAutomatically: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   composerRichTextEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
   sendShortcut: Schema.Literals(["enter", "mod-enter-multiline", "mod-enter"]).pipe(
     Schema.withDecodingDefault(Effect.succeed("enter")),
@@ -563,6 +575,10 @@ export const ClientSettingsSchema = Schema.Struct({
     Schema.withDecodingDefault(Effect.succeed({})),
   ),
   sidebarWorkingShelfEnabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
+  sidebarSectionTextSize: sidebarTextSizeSetting,
+  sidebarProjectTextSize: sidebarTextSizeSetting,
+  sidebarThreadTextSize: sidebarTextSizeSetting,
+  sidebarAgentTextSize: sidebarTextSizeSetting,
   sidebarProjectGroupingMode: SidebarProjectGroupingMode.pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_PROJECT_GROUPING_MODE)),
   ),
@@ -2182,6 +2198,7 @@ export const ClientSettingsPatch = Schema.Struct({
     Schema.Record(TrimmedNonEmptyString, PullRequestMergeMethod),
   ),
   pullRequestLinksOpenInApp: Schema.optionalKey(Schema.Boolean),
+  openQuestionsAutomatically: Schema.optionalKey(Schema.Boolean),
   composerRichTextEnabled: Schema.optionalKey(Schema.Boolean),
   sendShortcut: Schema.optionalKey(Schema.Literals(["enter", "mod-enter-multiline", "mod-enter"])),
   followUpBehavior: Schema.optionalKey(Schema.Literals(["queue", "steer"])),
@@ -2196,6 +2213,10 @@ export const ClientSettingsPatch = Schema.Struct({
   threadDetailsUsageEnabled: Schema.optionalKey(Schema.Boolean),
   threadDetailsItems: Schema.optionalKey(Schema.Record(Schema.String, Schema.Boolean)),
   sidebarWorkingShelfEnabled: Schema.optionalKey(Schema.Boolean),
+  sidebarSectionTextSize: Schema.optionalKey(SidebarTextSize),
+  sidebarProjectTextSize: Schema.optionalKey(SidebarTextSize),
+  sidebarThreadTextSize: Schema.optionalKey(SidebarTextSize),
+  sidebarAgentTextSize: Schema.optionalKey(SidebarTextSize),
   sidebarProjectGroupingMode: Schema.optionalKey(SidebarProjectGroupingMode),
   sidebarProjectGroupingOverrides: Schema.optionalKey(
     Schema.Record(TrimmedNonEmptyString, SidebarProjectGroupingMode),

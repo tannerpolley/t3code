@@ -20,10 +20,13 @@ import {
   DEFAULT_UNIFIED_SETTINGS,
   type DiffLayout,
   MAX_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
+  MAX_SIDEBAR_TEXT_SIZE,
   MIN_SIDEBAR_AUTO_SETTLE_AFTER_DAYS,
+  MIN_SIDEBAR_TEXT_SIZE,
   type ResponseStreamingMode,
   type QuitConfirmationMode,
   SidebarProjectSortOrder,
+  SidebarTextSize,
   ScreenReaderAnnouncements,
   ToolCallVisibility,
 } from "@t3tools/contracts/settings";
@@ -117,7 +120,7 @@ import {
   SettingsRow,
   SettingsSection,
 } from "./settingsLayout";
-import { useSearchableSetting } from "./settingsSearch";
+import { SIDEBAR_TEXT_SIZE_SETTINGS, useSearchableSetting } from "./settingsSearch";
 import { nativeLanguageName, SYSTEM_LANGUAGE } from "@t3tools/client-runtime/locales";
 import { SUPPORTED_LOCALES } from "../../i18n/locales";
 import { BackgroundActivitySettingsRow } from "./BackgroundActivitySettings";
@@ -149,6 +152,11 @@ const SIDEBAR_PROJECT_SORT_ORDER_LABELS: Record<SidebarProjectSortOrder, string>
   created_at: msg("Created at"),
   manual: msg("Manual"),
 };
+const isSidebarTextSize = Schema.is(SidebarTextSize);
+const sidebarTextSizes = Array.from(
+  { length: MAX_SIDEBAR_TEXT_SIZE - MIN_SIDEBAR_TEXT_SIZE + 1 },
+  (_, index) => index + MIN_SIDEBAR_TEXT_SIZE,
+);
 const isSidebarProjectSortOrder = Schema.is(SidebarProjectSortOrder);
 
 const TIMESTAMP_FORMAT_LABELS = {
@@ -547,6 +555,9 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.sidebarWorkingShelfEnabled !== DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled
       ? [gt("Working section")]
       : []),
+    ...SIDEBAR_TEXT_SIZE_SETTINGS.filter(({ key }) => settings[key] !== null).map(({ title }) =>
+      messages(title),
+    ),
     ...(settings.sidebarAutoSettleAfterDays !== DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays
       ? [gt("Auto-settle inactive threads")]
       : []),
@@ -584,6 +595,9 @@ export function useSettingsRestore(onRestored?: () => void) {
       : []),
     ...(settings.showSkillsInSlashMenu !== DEFAULT_UNIFIED_SETTINGS.showSkillsInSlashMenu
       ? [gt("Show skills in slash menu")]
+      : []),
+    ...(settings.openQuestionsAutomatically !== DEFAULT_UNIFIED_SETTINGS.openQuestionsAutomatically
+      ? [gt("Open questions automatically")]
       : []),
     ...(settings.composerRichTextEnabled !== DEFAULT_UNIFIED_SETTINGS.composerRichTextEnabled
       ? [gt("Rich text composer")]
@@ -726,6 +740,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       diffLayout: DEFAULT_UNIFIED_SETTINGS.diffLayout,
       proactivePanelsEnabled: DEFAULT_UNIFIED_SETTINGS.proactivePanelsEnabled,
       showSkillsInSlashMenu: DEFAULT_UNIFIED_SETTINGS.showSkillsInSlashMenu,
+      openQuestionsAutomatically: DEFAULT_UNIFIED_SETTINGS.openQuestionsAutomatically,
       composerRichTextEnabled: DEFAULT_UNIFIED_SETTINGS.composerRichTextEnabled,
       sendShortcut: DEFAULT_UNIFIED_SETTINGS.sendShortcut,
       followUpBehavior: DEFAULT_UNIFIED_SETTINGS.followUpBehavior,
@@ -739,6 +754,10 @@ export function useSettingsRestore(onRestored?: () => void) {
       sidebarProjectGroupingMode: DEFAULT_UNIFIED_SETTINGS.sidebarProjectGroupingMode,
       sidebarProjectSortOrder: DEFAULT_UNIFIED_SETTINGS.sidebarProjectSortOrder,
       sidebarWorkingShelfEnabled: DEFAULT_UNIFIED_SETTINGS.sidebarWorkingShelfEnabled,
+      sidebarSectionTextSize: DEFAULT_UNIFIED_SETTINGS.sidebarSectionTextSize,
+      sidebarProjectTextSize: DEFAULT_UNIFIED_SETTINGS.sidebarProjectTextSize,
+      sidebarThreadTextSize: DEFAULT_UNIFIED_SETTINGS.sidebarThreadTextSize,
+      sidebarAgentTextSize: DEFAULT_UNIFIED_SETTINGS.sidebarAgentTextSize,
       sidebarAutoSettleAfterDays: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleAfterDays,
       sidebarAutoSettleKeepPullRequests: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleKeepPullRequests,
       sidebarAutoSettleOnMerge: DEFAULT_UNIFIED_SETTINGS.sidebarAutoSettleOnMerge,
@@ -985,6 +1004,40 @@ export function GeneralSettingsPanel() {
             />
           }
         />
+        {SIDEBAR_TEXT_SIZE_SETTINGS.map(({ key, id }) => {
+          const row = setting(id);
+          const size = settings[key];
+          return (
+            <SettingsRow
+              key={key}
+              {...row}
+              control={
+                <Select
+                  value={size === null ? "default" : String(size)}
+                  onValueChange={(value) => {
+                    if (value === null) return;
+                    const next = value === "default" ? null : Number(value);
+                    if (isSidebarTextSize(next)) updateSettings({ [key]: next });
+                  }}
+                >
+                  <SelectTrigger size="sm" className="w-full sm:w-28" aria-label={row.title}>
+                    <SelectValue>{size === null ? gt("Default") : `${size}px`}</SelectValue>
+                  </SelectTrigger>
+                  <SelectPopup align="end" alignItemWithTrigger={false}>
+                    <SelectItem hideIndicator value="default">
+                      <T>Default</T>
+                    </SelectItem>
+                    {sidebarTextSizes.map((option) => (
+                      <SelectItem hideIndicator key={option} value={String(option)}>
+                        {option}px
+                      </SelectItem>
+                    ))}
+                  </SelectPopup>
+                </Select>
+              }
+            />
+          );
+        })}
       </SettingsSection>
 
       <SettingsSection id="confirmations" title={gt("Confirmations")}>
@@ -1271,6 +1324,17 @@ export function ChatSettingsPanel() {
                 updateSettings({ composerRichTextEnabled: Boolean(checked) })
               }
               aria-label={gt("Rich text composer")}
+            />
+          }
+        />
+        <SettingsRow
+          {...setting("open-questions-automatically")}
+          description={gt("Show a floating panel when an agent asks a question in another thread.")}
+          control={
+            <Switch
+              checked={settings.openQuestionsAutomatically}
+              onCheckedChange={(checked) => updateSettings({ openQuestionsAutomatically: checked })}
+              aria-label={gt("Open questions automatically")}
             />
           }
         />

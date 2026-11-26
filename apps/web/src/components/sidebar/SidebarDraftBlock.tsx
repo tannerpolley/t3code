@@ -190,7 +190,9 @@ const SidebarDraftRow = memo(function SidebarDraftRow(props: {
               {props.jumpLabel ? <JumpHintBadge label={props.jumpLabel} /> : null}
             </span>
           </div>
-          <div className="mt-0.5 truncate text-sm font-medium text-foreground/90">{preview}</div>
+          <div className="mt-0.5 truncate text-(length:--sidebar-thread-text-size,var(--text-sm)) leading-tight font-medium text-foreground/90">
+            {preview}
+          </div>
         </div>
       </div>
     </li>
