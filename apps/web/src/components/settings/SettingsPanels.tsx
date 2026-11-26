@@ -585,6 +585,9 @@ export function useSettingsRestore(onRestored?: () => void) {
     ...(settings.showSkillsInSlashMenu !== DEFAULT_UNIFIED_SETTINGS.showSkillsInSlashMenu
       ? [gt("Show skills in slash menu")]
       : []),
+    ...(settings.openQuestionsAutomatically !== DEFAULT_UNIFIED_SETTINGS.openQuestionsAutomatically
+      ? [gt("Open questions automatically")]
+      : []),
     ...(settings.composerRichTextEnabled !== DEFAULT_UNIFIED_SETTINGS.composerRichTextEnabled
       ? [gt("Rich text composer")]
       : []),
@@ -726,6 +729,7 @@ export function useSettingsRestore(onRestored?: () => void) {
       diffLayout: DEFAULT_UNIFIED_SETTINGS.diffLayout,
       proactivePanelsEnabled: DEFAULT_UNIFIED_SETTINGS.proactivePanelsEnabled,
       showSkillsInSlashMenu: DEFAULT_UNIFIED_SETTINGS.showSkillsInSlashMenu,
+      openQuestionsAutomatically: DEFAULT_UNIFIED_SETTINGS.openQuestionsAutomatically,
       composerRichTextEnabled: DEFAULT_UNIFIED_SETTINGS.composerRichTextEnabled,
       sendShortcut: DEFAULT_UNIFIED_SETTINGS.sendShortcut,
       followUpBehavior: DEFAULT_UNIFIED_SETTINGS.followUpBehavior,
@@ -1271,6 +1275,17 @@ export function ChatSettingsPanel() {
                 updateSettings({ composerRichTextEnabled: Boolean(checked) })
               }
               aria-label={gt("Rich text composer")}
+            />
+          }
+        />
+        <SettingsRow
+          {...setting("open-questions-automatically")}
+          description={gt("Show a floating panel when an agent asks a question in another thread.")}
+          control={
+            <Switch
+              checked={settings.openQuestionsAutomatically}
+              onCheckedChange={(checked) => updateSettings({ openQuestionsAutomatically: checked })}
+              aria-label={gt("Open questions automatically")}
             />
           }
         />

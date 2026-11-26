@@ -20,6 +20,7 @@ interface PendingUserInputPanelProps {
   cwd: string | undefined;
   threadRef: ScopedThreadRef;
   disabled?: boolean;
+  keyboardShortcuts?: boolean;
   respondingRequestIds: RuntimeRequestId[];
   answers: Record<string, PendingUserInputDraftAnswer>;
   questionIndex: number;
@@ -33,6 +34,7 @@ export const ComposerPendingUserInputPanel = memo(function ComposerPendingUserIn
   cwd,
   threadRef,
   disabled = false,
+  keyboardShortcuts = true,
   respondingRequestIds,
   answers,
   questionIndex,
@@ -51,6 +53,7 @@ export const ComposerPendingUserInputPanel = memo(function ComposerPendingUserIn
       cwd={cwd}
       threadRef={threadRef}
       disabled={disabled}
+      keyboardShortcuts={keyboardShortcuts}
       isResponding={respondingRequestIds.includes(activePrompt.requestId)}
       answers={answers}
       questionIndex={questionIndex}
@@ -66,6 +69,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   cwd,
   threadRef,
   disabled,
+  keyboardShortcuts,
   isResponding,
   answers,
   questionIndex,
@@ -77,6 +81,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   cwd: string | undefined;
   threadRef: ScopedThreadRef;
   disabled: boolean;
+  keyboardShortcuts: boolean;
   isResponding: boolean;
   answers: Record<string, PendingUserInputDraftAnswer>;
   questionIndex: number;
@@ -130,7 +135,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
   }, [activeQuestion?.id, disabled]);
 
   const handleOptionSelection = (questionId: string, optionValue: string) => {
-    if (disabled || isResponding) return;
+    if (responseDisabled) return;
     if (activeQuestion?.multiSelect) {
       onToggleOption(questionId, optionValue);
       return;
@@ -151,7 +156,14 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
 
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- subscribes a document keydown listener for digit shortcuts while a question is answerable
   useEffect(() => {
-    if (!activeQuestion || responseDisabled || isCollapsed || backgroundThread) return;
+    if (
+      !keyboardShortcuts ||
+      !activeQuestion ||
+      responseDisabled ||
+      isCollapsed ||
+      backgroundThread
+    )
+      return;
     const handler = (event: globalThis.KeyboardEvent) => {
       if (event.defaultPrevented || event.metaKey || event.ctrlKey || event.altKey) return;
       const target = event.target;
@@ -178,7 +190,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
     };
     document.addEventListener("keydown", handler);
     return () => document.removeEventListener("keydown", handler);
-  }, [activeQuestion, backgroundThread, isCollapsed, responseDisabled]);
+  }, [activeQuestion, backgroundThread, isCollapsed, keyboardShortcuts, responseDisabled]);
 
   if (!activeQuestion) {
     return null;
@@ -244,7 +256,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
               render={<span role="button" tabIndex={0} />}
               aria-label={gt("Dismiss question without answering")}
               title={gt("Dismiss question without answering")}
-              disabled={isResponding}
+              disabled={disabled || isResponding}
               data-pending-user-input-dismiss
               onClick={(event) => {
                 event.preventDefault();
@@ -284,8 +296,8 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                   questionTextAlign,
                   "group flex w-full items-start gap-2.5 rounded-md bg-transparent py-1.5 ps-2 sm:ps-1.5 outline-none transition-colors duration-150 focus-visible:ring-1 focus-visible:ring-inset focus-visible:ring-primary/25",
                   isSelected ? "text-foreground" : "text-foreground/70 hover:bg-muted/30",
-                  (disabled || isResponding) && "opacity-50 cursor-not-allowed",
-                  !disabled && !isResponding && "cursor-pointer",
+                  responseDisabled && "opacity-50 cursor-not-allowed",
+                  !responseDisabled && "cursor-pointer",
                 );
                 // The h-5 slots match the label's line box, so the indicator and shortcut stay on its first line.
                 const content = (
@@ -310,7 +322,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                         </span>
                       ) : null}
                     </div>
-                    {index < 9 ? (
+                    {keyboardShortcuts && index < 9 ? (
                       <span className="flex h-5 w-7 shrink-0 items-center justify-center sm:w-6">
                         <Kbd>{index + 1}</Kbd>
                       </span>
@@ -323,7 +335,7 @@ const ComposerPendingUserInputCard = memo(function ComposerPendingUserInputCard(
                     <button
                       type="button"
                       aria-pressed={isSelected}
-                      disabled={disabled || isResponding}
+                      disabled={responseDisabled}
                       onClick={() => {
                         handleOptionSelection(activeQuestion.id, optionValue);
                       }}

@@ -815,6 +815,11 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: [msg("command menu dollar $ slash /")],
   },
   {
+    id: "open-questions-automatically",
+    title: msg("Open questions automatically"),
+    to: "/settings/chat",
+  },
+  {
     id: "composer-rich-text",
     title: msg("Rich text composer"),
     to: "/settings/chat",
