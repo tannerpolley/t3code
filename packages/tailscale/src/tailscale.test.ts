@@ -20,6 +20,7 @@ import {
   parseTailscaleSshEnabled,
   parseTailscaleStatus,
   probeTailscaleHttpsEndpoint,
+  probeTailnetPeer,
   readTailscaleSshEnabled,
   readTailscaleStatus,
   TailscaleCommandExitError,
@@ -102,6 +103,48 @@ function layerMockSpawner(
 }
 
 describe("tailscale", () => {
+  it.effect.each([
+    { online: true, path: "10.0.0.72:41641", endpoint: "10.0.0.72" },
+    { online: true, path: "[fd00::72]:41641", endpoint: "fd00::72" },
+    { online: true, path: "DERP(den)", endpoint: null },
+    { online: true, path: "peer-relay(100.70.9.109:41641)", endpoint: null },
+    { online: false, path: "10.0.0.72:41641", endpoint: null },
+  ])("resolves pixel-9 with online=$online and path=$path", ({ online, path, endpoint }) =>
+    Effect.gen(function* () {
+      const commands: string[][] = [];
+      const result = yield* probeTailnetPeer("pixel-9").pipe(
+        Effect.provide(
+          layerMockSpawner((_command, args) => {
+            commands.push([...args]);
+            return {
+              stdout:
+                args[0] === "status"
+                  ? JSON.stringify({
+                      BackendState: "Running",
+                      Peer: {
+                        node: {
+                          HostName: "Pixel 9",
+                          DNSName: "pixel-9.tail.ts.net.",
+                          Online: online,
+                          CurAddr: "10.0.0.72:41641",
+                          TailscaleIPs: ["100.70.9.108"],
+                        },
+                      },
+                    })
+                  : `pong from pixel-9 (100.70.9.108) via DERP(den) in 60ms\npong from pixel-9 (100.70.9.108) via ${path} in 1ms\n`,
+            };
+          }),
+        ),
+      );
+      assert.equal(result, endpoint);
+      assert.deepStrictEqual(commands, [
+        ["status", "--json"],
+        ...(online
+          ? [["ping", "--c=3", "--timeout=1s", "--until-direct=true", "100.70.9.108"]]
+          : []),
+      ]);
+    }),
+  );
   it.effect("does not treat a non-T3 response on the HTTPS probe path as reachable", () =>
     Effect.gen(function* () {
       for (const [body, status] of [

@@ -13027,5 +13027,13 @@
   "7f8cb8174c6d288f": "Próximo",
   "11abf926b7c35e41": "Depois",
   "7a79d0584eb504c0": "Abra perguntas automaticamente",
-  "7ea072883f6d0a22": "Mostra um painel flutuante quando um agente faz uma pergunta em outra conversa."
+  "7ea072883f6d0a22": "Mostra um painel flutuante quando um agente faz uma pergunta em outra conversa.",
+  "71f8e3f9f3efc6c5": "Celular para encaminhar notificações",
+  "1351099395ec0ac4": "Valores diferentes",
+  "09bbffae7a01aef8": "Digite o nome do seu celular no Tailscale. Os alertas das conversas chegam ao computador quando o celular está na rede local do host e ao celular quando está fora dela. Deixe em branco para desativar.",
+  "f9dd8ad51e9f5d1b": "URL do servidor ntfy",
+  "77fff3a927ba1009": "O servidor que envia alertas para o celular. O padrão é https://ntfy.sh.",
+  "a4739b023dc96d9a": "Tópico do ntfy",
+  "fa74035ae7d791cf": "Inscreva-se neste tópico no aplicativo ntfy do seu celular. Mantenha o tópico em segredo. Deixe em branco para desativar os alertas do ntfy.",
+  "b9418d854bf3a44b": "Gerar tópico"
 }

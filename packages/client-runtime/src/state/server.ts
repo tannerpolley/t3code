@@ -605,8 +605,14 @@ export const makeEnvironmentServerConfigState = Effect.fn("EnvironmentServerConf
         usageLimitSources: _sources,
         lastEventLoopStall: _stall,
         serverTime: _serverTime,
-        ...cacheable
+        ...rest
       } = config;
+      const cacheable = {
+        ...rest,
+        settings: rest.settings.notificationNtfyTopic
+          ? { ...rest.settings, notificationNtfyTopic: "" }
+          : rest.settings,
+      };
       if (lastPersisted !== undefined && sameCacheValue(lastPersisted, cacheable)) {
         return true;
       }

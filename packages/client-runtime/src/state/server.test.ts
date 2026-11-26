@@ -1429,7 +1429,7 @@ describe("server state projection", () => {
     }),
   );
 
-  it.effect("shows a reported stall but never caches it", () =>
+  it.effect("keeps the stall and the ntfy topic in the live config only", () =>
     Effect.gen(function* () {
       const events = yield* Queue.unbounded<ServerConfigStreamEvent>();
       const client = {
@@ -1477,7 +1477,11 @@ describe("server state projection", () => {
           yield* Queue.offer(events, {
             version: 1,
             type: "snapshot",
-            config: { ...CONFIG, lastEventLoopStall },
+            config: {
+              ...CONFIG,
+              lastEventLoopStall,
+              settings: { ...CONFIG.settings, notificationNtfyTopic: "private-ntfy-topic" },
+            },
           });
           const projected = yield* SubscriptionRef.changes(state).pipe(
             Stream.filter((value) =>
@@ -1488,14 +1492,16 @@ describe("server state projection", () => {
             ),
             Stream.runHead,
           );
-          expect(Option.getOrThrow(Option.getOrThrow(projected)).config.lastEventLoopStall).toEqual(
-            lastEventLoopStall,
-          );
+          const liveConfig = Option.getOrThrow(Option.getOrThrow(projected)).config;
+          expect(liveConfig.lastEventLoopStall).toEqual(lastEventLoopStall);
+          expect(liveConfig.settings.notificationNtfyTopic).toBe("private-ntfy-topic");
         }),
       );
 
       // Cached, it would read as a fresh freeze on the next launch.
-      expect(yield* Queue.take(savedConfigs)).not.toHaveProperty("lastEventLoopStall");
+      const cachedConfig = yield* Queue.take(savedConfigs);
+      expect(cachedConfig).not.toHaveProperty("lastEventLoopStall");
+      expect(cachedConfig.settings.notificationNtfyTopic).toBe("");
     }),
   );
 });

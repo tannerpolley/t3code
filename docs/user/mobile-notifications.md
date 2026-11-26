@@ -13,3 +13,13 @@ Ordinary alerts stay quiet while the mobile app is in the foreground. Ongoing ac
 Android notifications require Android 7.0 or newer and Google Play services. Android 16 and newer can promote ongoing activity to a Live Update, subject to system settings and device support. Other devices show a regular ongoing notification. If Live Updates don't appear on Android 16 or newer, check **Live Update Settings** in T3 Code's **Settings → Notifications**. Android 7's battery-saving modes can delay removal of expired cards.
 
 Notification permission and Android notification channels are controlled in system Settings. Background delivery requires T3 Connect; a direct or Tailscale connection alone does not enable push notifications. The mobile app does not need to maintain a connection to your environment. Force-stopping the Android app in system Settings prevents push delivery until you open it again.
+
+## Route thread alerts by phone presence
+
+In the desktop or web app, open **Settings → General → Notifications**. Select the environment that runs Tailscale and enter your phone’s Tailscale name under **Phone for notification routing**. Keep thread notifications enabled on the computer. Clear the phone name to turn off routing.
+
+When the environment reaches the phone directly on its local network, input requests, approvals, completions, and failures use desktop system notifications. When the phone is away or unreachable, they use mobile push. Live Activities and Android ongoing activity cards may lag while the phone is home. After you leave, the phone can alert for pending requests and results that are still current.
+
+For the Android fork, install ntfy on your phone. In the same settings section, keep **ntfy server URL** at its default or enter your own ntfy server. Under **ntfy topic**, choose **Generate topic** and subscribe to that topic on the same server in ntfy. Keep the topic private. Anyone who knows an unprotected topic on ntfy.sh can read or post to it. Alerts contain the project, thread title or role, and status. Clear the topic to turn off ntfy alerts.
+
+Tap an ntfy alert to open its thread. If you have both Android apps installed, both register the same link scheme. Select the fork if Android asks which app to open.

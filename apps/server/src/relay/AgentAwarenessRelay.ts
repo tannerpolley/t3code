@@ -54,6 +54,8 @@ import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.t
 import { isSnoozed } from "../orchestration-v2/ThreadSettlementService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import { forkParked } from "../serverActivation.ts";
+import * as NotificationPresence from "./NotificationPresence.ts";
+import * as NtfyAlerts from "./NtfyAlerts.ts";
 
 export class AgentAwarenessRelay extends Context.Service<
   AgentAwarenessRelay,
@@ -151,17 +153,24 @@ function shouldPublishAgentAwarenessEvent(
 }
 
 export const makeAgentAwarenessPublishWorker = Effect.fnUntraced(function* <R>(
-  publish: (threadId: ThreadId) => Effect.Effect<void, never, R>,
+  publish: (threadId: ThreadId, replayOnly: boolean) => Effect.Effect<void, never, R>,
 ) {
-  const queued = new Set<ThreadId>();
+  const queued = new Map<ThreadId, boolean>();
   const worker = yield* makeDrainableWorker((threadId: ThreadId) =>
-    Effect.sync(() => queued.delete(threadId)).pipe(Effect.andThen(publish(threadId))),
-  );
-  const enqueue = (threadId: ThreadId) =>
     Effect.suspend(() => {
-      if (queued.has(threadId)) return Effect.void;
+      const replayOnly = queued.get(threadId) === true;
+      queued.delete(threadId);
+      return publish(threadId, replayOnly);
+    }),
+  );
+  const enqueue = (threadId: ThreadId, replayOnly = false) =>
+    Effect.suspend(() => {
+      if (queued.has(threadId)) {
+        if (!replayOnly) queued.set(threadId, false);
+        return Effect.void;
+      }
       // Remove queued IDs when processing starts so publication can queue one later update.
-      queued.add(threadId);
+      queued.set(threadId, replayOnly);
       return worker.enqueue(threadId);
     }).pipe(Effect.uninterruptible);
   return { enqueue, drain: worker.drain };
@@ -183,6 +192,26 @@ function agentAwarenessPublishIdentity(
 }
 
 const CLEARED_PUBLISH_IDENTITY = agentAwarenessPublishIdentity(null);
+
+function alertIdentity(
+  state: RelayAgentActivityState | null,
+  subagentWait: SubagentRequestAwareness | null,
+  thread: AgentAwarenessThread | null,
+): string | null {
+  switch (state?.phase) {
+    case "waiting_for_approval":
+    case "waiting_for_input":
+      return JSON.stringify([
+        state.phase,
+        subagentWait?.requestId ?? thread?.pendingRuntimeRequest?.id,
+      ]);
+    case "completed":
+    case "failed":
+      return JSON.stringify([state.phase, thread?.latestRunId]);
+    default:
+      return null;
+  }
+}
 
 // A published tombstone stays recorded so repeats are skipped, but it is not live state.
 function hasLivePublishedState(
@@ -327,12 +356,12 @@ function resolveAgentAwarenessRelayPublishSnapshot(input: {
   readonly environmentId: EnvironmentId;
   readonly thread: Option.Option<AgentAwarenessThread>;
   readonly project: Option.Option<Project>;
-  readonly pendingSubagentRequest: SubagentRequestAwareness | null;
+  readonly pendingSubagentRequest: AwarenessSubagentRequest | null;
 }): {
   readonly projectId: string | null;
   readonly state: RelayAgentActivityState | null;
   /** The child request behind the state's wait, when the parent isn't waiting itself. */
-  readonly subagentWait: SubagentRequestAwareness | null;
+  readonly subagentWait: AwarenessSubagentRequest | null;
   readonly reason: "snapshot" | "thread-not-found" | "project-not-found";
 } {
   if (Option.isNone(input.thread)) {
@@ -372,6 +401,9 @@ function resolveAgentAwarenessRelayPublishSnapshot(input: {
     reason: "snapshot",
   };
 }
+
+type AwarenessSubagentRequest = SubagentRequestAwareness &
+  Pick<AgentAwarenessThread, "delegatedRole">;
 
 // Checked at completion time, so a completion processed after the wake stays silent too.
 function snoozedCompletion(
@@ -426,6 +458,8 @@ export function resolveAgentAwarenessRelayActiveThreadIds(input: {
 /** @public */
 export const make = Effect.gen(function* () {
   const secrets = yield* ServerSecretStore.ServerSecretStore;
+  const presence = yield* NotificationPresence.NotificationPresence;
+  const ntfy = yield* NtfyAlerts.NtfyAlerts;
   const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
   const threads = yield* ThreadManagement.ThreadManagementService;
   const projects = yield* ProjectService.ProjectService;
@@ -434,6 +468,9 @@ export const make = Effect.gen(function* () {
   const scope = yield* Effect.scope;
   const startedAt = (yield* DateTime.now).epochMilliseconds;
   const catchUpRequests = yield* Queue.dropping<void>(1);
+  const withheldWake = yield* Queue.dropping<void>(1);
+  const withheldAlerts = new Map<ThreadId, { identity: string; replayedAt?: string }>();
+  const notifiedByNtfy = new Map<ThreadId, string>();
   const publishedStateByThreadRef = yield* Ref.make(new Map<ThreadId, string>());
   // Android keys alerts by phase and time, so a child's unchanged request keeps
   // its first alert time through parent renames, relinks and the parent's own requests.
@@ -480,7 +517,10 @@ export const make = Effect.gen(function* () {
   const publishConfirmDeadlines = new Map<ThreadId, number>();
   // Threads whose confirmation holds a completion, so a thread that settles during the hold still alerts.
   const heldCompletions = new Set<ThreadId>();
-  let schedulePublishConfirm: (threadId: ThreadId) => Effect.Effect<void> = () => Effect.void;
+  let schedulePublishConfirm: (
+    threadId: ThreadId,
+    replayOnly?: boolean,
+  ) => Effect.Effect<void> = () => Effect.void;
   const publishRetries = new Map<
     ThreadId,
     { readonly attempts: number; timer: Fiber.Fiber<void> | undefined }
@@ -493,7 +533,8 @@ export const make = Effect.gen(function* () {
   const cancelPublishRetries = Effect.suspend(() =>
     Effect.forEach([...publishRetries.keys()], cancelPublishRetry, { discard: true }),
   );
-  let schedulePublishRetry: (threadId: ThreadId) => Effect.Effect<void> = () => Effect.void;
+  let schedulePublishRetry: (threadId: ThreadId, replayOnly: boolean) => Effect.Effect<void> = () =>
+    Effect.void;
   let enqueueTopLevelPublish: (threadId: ThreadId) => Effect.Effect<void> = () => Effect.void;
   const resetPublishedConnection = Effect.gen(function* () {
     publishedRelayConfig = undefined;
@@ -503,32 +544,33 @@ export const make = Effect.gen(function* () {
     yield* Ref.set(publishedStateByThreadRef, new Map());
   });
 
-  const publishThreadUnsafe = Effect.fn("publishThreadUnsafe")(function* (threadId: ThreadId) {
+  const publishThreadUnsafe = Effect.fn("publishThreadUnsafe")(function* (
+    threadId: ThreadId,
+    replayOnly: boolean,
+  ) {
+    const ntfyDestination = yield* ntfy.destination;
     const publishAgentActivity = yield* readPublishAgentActivityEnabled;
-    if (!publishAgentActivity) {
+    const relayConfig = publishAgentActivity ? yield* readRelayConfig : null;
+    if (!relayConfig && !ntfyDestination) {
       yield* cancelPublishRetries;
       yield* resetPublishedConnection;
-      yield* Effect.logDebug("agent activity publish skipped; publication disabled", {
-        threadId,
-      });
-      return;
-    }
-    const relayConfig = yield* readRelayConfig;
-    if (!relayConfig) {
-      yield* cancelPublishRetries;
-      yield* resetPublishedConnection;
-      yield* Effect.logDebug("agent activity publish skipped; relay link credentials unavailable", {
-        threadId,
-      });
+      withheldAlerts.clear();
+      notifiedByNtfy.clear();
+      yield* Effect.logDebug(
+        publishAgentActivity
+          ? "agent activity publish skipped; relay link credentials unavailable"
+          : "agent activity publish skipped; publication disabled",
+        { threadId },
+      );
       return;
     }
     if (
-      publishedRelayConfig?.url !== relayConfig.url ||
-      publishedRelayConfig.issuer !== relayConfig.issuer ||
-      publishedRelayConfig.environmentCredential !== relayConfig.environmentCredential
+      publishedRelayConfig?.url !== relayConfig?.url ||
+      publishedRelayConfig?.issuer !== relayConfig?.issuer ||
+      publishedRelayConfig?.environmentCredential !== relayConfig?.environmentCredential
     ) {
       yield* resetPublishedConnection;
-      publishedRelayConfig = relayConfig;
+      publishedRelayConfig = relayConfig ?? undefined;
     }
     const environmentId = yield* serverEnvironment.getEnvironmentId;
 
@@ -537,6 +579,7 @@ export const make = Effect.gen(function* () {
       readonly state: RelayAgentActivityState | null;
       readonly reason: string;
     }) {
+      if (!relayConfig) return;
       if (cachedRelayClient === undefined) {
         cachedRelayClient = yield* makeRelayClient(relayConfig);
       }
@@ -587,6 +630,7 @@ export const make = Effect.gen(function* () {
       !isListedThreadLineage(threadShell.lineage) &&
       !hasLivePublishedState(yield* Ref.get(publishedStateByThreadRef), threadId)
     ) {
+      withheldAlerts.delete(threadId);
       // Subagents and side chats have no relay rows to clear; per-event tombstones would needlessly redeliver user aggregates.
       return;
     }
@@ -605,20 +649,41 @@ export const make = Effect.gen(function* () {
     });
     const publishIdentity = agentAwarenessPublishIdentity(snapshot.state, snapshot.subagentWait);
     const publishedStateByThread = yield* Ref.get(publishedStateByThreadRef);
+    const alert = alertIdentity(snapshot.state, snapshot.subagentWait, Option.getOrNull(thread));
+    const relayNeedsPublish =
+      relayConfig !== null && publishedStateByThread.get(threadId) !== publishIdentity;
+    const ntfyNeedsAlert =
+      ntfyDestination !== null && alert !== null && notifiedByNtfy.get(threadId) !== alert;
+    if (Option.isNone(thread)) notifiedByNtfy.delete(threadId);
+    const withheld = withheldAlerts.get(threadId);
+    const pendingReplay = withheld?.identity === alert ? withheld : undefined;
+    if (!pendingReplay) {
+      if (withheld !== undefined) {
+        withheldAlerts.delete(threadId);
+        publishConfirmDeadlines.delete(threadId);
+        heldCompletions.delete(threadId);
+      }
+      if (replayOnly) return;
+    }
     if (
       (snapshot.state?.phase === "completed" || snapshot.state?.phase === "failed") &&
       !hasLivePublishedState(publishedStateByThread, threadId)
     ) {
-      if (Option.isNone(thread) || !terminalWorkSinceStart(thread.value, startedAt)) return;
+      if (Option.isNone(thread) || !terminalWorkSinceStart(thread.value, startedAt)) {
+        withheldAlerts.delete(threadId);
+        return;
+      }
     }
     if (
-      publishedStateByThread.get(threadId) === publishIdentity &&
+      !relayNeedsPublish &&
+      !ntfyNeedsAlert &&
       // A held completion settled after an earlier clear still has to alert.
       !(snapshot.state === null && heldCompletions.has(threadId))
     ) {
       // Clear moot deadlines so later transient nulls cannot skip their deferral window.
       publishConfirmDeadlines.delete(threadId);
       heldCompletions.delete(threadId);
+      withheldAlerts.delete(threadId);
       yield* Effect.logDebug("agent activity publish skipped; projected state unchanged", {
         environmentId,
         threadId,
@@ -626,6 +691,33 @@ export const make = Effect.gen(function* () {
       });
       return;
     }
+
+    const phonePresence = alert !== null ? yield* presence.read() : "off";
+    if (phonePresence === "home" && alert !== null) {
+      const wake = withheldAlerts.size === 0;
+      withheldAlerts.set(threadId, pendingReplay ?? { identity: alert });
+      publishConfirmDeadlines.delete(threadId);
+      heldCompletions.delete(threadId);
+      if (wake) yield* Queue.offer(withheldWake, undefined);
+      return;
+    }
+    if (!relayNeedsPublish && ntfyNeedsAlert && phonePresence !== "away") {
+      withheldAlerts.delete(threadId);
+      return;
+    }
+
+    // Each destination acknowledges independently so a retry cannot resend the other alert.
+    const sendNtfy = Effect.fnUntraced(function* (
+      state: RelayAgentActivityState,
+      identity: string,
+      delegatedRole: AgentAwarenessThread["delegatedRole"],
+    ) {
+      if (!ntfyDestination || notifiedByNtfy.get(threadId) === identity) return null;
+      const result = yield* ntfy.send(ntfyDestination, state, delegatedRole).pipe(Effect.result);
+      if (result._tag === "Failure") return result.failure;
+      notifiedByNtfy.set(threadId, identity);
+      return null;
+    });
 
     // Confirm tombstones over live state to avoid removing active cards.
     // Confirm completion: a run can end moments before its continuation starts, and the relay
@@ -644,7 +736,7 @@ export const make = Effect.gen(function* () {
           statePhase: snapshot.state?.phase ?? null,
           shell: describeThreadShellForAwareness(thread),
         });
-        yield* schedulePublishConfirm(threadId);
+        yield* schedulePublishConfirm(threadId, replayOnly);
         return;
       }
       if (nowMs < deadline) {
@@ -671,18 +763,29 @@ export const make = Effect.gen(function* () {
               pendingSubagentRequest: null,
             })
           : null;
-      if (unsettled?.state?.phase === "completed") {
+      const unsettledPresence =
+        unsettled?.state?.phase === "completed" ? yield* presence.read() : "home";
+      if (unsettled?.state?.phase === "completed" && unsettledPresence !== "home") {
         const completion = unsettled.state;
-        yield* publishState({
-          projectId: unsettled.projectId,
-          state: completion,
-          reason: unsettled.reason,
-        }).pipe(withRelayClientTracing);
+        const identity = alertIdentity(completion, null, Option.getOrNull(thread));
+        const ntfyFailure =
+          unsettledPresence === "away" && identity !== null
+            ? yield* sendNtfy(completion, identity, threadShell?.delegatedRole)
+            : null;
+        const completionIdentity = agentAwarenessPublishIdentity(completion);
+        if (relayConfig && publishedStateByThread.get(threadId) !== completionIdentity) {
+          yield* publishState({
+            projectId: unsettled.projectId,
+            state: completion,
+            reason: unsettled.reason,
+          }).pipe(withRelayClientTracing);
+          yield* Ref.update(publishedStateByThreadRef, (publishedStates) =>
+            new Map(publishedStates).set(threadId, completionIdentity),
+          );
+        }
+        if (ntfyFailure) return yield* ntfyFailure;
         heldCompletions.delete(threadId);
         publishConfirmDeadlines.set(threadId, nowMs + 5_000);
-        yield* Ref.update(publishedStateByThreadRef, (publishedStates) =>
-          new Map(publishedStates).set(threadId, agentAwarenessPublishIdentity(completion)),
-        );
         yield* schedulePublishConfirm(threadId);
         return;
       }
@@ -706,25 +809,43 @@ export const make = Effect.gen(function* () {
 
     const childRequestId = snapshot.subagentWait?.requestId;
     const childAlert = childAlertByThread.get(threadId);
-    const state =
-      snapshot.state !== null &&
-      childRequestId !== undefined &&
-      childAlert?.requestId === childRequestId
-        ? { ...snapshot.state, updatedAt: childAlert.updatedAt }
-        : snapshot.state;
-    yield* publishState({
-      projectId: snapshot.projectId,
-      state,
-      reason: snapshot.reason,
-    }).pipe(withRelayClientTracing);
-    if (state !== null && childRequestId !== undefined) {
-      childAlertByThread.set(threadId, { requestId: childRequestId, updatedAt: state.updatedAt });
+    // The hosted relay discards old alerts. Use the first replay attempt's time on every retry.
+    if (pendingReplay && pendingReplay.replayedAt === undefined) {
+      pendingReplay.replayedAt = DateTime.formatIso(yield* DateTime.now);
     }
+    const updatedAt =
+      childRequestId !== undefined && childAlert?.requestId === childRequestId
+        ? childAlert.updatedAt
+        : pendingReplay?.replayedAt;
+    const state =
+      snapshot.state !== null && updatedAt !== undefined
+        ? { ...snapshot.state, updatedAt }
+        : snapshot.state;
+    const ntfyFailure =
+      ntfyNeedsAlert && phonePresence === "away" && state !== null && alert !== null
+        ? yield* sendNtfy(
+            state,
+            alert,
+            snapshot.subagentWait?.delegatedRole ?? threadShell?.delegatedRole,
+          )
+        : null;
+    if (relayNeedsPublish) {
+      yield* publishState({
+        projectId: snapshot.projectId,
+        state,
+        reason: snapshot.reason,
+      }).pipe(withRelayClientTracing);
+      if (state !== null && childRequestId !== undefined) {
+        childAlertByThread.set(threadId, { requestId: childRequestId, updatedAt: state.updatedAt });
+      }
+      yield* Ref.update(publishedStateByThreadRef, (publishedStates) =>
+        new Map(publishedStates).set(threadId, publishIdentity),
+      );
+    }
+    if (ntfyFailure) return yield* ntfyFailure;
+    withheldAlerts.delete(threadId);
     publishConfirmDeadlines.delete(threadId);
     heldCompletions.delete(threadId);
-    yield* Ref.update(publishedStateByThreadRef, (publishedStates) =>
-      new Map(publishedStates).set(threadId, publishIdentity),
-    );
   });
 
   const readAwarenessThread = (threadId: ThreadId) =>
@@ -772,7 +893,7 @@ export const make = Effect.gen(function* () {
   // The map can miss a child's update while publishing is off or the relay is
   // unlinked, so each waiting child is re-read before its parent is published.
   const currentSubagentRequestFor = Effect.fnUntraced(function* (topLevelThreadId: ThreadId) {
-    let pending: SubagentRequestAwareness | null = null;
+    let pending: AwarenessSubagentRequest | null = null;
     for (const [childId, entry] of subagentRequests) {
       if (entry.topLevelThreadId !== topLevelThreadId) continue;
       const child = yield* readAwarenessThread(childId);
@@ -788,27 +909,31 @@ export const make = Effect.gen(function* () {
           requestId,
           updatedAt: child.updatedAt,
           waitsForInput: child.pendingRuntimeRequest?.kind === "user_input",
+          ...(child.delegatedRole === undefined ? {} : { delegatedRole: child.delegatedRole }),
         };
       }
     }
     return pending;
   });
 
-  const processThreadPublish = Effect.fnUntraced(function* (threadId: ThreadId) {
+  const processThreadPublish = Effect.fnUntraced(function* (
+    threadId: ThreadId,
+    replayOnly: boolean,
+  ) {
     const retry = publishRetries.get(threadId);
     if (retry?.timer !== undefined) {
       const timer = retry.timer;
       retry.timer = undefined;
       yield* Fiber.interrupt(timer);
     }
-    yield* publishThreadUnsafe(threadId).pipe(
+    yield* publishThreadUnsafe(threadId, replayOnly).pipe(
       Effect.tap(() => cancelPublishRetry(threadId)),
       Effect.catchCause((cause) => {
         if (Cause.hasInterruptsOnly(cause)) return Effect.void;
         return Effect.logWarning("agent activity publish failed", {
           threadId,
           cause: Cause.pretty(cause),
-        }).pipe(Effect.andThen(schedulePublishRetry(threadId)));
+        }).pipe(Effect.andThen(schedulePublishRetry(threadId, replayOnly)));
       }),
       Effect.withSpan("AgentAwarenessRelay.publishThread"),
     );
@@ -821,7 +946,7 @@ export const make = Effect.gen(function* () {
   const publishThread: AgentAwarenessRelay["Service"]["publishThread"] = (threadId) =>
     enqueueThreadPublish(threadId).pipe(Effect.andThen(worker.drain));
 
-  schedulePublishRetry = Effect.fnUntraced(function* (threadId: ThreadId) {
+  schedulePublishRetry = Effect.fnUntraced(function* (threadId: ThreadId, replayOnly: boolean) {
     const attempts = publishRetries.get(threadId)?.attempts ?? 0;
     const delayMs =
       RELAY_AGENT_ACTIVITY_RETRY_DELAYS_MS[attempts] ?? RELAY_AGENT_ACTIVITY_STEADY_RETRY_DELAY_MS;
@@ -843,7 +968,7 @@ export const make = Effect.gen(function* () {
         Effect.suspend(() => {
           if (publishRetries.get(threadId) !== retry) return Effect.void;
           retry.timer = undefined;
-          return worker.enqueue(threadId);
+          return worker.enqueue(threadId, replayOnly);
         }),
       ),
       Effect.forkIn(scope),
@@ -856,22 +981,23 @@ export const make = Effect.gen(function* () {
   });
 
   const publishActiveThreadsUnsafe = Effect.gen(function* () {
+    const ntfyDestination = yield* ntfy.destination;
     const relayUrl = yield* readSecretString(RELAY_URL_SECRET).pipe(
       Effect.orElseSucceed(() => null),
     );
-    if (!relayUrl) {
+    if (!relayUrl && !ntfyDestination) {
       yield* Effect.logDebug("agent activity snapshot skipped; relay link credentials unavailable");
       return "unlinked" as const;
     }
     const publishAgentActivity = yield* readPublishAgentActivityEnabled.pipe(
       Effect.orElseSucceed(() => false),
     );
-    if (!publishAgentActivity) {
+    if (!publishAgentActivity && !ntfyDestination) {
       yield* Effect.logDebug("agent activity snapshot skipped; publication disabled");
       return "disabled" as const;
     }
     const relayConfig = yield* readRelayConfig.pipe(Effect.orElseSucceed(() => null));
-    if (!relayConfig) {
+    if (!relayConfig && !ntfyDestination) {
       yield* Effect.logDebug("agent activity snapshot skipped; relay link credentials unavailable");
       return "unlinked" as const;
     }
@@ -935,10 +1061,10 @@ export const make = Effect.gen(function* () {
     }
   });
 
-  schedulePublishConfirm = (threadId) =>
+  schedulePublishConfirm = (threadId, replayOnly) =>
     Effect.forkIn(
       Effect.sleep("5 seconds").pipe(
-        Effect.andThen(worker.enqueue(threadId)),
+        Effect.andThen(worker.enqueue(threadId, replayOnly)),
         Effect.catchCause((cause) =>
           Effect.logWarning("deferred agent activity confirmation failed", {
             threadId,
@@ -977,6 +1103,23 @@ export const make = Effect.gen(function* () {
       yield* forkParked(
         Effect.sleep("1 second").pipe(
           Effect.andThen(publishActiveThreadsWhenConfigured(startupState !== "enabled")),
+        ),
+      );
+      yield* forkParked(
+        Effect.forever(
+          Effect.gen(function* () {
+            yield* Queue.take(withheldWake);
+            while (withheldAlerts.size > 0) {
+              yield* Effect.sleep(NotificationPresence.PRESENCE_REFRESH_MS);
+              if (withheldAlerts.size === 0 || (yield* presence.read()) === "home") continue;
+              yield* Effect.forEach(
+                [...withheldAlerts.keys()].filter((id) => !publishRetries.has(id)),
+                (id) => worker.enqueue(id, true),
+                { discard: true },
+              );
+              yield* worker.drain;
+            }
+          }),
         ),
       );
       yield* forkParked(

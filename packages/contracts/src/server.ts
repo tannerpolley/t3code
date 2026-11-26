@@ -31,6 +31,9 @@ import { ServerProviderUsageLimits, UsageLimitSourceSnapshots } from "./provider
 import { ServerSettings } from "./settings.ts";
 import { DesktopUpdateChannelSchema } from "./ipc.ts";
 
+export const NotificationPresence = Schema.Literals(["off", "home", "away"]);
+export type NotificationPresence = typeof NotificationPresence.Type;
+
 const KeybindingsMalformedConfigIssue = Schema.Struct({
   kind: Schema.Literal("keybindings.malformed-config"),
   message: TrimmedNonEmptyString,
