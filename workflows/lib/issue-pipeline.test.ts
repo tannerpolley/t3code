@@ -65,12 +65,12 @@ describe("reviewed PR merge", () => {
   };
   const policy = { squashMergeAllowed: true, rebaseMergeAllowed: true, mergeCommitAllowed: true };
 
-  it.each([null, "FAILURE", "PENDING"])("blocks a merge when CI reports %s", async (status) => {
+  it("submits the reviewed head without a PR check result", async () => {
     const submit = vi.fn();
     await expect(
-      submitReviewed(async () => ({ pr: opened, status, policy }), submit, target),
-    ).rejects.toThrow("CI");
-    expect(submit).not.toHaveBeenCalled();
+      submitReviewed(async () => ({ pr: opened, policy }), submit, target),
+    ).resolves.toBe("submitted");
+    expect(submit.mock.calls).toEqual([["pull-request", "reviewed", "SQUASH"]]);
   });
 
   it.each([
@@ -79,9 +79,9 @@ describe("reviewed PR merge", () => {
     [{ ...opened, baseRefName: "release", state: "MERGED" }, "target branch changed"],
   ] as const)("blocks publication and closeout after head or target drift", async (pr, message) => {
     const submit = vi.fn();
-    await expect(
-      submitReviewed(async () => ({ pr, status: "SUCCESS", policy }), submit, target),
-    ).rejects.toThrow(message);
+    await expect(submitReviewed(async () => ({ pr, policy }), submit, target)).rejects.toThrow(
+      message,
+    );
     expect(submit).not.toHaveBeenCalled();
     expect(() => verifyReviewedMerge(pr, target)).toThrow(message);
   });
@@ -91,18 +91,10 @@ describe("reviewed PR merge", () => {
     const allowed = { ...policy, squashMergeAllowed: false };
     const merged = { ...opened, state: "MERGED" };
     await expect(
-      submitReviewed(
-        async () => ({ pr: opened, status: "SUCCESS", policy: allowed }),
-        submit,
-        target,
-      ),
+      submitReviewed(async () => ({ pr: opened, policy: allowed }), submit, target),
     ).resolves.toBe("submitted");
     await expect(
-      submitReviewed(
-        async () => ({ pr: merged, status: "SUCCESS", policy: allowed }),
-        submit,
-        target,
-      ),
+      submitReviewed(async () => ({ pr: merged, policy: allowed }), submit, target),
     ).resolves.toBe("merged");
     expect(submit.mock.calls).toEqual([["pull-request", "reviewed", "REBASE"]]);
     expect(() => verifyReviewedMerge(merged, target)).not.toThrow();
@@ -113,14 +105,10 @@ describe("reviewed PR merge", () => {
     const queueRequired = { ...opened, isMergeQueueEnabled: true };
     const queued = { ...queueRequired, isInMergeQueue: true };
     await expect(
-      submitReviewed(
-        async () => ({ pr: queueRequired, status: "SUCCESS", policy }),
-        submit,
-        target,
-      ),
+      submitReviewed(async () => ({ pr: queueRequired, policy }), submit, target),
     ).resolves.toBe("queued");
     await expect(
-      submitReviewed(async () => ({ pr: queued, status: "SUCCESS", policy }), submit, target),
+      submitReviewed(async () => ({ pr: queued, policy }), submit, target),
     ).resolves.toBe("queued");
     expect(submit.mock.calls).toEqual([["pull-request", "reviewed", "QUEUE"]]);
     expect(() => verifyReviewedMerge(queued, target)).toThrow("could not be verified");
