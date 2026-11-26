@@ -44,7 +44,9 @@ export function SidebarProjectSectionHeader(props: {
         className="flex h-8 w-full cursor-pointer items-center gap-2.5 rounded-(--control-radius) px-(--sidebar-row-content-inset) text-left text-sidebar-foreground outline-none hover:bg-sidebar-row-hover focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
       >
         <FolderIcon aria-hidden className="size-4 shrink-0 text-sidebar-muted-foreground" />
-        <span className="min-w-0 flex-1 truncate text-sm font-semibold">{props.name}</span>
+        <span className="min-w-0 flex-1 truncate text-(length:--sidebar-section-text-size,var(--text-sm)) leading-tight font-semibold">
+          {props.name}
+        </span>
         <ChevronDownIcon
           aria-hidden
           className={cn(

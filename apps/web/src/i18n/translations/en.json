@@ -12117,7 +12117,11 @@
   "8cf699ae75fd8067": "Pinned",
   "be451f475c514b37": "Dismiss Woke notification",
   "e9ced65134f2f36c": "Wake thread now",
-  "374dac09151d4578": "Pending",
+  "e19ce9bb4f8cef86": "Section text size",
+  "be877d6de9f22bc6": "Project text size",
+  "3463f6d78f84cc9f": "Thread text size",
+  "48873c94d152d632": "Child agent text size",
+  "affaa9baf4210546": "Default",
   "a8f30f631e2b010e": "Waiting to sync with its environment",
   "aca5896600bf173e": "You're currently checked out on another branch.",
   "f665b5be60d8c144": [

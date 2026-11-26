@@ -82,6 +82,7 @@ import {
   useReducer,
   useRef,
   useState,
+  type CSSProperties,
   useSyncExternalStore,
   type KeyboardEvent as ReactKeyboardEvent,
   type MouseEvent as ReactMouseEvent,
@@ -290,6 +291,8 @@ import {
 } from "./sidebar/SidebarThreadRow";
 import {
   indexSidebarChildren,
+  setSidebarFamilyExpanded,
+  sidebarFamilyExpansion,
   sidebarFamilyRows,
   type SidebarFamilyRow,
 } from "./sidebar/sidebarFamilies";
@@ -367,6 +370,10 @@ const SETTLED_TAIL_PAGE_COUNT = 25;
 const SETTLED_SHELF_EXPANDED_KEY = "t3code:sidebar:settled-expanded";
 const SNOOZED_SHELF_EXPANDED_KEY = "t3code:sidebar:snoozed-expanded";
 const WORKING_SHELF_EXPANDED_KEY = "t3code:sidebar:working-expanded";
+
+function sidebarTextSize(size: number | null) {
+  return size === null ? undefined : `${size / 16}rem`;
+}
 
 const inboxReturns = createInboxReturnTracker();
 
@@ -630,12 +637,10 @@ function useSidebarThreads(input: {
   ] as const) {
     for (const thread of list) sectionByThreadKey.set(threadShellKey(thread), section);
   }
-  const [familyExpansion, setFamilyExpansion] = useState<ReadonlyMap<string, boolean>>(
-    () => new Map(),
+  const familyExpansion = useSyncExternalStore(
+    sidebarFamilyExpansion.subscribe,
+    sidebarFamilyExpansion.getState,
   );
-  const toggleFamily = useStableCallback((key: string, expanded: boolean) => {
-    setFamilyExpansion((current) => new Map(current).set(key, expanded));
-  });
   const childrenByParent = indexSidebarChildren(threads, delegatedUnderParent);
   const familyRows = sidebarFamilyRows(
     orderedThreads,
@@ -703,7 +708,6 @@ function useSidebarThreads(input: {
     visibleSnoozedThreads,
     visibleWorkingThreads,
     familyRows,
-    toggleFamily,
     orderedThreadKeys,
     threadByKey,
     settledThreadKeys,
@@ -1094,6 +1098,12 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       );
     },
   });
+  const sidebarTextStyle = useClientSettings((settings) => ({
+    "--sidebar-section-text-size": sidebarTextSize(settings.sidebarSectionTextSize),
+    "--sidebar-project-text-size": sidebarTextSize(settings.sidebarProjectTextSize),
+    "--sidebar-thread-text-size": sidebarTextSize(settings.sidebarThreadTextSize),
+    "--sidebar-agent-text-size": sidebarTextSize(settings.sidebarAgentTextSize),
+  }));
   const boringSidebarEnabled = useClientSettings((settings) => settings.boringSidebarEnabled);
   const newThreadContext = useHandleNewThread();
   // Row callbacks capture only the handler; the rest of the context changes with the route.
@@ -1572,7 +1582,6 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     visibleSnoozedThreads,
     visibleWorkingThreads,
     familyRows,
-    toggleFamily,
     orderedThreadKeys,
     threadByKey,
     settledThreadKeys,
@@ -1907,27 +1916,29 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
   };
 
   const readOpensPullRequestsInRightPanel = useStableCallback(() => routeThreadRef !== null);
-  const handleThreadClick = (event: ReactMouseEvent, threadRef: ScopedThreadRef) => {
-    if (isSidebarNestedLinkClick(event.target)) return;
-    const isMac = isMacPlatform(navigator.platform);
-    const isModClick = isMac ? event.metaKey : event.ctrlKey;
-    const threadKey = scopedThreadKey(threadRef);
-    if (isModClick) {
-      event.preventDefault();
-      toggleThreadSelection(threadKey);
-      return;
-    }
-    if (event.shiftKey) {
-      event.preventDefault();
-      rangeSelectTo(threadKey, orderedThreadKeysRef.current);
-      return;
-    }
-    // macOS keeps counting quick clicks across rows, so only the open row's trailing click is a double-click.
-    if (isTrailingDoubleClick(event.detail) && routeThreadKey === threadKey) {
-      return;
-    }
-    navigateToThread(threadRef);
-  };
+  const handleThreadClick = useStableCallback(
+    (event: ReactMouseEvent, threadRef: ScopedThreadRef) => {
+      if (isSidebarNestedLinkClick(event.target)) return;
+      const isMac = isMacPlatform(navigator.platform);
+      const isModClick = isMac ? event.metaKey : event.ctrlKey;
+      const threadKey = scopedThreadKey(threadRef);
+      if (isModClick) {
+        event.preventDefault();
+        toggleThreadSelection(threadKey);
+        return;
+      }
+      if (event.shiftKey) {
+        event.preventDefault();
+        rangeSelectTo(threadKey, orderedThreadKeysRef.current);
+        return;
+      }
+      // macOS keeps counting quick clicks across rows, so only the open row's trailing click is a double-click.
+      if (isTrailingDoubleClick(event.detail) && routeThreadKey === threadKey) {
+        return;
+      }
+      navigateToThread(threadRef);
+    },
+  );
 
   // Snapshot navigation before partition mutation; background parks use a null plan.
   const planForwardNavigation = (
@@ -3409,6 +3420,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       <SidebarChromeHeader isElectron={isElectron} />
       <SidebarContent
         ref={sidebarContentRef}
+        style={sidebarTextStyle as CSSProperties}
         className="min-h-full"
         fixedHeader={
           <SidebarGroup className="z-[1]">
@@ -3870,9 +3882,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                           variant={rowVariant}
                           folderDepth={folderDepth}
                           familyDepth={depth}
-                          childCount={family.hasLiveChildren ? 0 : family.descendantCount}
+                          childCount={family.descendantCount}
                           familyExpanded={family.expanded}
-                          onToggleFamily={toggleFamily}
+                          onToggleFamily={setSidebarFamilyExpanded}
                           navigationParent={
                             parentKey ??
                             folderRow ??
