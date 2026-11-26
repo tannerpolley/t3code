@@ -103,6 +103,7 @@ export const layer: Layer.Layer<ThreadForkServiceV2> = Layer.succeed(
       // Nor is a fork a step of the run its source was one of.
       const {
         delegatedFrom: _delegatedFrom,
+        delegatedRole: _delegatedRole,
         workflowRun: _workflowRun,
         ...inherited
       } = input.sourceProjection.thread;

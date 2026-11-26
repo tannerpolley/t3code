@@ -72,38 +72,6 @@ function BoringSidebarRow() {
           aria-label={gt("Boring sidebar (group by project)")}
         />
       }
-    >
-      {settings.boringSidebarEnabled ? (
-        <div className="mt-2 mb-2 border-l-2 border-border/60 ps-3">
-          <BoringSidebarMultilineRow />
-        </div>
-      ) : null}
-    </SettingsRow>
-  );
-}
-
-function BoringSidebarMultilineRow() {
-  const searchableSetting = useSearchableSetting();
-  const settings = useScopedSettings();
-  const updateSettings = useUpdateScopedSettings();
-  const gt = useGT();
-  return (
-    <SettingsRow
-      {...searchableSetting("boring-sidebar-multiline")}
-      devicePreference
-      className="px-0 py-2 sm:px-0"
-      description={gt(
-        "Show folder threads on two lines: the title, then the branch, pull request, and agent.",
-      )}
-      control={
-        <Switch
-          checked={settings.boringSidebarMultilineRows}
-          onCheckedChange={(checked) =>
-            updateSettings({ boringSidebarMultilineRows: Boolean(checked) })
-          }
-          aria-label={gt("Two-line folder rows")}
-        />
-      }
     />
   );
 }

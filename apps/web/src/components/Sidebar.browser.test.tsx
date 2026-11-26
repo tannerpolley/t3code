@@ -15,14 +15,16 @@ import {
   type SidebarLayoutRecord,
   type SidebarLayoutMutation,
   EnvironmentId,
+  IssueTrackerKind,
   type LocalApi,
   ProjectId,
+  RunId,
   ThreadId,
   type ScopedThreadRef,
 } from "@t3tools/contracts";
 import { isMacPlatform } from "@t3tools/shared/keybindings";
 import { describe, expect, it, vi } from "vite-plus/test";
-import { userEvent } from "vite-plus/test/browser";
+import { page, userEvent } from "vite-plus/test/browser";
 
 import { act, fakeTimers, render } from "../../test/render";
 import { openCommandPalette } from "../commandPaletteBus";
@@ -339,6 +341,216 @@ it("keeps a placed project row in keyboard order after sending, settling and rem
   record = JSON.parse(JSON.stringify(record));
   await using reloaded = await render(tree());
   await checkPlacement(reloaded);
+});
+
+it("keeps roles, status and links on one line and collapses finished child agents in place", async () => {
+  using stack = new DisposableStack();
+  const style = document.createElement("style");
+  style.textContent = appCss;
+  document.head.append(style);
+  stack.defer(() => style.remove());
+  const previousSettings = getClientSettings();
+  stack.defer(() => __setClientSettingsForTests(previousSettings));
+  __setClientSettingsForTests({ ...DEFAULT_CLIENT_SETTINGS, boringSidebarEnabled: true });
+
+  const { environmentId, id: projectId, ...rest } = project("T3 Code");
+  const parent = threadShell(projectId, 1);
+  const root = {
+    ...parent,
+    title: "Compact sidebar threads",
+    modelSelection: { ...parent.modelSelection, model: "gpt-6.2-astra" },
+  };
+  const time = root.createdAt;
+  const run = {
+    runId: RunId.make("task-run"),
+    status: "completed" as const,
+    requestedAt: time,
+    startedAt: time,
+    completedAt: time,
+    assistantMessageId: null,
+  };
+  const child = {
+    ...threadShell(projectId, 2),
+    lineage: {
+      rootThreadId: root.id,
+      parentThreadId: root.id,
+      relationshipToParent: "subagent" as const,
+    },
+    title: "Implement nested sidebar rows",
+    delegatedRole: "implementation" as const,
+    modelSelection: { ...root.modelSelection, model: "gpt-6.2-sol" },
+    runtime: {
+      status: "running" as const,
+      activeRunId: run.runId,
+      providerInstanceId: root.providerInstanceId,
+      providerName: null,
+      lastError: null,
+      updatedAt: time,
+    },
+    pullRequests: [
+      {
+        host: "github.com",
+        repository: "tannerpolley/t3code",
+        number: 718,
+        url: "https://github.com/tannerpolley/t3code/pull/718",
+        source: "manual" as const,
+        linkedAt: time,
+        snapshot: {
+          state: "open" as const,
+          title: "Make sidebar rows compact",
+          headBranch: "sidebar",
+          baseBranch: "main",
+          isDraft: false,
+          updatedAt: time,
+          syncedAt: time,
+          checksState: "passing" as const,
+        },
+        stack: null,
+      },
+    ],
+    issues: [
+      {
+        tracker: IssueTrackerKind.make("github"),
+        host: "github.com",
+        scope: "tannerpolley/t3code",
+        key: "709",
+        displayKey: "#709",
+        title: "Compact sidebar threads",
+        url: "https://github.com/tannerpolley/t3code/issues/709",
+        source: "manual" as const,
+        linkedAt: time,
+        projectId,
+      },
+    ],
+  };
+  const reviewer = {
+    ...threadShell(projectId, 3),
+    lineage: child.lineage,
+    title: "Review compact sidebar",
+    delegatedRole: "review" as const,
+    modelSelection: { ...root.modelSelection, model: "claude-opus-5-5" },
+    latestRun: run,
+  };
+  const archived = {
+    ...threadShell(projectId, 4),
+    lineage: child.lineage,
+    delegatedRole: "design" as const,
+    archivedAt: time,
+  };
+  const owner = { ...threadShell(projectId, 5), title: "Release checklist" };
+  const rootRef = scopeThreadRef(environmentId, root.id);
+  vi.mocked(useProjects).mockReturnValue([{ ...rest, environmentId, id: projectId }]);
+  vi.mocked(useConnectedEnvironmentIds).mockReturnValue([environmentId]);
+  vi.mocked(useThreadRouteTarget).mockReturnValue({ kind: "server", threadRef: rootRef });
+  vi.mocked(useHandleNewThread).mockReturnValue({
+    activeDraftThread: null,
+    activeThread: root,
+    defaultProjectRef: scopeProjectRef(environmentId, projectId),
+    defaultProjectFallbackReady: true,
+    handleNewThread: vi.fn(),
+    routeDraftId: null,
+    routeThreadRef: rootRef,
+  });
+  using _config = vi
+    .spyOn(entities, "useServerConfigs")
+    .mockReturnValue(
+      new Map([
+        [
+          environmentId,
+          { environment: { capabilities: {} } } as unknown as EnvironmentServerConfig,
+        ],
+      ]),
+    );
+  using _layout = vi.spyOn(sidebarLayout, "useSidebarLayout").mockReturnValue({
+    byEnvironment: new Map([
+      [
+        environmentId,
+        {
+          environmentId,
+          writable: true,
+          record: {
+            revision: 1,
+            layout: {
+              ...EMPTY_SIDEBAR_LAYOUT,
+              sidebarProjectSections: [
+                { id: "work", name: "In progress", projectKeys: [projectId], collapsed: false },
+              ],
+            },
+          },
+        },
+      ],
+    ]),
+    change: vi.fn(),
+  });
+
+  const container = document.createElement("div");
+  container.className = "bg-sidebar text-sidebar-foreground";
+  container.style.width = "360px";
+  container.style.height = "760px";
+  container.style.marginInlineStart = "auto";
+  const reveal = { observedKey: null, pendingKey: null };
+  const tree = () => (
+    <SidebarProvider>
+      <Sidebar routeReveal={reveal} />
+    </SidebarProvider>
+  );
+
+  vi.mocked(useQuietThreadShells).mockReturnValue([child, reviewer, root, owner, archived]);
+  await using screen = await render(tree(), { container });
+  const parentRow = screen.getByRole("button", { name: /^Compact sidebar threads,/ });
+  const implementor = screen.getByRole("button", { name: /^Implementor, Working,/ });
+  const doneReviewer = screen.getByRole("button", { name: /^Reviewer, Done,/ });
+  await expect.element(screen.getByText("In progress", { exact: true })).toBeVisible();
+  await expect.element(screen.getByText("Release checklist", { exact: true })).toBeVisible();
+  await expect.element(implementor).toBeVisible();
+  await expect.element(doneReviewer).toBeVisible();
+  await expect.element(screen.getByText("Designer", { exact: true })).not.toBeInTheDocument();
+  expect(implementor.element().getAttribute("data-sidebar-parent")).toBe(
+    parentRow.element().getAttribute("data-sidebar-row"),
+  );
+  expect(implementor.element().closest("li")?.nextElementSibling).toBe(
+    doneReviewer.element().closest("li"),
+  );
+  const titleBox = implementor
+    .getByText("Implementor", { exact: true })
+    .element()
+    .getBoundingClientRect();
+  expect(titleBox.left).toBeGreaterThan(
+    parentRow.getByText(root.title, { exact: true }).element().getBoundingClientRect().left,
+  );
+  for (const text of ["Sol", "718", "709"]) {
+    const box = implementor.getByText(text, { exact: true }).element().getBoundingClientRect();
+    expect(Math.abs(box.top + box.height / 2 - titleBox.top - titleBox.height / 2)).toBeLessThan(2);
+  }
+  await expect
+    .element(implementor.getByRole("link", { name: /All checks have passed/ }))
+    .toBeVisible();
+  await expect.element(screen.getByText(child.title, { exact: true })).not.toBeInTheDocument();
+  await implementor.getByText("Implementor", { exact: true }).hover();
+  await expect.element(page.getByText(child.title, { exact: true })).toBeVisible();
+  await userEvent.unhover(implementor);
+
+  const finished = { ...child, runtime: null, latestRun: run };
+  vi.mocked(useQuietThreadShells).mockReturnValue([
+    { ...finished, hasPendingUserInput: true },
+    reviewer,
+    root,
+    owner,
+    archived,
+  ]);
+  await screen.rerender(tree());
+  await expect.element(screen.getByRole("button", { name: /^Implementor, Input,/ })).toBeVisible();
+
+  vi.mocked(useQuietThreadShells).mockReturnValue([finished, reviewer, root, owner, archived]);
+  await screen.rerender(tree());
+  const count = parentRow.getByRole("button", { name: "2 child agents" });
+  await expect.element(count).toHaveAttribute("aria-expanded", "false");
+  await expect.element(doneReviewer).not.toBeInTheDocument();
+  await count.click();
+  await expect.element(count).toHaveAttribute("aria-expanded", "true");
+  await expect.element(doneReviewer).toBeVisible();
+  await count.click();
+  await expect.element(doneReviewer).not.toBeInTheDocument();
 });
 
 // regression: #38623 unsent drafts are listed above threads but mod+1..9 skipped them

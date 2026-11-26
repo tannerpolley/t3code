@@ -1980,6 +1980,9 @@ export function threadShellFromProjection(
     ...(projection.thread.delegatedFrom === undefined
       ? {}
       : { delegatedFrom: projection.thread.delegatedFrom }),
+    ...(projection.thread.delegatedRole === undefined
+      ? {}
+      : { delegatedRole: projection.thread.delegatedRole }),
     ...(projection.thread.workflowRun === undefined
       ? {}
       : { workflowRun: projection.thread.workflowRun }),
@@ -2301,6 +2304,9 @@ function shellFromState(input: {
     ...(input.state.thread.delegatedFrom === undefined
       ? {}
       : { delegatedFrom: input.state.thread.delegatedFrom }),
+    ...(input.state.thread.delegatedRole === undefined
+      ? {}
+      : { delegatedRole: input.state.thread.delegatedRole }),
     ...(input.state.thread.workflowRun === undefined
       ? {}
       : { workflowRun: input.state.thread.workflowRun }),

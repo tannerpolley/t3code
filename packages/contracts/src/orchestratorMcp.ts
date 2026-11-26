@@ -1,6 +1,7 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
+import { OrchestratorMcpTaskRole } from "./delegatedRole.ts";
 
 import { AuthMcpClientAccess } from "./auth.ts";
 import {
@@ -137,15 +138,7 @@ export const OrchestratorMcpInteractionMode = Schema.Union([
 ]);
 export type OrchestratorMcpInteractionMode = typeof OrchestratorMcpInteractionMode.Type;
 
-export const OrchestratorMcpTaskRole = Schema.Literals([
-  "implementation",
-  "research",
-  "review",
-  "design",
-  "test",
-  "general",
-]);
-export type OrchestratorMcpTaskRole = typeof OrchestratorMcpTaskRole.Type;
+export { OrchestratorMcpTaskRole } from "./delegatedRole.ts";
 
 export const OrchestratorMcpDelegatedTaskStatus = Schema.Literals([
   "queued",
