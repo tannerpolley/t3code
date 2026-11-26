@@ -24,3 +24,6 @@ beforeEach(async () => {
 
 // The app initializes GT at startup; components using its hooks need the same here.
 initializeI18n(() => {});
+
+// Test files get fresh modules but share a browser origin and its persisted app state.
+window.localStorage.clear();
