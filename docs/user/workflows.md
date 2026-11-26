@@ -184,9 +184,13 @@ and a `vp run check:changed` script. The server needs Codex with Sol and Astra a
 The poll runs each minute. Todo issues with a **Needs you** or **Needs orchestrator** label
 stay out of the queue. Up to four issues run at a time, configurable with
 `T3_ISSUE_PIPELINE_LIMIT`. An implementation runs in its own worktree and a fresh agent
-reviews each committed revision. When local checks pass, the workflow opens a PR and waits
-for GitHub CI. It merges only at the reviewed commit after CI is green, using the
-repository’s merge queue when required.
+reviews each committed revision. After review and local checks pass, the workflow opens a
+PR as a record and submits the reviewed commit for merge without waiting for PR checks. It
+uses the repository’s merge queue when required.
+
+On this fork, the merge starts CI on `main`. A newer push to `main` cancels any CI run
+still in progress for the previous push. You can see the result, including failures, in
+the repository’s **Actions** tab on GitHub.
 
 GitHub can pin the head commit in a merge request. The workflow checks the target branch
 in a separate request, so retargeting a PR during submission can change where it merges.

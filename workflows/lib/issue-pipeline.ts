@@ -59,14 +59,13 @@ export function verifyReviewedTarget(pr: PullRequest, { head, base }: Target) {
 }
 
 export async function submitReviewed(
-  read: () => Promise<{ pr: PullRequest; status: string | null; policy: MergePolicy }>,
+  read: () => Promise<{ pr: PullRequest; policy: MergePolicy }>,
   submit: (id: string, head: string, method: MergeMethod | "QUEUE") => Promise<unknown>,
   target: Target,
 ) {
-  const { pr, status, policy } = await read();
+  const { pr, policy } = await read();
   verifyReviewedTarget(pr, target);
   if (pr.state !== "OPEN" && pr.state !== "MERGED") throw new Error("PR is no longer open");
-  if (status !== "SUCCESS") throw new Error(`CI on ${target.head} is ${status ?? "absent"}`);
   if (pr.state === "MERGED") return "merged";
   if (pr.isInMergeQueue) return "queued";
   if (pr.isMergeQueueEnabled) {

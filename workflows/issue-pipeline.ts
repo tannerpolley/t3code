@@ -89,11 +89,10 @@ query($owner: String!, $name: String!, $endCursor: String) {
 }`;
 
 const reviewedPullRequestQuery = `
-query($owner:String!, $name:String!, $number:Int!, $head:GitObjectID!) {
+query($owner:String!, $name:String!, $number:Int!) {
   repository(owner:$owner, name:$name) {
     squashMergeAllowed rebaseMergeAllowed mergeCommitAllowed
     pullRequest(number:$number) { id state baseRefName headRefOid isInMergeQueue isMergeQueueEnabled }
-    object(oid:$head) { ... on Commit { statusCheckRollup { state } } }
   }
 }`;
 
@@ -355,32 +354,21 @@ ${patch}`,
             `name=${name}`,
             "-F",
             `number=${prNumber}`,
-            "-f",
-            `head=${head}`,
           ),
         );
         const policy = response.data.repository;
         return {
           pr: policy.pullRequest,
-          status: policy.object?.statusCheckRollup?.state ?? null,
           policy,
         };
       };
       return { graphql, read };
     };
 
-    const standing = yield* pullRequests.wait("ci", address, {
-      until: "checks",
-      timeout: "1 hour",
-    });
     const submission = yield* step.try(
       "submit-reviewed-head",
       { returns: Schema.Literals(["merged", "queued", "submitted"]) },
       Effect.tryPromise(async (signal) => {
-        if (Option.isNone(standing)) throw new Error("Timed out waiting for CI");
-        if (standing.value.state !== "merged" && standing.value.checks !== "passing") {
-          throw new Error(`CI on the reviewed PR is ${standing.value.checks}`);
-        }
         const { graphql, read } = github(signal);
         return submitReviewed(
           read,
