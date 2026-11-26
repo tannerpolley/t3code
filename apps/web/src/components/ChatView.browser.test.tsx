@@ -163,24 +163,19 @@ it("opens a linked Linear issue from an inactive thread's sidebar badge", async 
     title: "Keep tabs visible",
   };
   const grouped = threadWithHistory("issue-grouped", 1);
+  const pullRequest = {
+    host: "github.com",
+    repository: "pingdotgg/t3code",
+    number: 124,
+    url: "https://github.com/pingdotgg/t3code/pull/124",
+    source: "manual" as const,
+    linkedAt: "2026-01-01T00:00:00.000Z",
+    snapshot: null,
+    stack: null,
+  };
   using _environment = installFakeEnvironment([
-    first,
-    {
-      ...linked,
-      issues: [issue],
-      pullRequests: [
-        {
-          host: "github.com",
-          repository: "pingdotgg/t3code",
-          number: 124,
-          url: "https://github.com/pingdotgg/t3code/pull/124",
-          source: "manual",
-          linkedAt: "2026-01-01T00:00:00.000Z",
-          snapshot: null,
-          stack: null,
-        },
-      ],
-    },
+    { ...first, pullRequests: [pullRequest] },
+    { ...linked, issues: [issue], pullRequests: [pullRequest] },
     { ...grouped, issues: [completed, issue] },
   ]);
   const liveTitle = "Add keyboard shortcuts to the sidebar";
@@ -250,8 +245,18 @@ it("opens a linked Linear issue from an inactive thread's sidebar badge", async 
   expect(badge.element().querySelector("span")).toHaveClass(/text-emerald-600/);
   expect(badge.element()).toHaveTextContent("123");
   expect(badge.element()).not.toHaveTextContent("#");
-  const prBadge = page.getByRole("link", { name: "PR #124, status pending" });
+  const prBadgeName = { name: "PR #124, status pending" };
+  const prBadge = page
+    .getByRole("button", { name: /^Thread issue-first(?:,|$)/ })
+    .getByRole("link", prBadgeName);
   await expect.element(prBadge).toHaveTextContent("124");
+  await expect
+    .element(
+      page
+        .getByRole("button", { name: /^Thread issue-linked(?:,|$)/ })
+        .getByRole("link", prBadgeName),
+    )
+    .not.toBeInTheDocument();
   for (const control of [badge, prBadge]) {
     expect(control.element().querySelector("span")).toHaveClass(
       "contents",

@@ -87,7 +87,7 @@ export type RightPanelSurface =
       revealUrl?: string;
       detailTab?: PullRequestDetailTab;
     }
-  | { id: "pull-requests"; kind: "pull-requests" }
+  | { id: "pull-requests"; kind: "pull-requests"; showRepoBoard?: true }
   /**
    * An issue opened in the issues list's shared panel, or beside a thread. Like `pull-request`,
    * the reference lives in the id so several issues can stay open as peer tabs.
@@ -223,6 +223,7 @@ interface RightPanelStoreState {
     },
   ) => void;
   openIssue: (ref: ScopedThreadRef, target: IssueSurfaceTarget) => void;
+  openLinkedItems: (ref: ScopedThreadRef, showRepoBoard: boolean) => void;
   setPullRequestDetailTab: (
     ref: ScopedThreadRef,
     surfaceId: string,
@@ -970,6 +971,21 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
                   ),
                 }
               : next;
+          }),
+        ),
+      openLinkedItems: (ref, showRepoBoard) =>
+        set((state) =>
+          userAction(state, scopedThreadKey(ref), (current) => {
+            const surface = {
+              id: "pull-requests",
+              kind: "pull-requests",
+              ...(showRepoBoard ? { showRepoBoard: true as const } : {}),
+            } as const;
+            const next = upsertSurface(current, surface);
+            return {
+              ...next,
+              surfaces: next.surfaces.map((entry) => (entry.id === surface.id ? surface : entry)),
+            };
           }),
         ),
       setPullRequestDetailTab: (ref, surfaceId, detailTab) =>

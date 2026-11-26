@@ -332,6 +332,13 @@ describe("IssueService", () => {
       const listed = yield* forked.list({ state: "open" });
       expect(listed.entries.map((entry) => entry.scope).sort()).toEqual(["acme/web", "me/web"]);
       expect(listed.trackers).toEqual([expect.objectContaining({ projectCount: 1 })]);
+      const scoped = yield* forked.list({
+        state: "open",
+        projectId: fork.id,
+        host: "github.com",
+        scope: "ACME/web",
+      });
+      expect(scoped.entries.map((entry) => entry.scope)).toEqual(["acme/web"]);
       yield* forked.comment({
         ...own,
         projectId: "fork" as ProjectId,

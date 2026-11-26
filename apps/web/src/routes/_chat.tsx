@@ -1,5 +1,6 @@
 import { Outlet, createFileRoute, redirect } from "@tanstack/react-router";
 
+import { QuestionPopup } from "../components/QuestionPopup";
 import { ThreadRouteView } from "../components/ThreadRouteView";
 import { GlobalVoiceInputIndicator } from "../components/chat/GlobalVoiceInputIndicator";
 import { isAppModalPage } from "../components/sidebar/mainAppLocation";
@@ -26,6 +27,7 @@ function ChatRouteLayout() {
       )}
       {modalOpen ? <Outlet /> : null}
       <GlobalVoiceInputIndicator hidden={modalOpen} />
+      <QuestionPopup shownThread={shownTarget?.kind === "server" ? shownTarget.threadRef : null} />
     </>
   );
 }

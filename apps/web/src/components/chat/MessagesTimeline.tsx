@@ -1,4 +1,5 @@
 import { T, useGT, useMessages, Var } from "gt-react";
+import { createStore } from "zustand";
 import type { SideThreadOpenIntent } from "@t3tools/client-runtime/side-thread";
 import type { ThreadRunSummary } from "@t3tools/client-runtime/state/models";
 import { threadErrorText } from "@t3tools/client-runtime/state/threads";
@@ -910,8 +911,12 @@ const ConversationTimeline = memo(function ConversationTimeline({
           ...(alwaysRenderKeys.length === 0 ? {} : { keys: alwaysRenderKeys }),
         };
   const [minimapHitStrip, setMinimapHitStrip] = useState({ left: 0, width: 0 });
-  const [minimapCurrentIndex, setMinimapCurrentIndex] = useState<number | null>(null);
-  const [minimapAtEnd, setMinimapAtEnd] = useState(false);
+  const [minimapPosition] = useState(() =>
+    createStore<{ currentIndex: number | null; atEnd: boolean }>(() => ({
+      currentIndex: null,
+      atEnd: false,
+    })),
+  );
   const handleAnchorReady = (info: { anchorIndex: number | undefined }) => {
     if (anchorMessageId !== null && info.anchorIndex !== undefined) {
       onAnchorReady(anchorMessageId, info.anchorIndex);
@@ -988,13 +993,14 @@ const ConversationTimeline = memo(function ConversationTimeline({
       visibleEnd: currentRange.end,
       rowIndices: minimapRowIndices,
     });
-    setMinimapCurrentIndex((current) =>
-      current === nextCurrentIndex ? current : nextCurrentIndex,
-    );
     // The exact bottom, not the follow re-arm zone: Next can still scroll inside that zone.
-    setMinimapAtEnd(
+    const atEnd =
       viewport !== undefined &&
-        viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight <= 1,
+      viewport.scrollHeight - viewport.scrollTop - viewport.clientHeight <= 1;
+    minimapPosition.setState((current) =>
+      current.currentIndex === nextCurrentIndex && current.atEnd === atEnd
+        ? current
+        : { currentIndex: nextCurrentIndex, atEnd },
     );
   });
 
@@ -1545,8 +1551,7 @@ const ConversationTimeline = memo(function ConversationTimeline({
               items={minimapItems}
               hasPersistentGutter={minimapHasPersistentGutter}
               hitStrip={minimapHitStrip}
-              currentIndex={minimapCurrentIndex}
-              atEnd={minimapAtEnd}
+              position={minimapPosition}
               stripMap={minimapStripMap}
               onWheel={forwardMinimapWheel}
               onSelect={(item) => {

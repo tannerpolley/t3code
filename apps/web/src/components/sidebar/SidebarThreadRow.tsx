@@ -1,4 +1,6 @@
 import { useAtomMount, useAtomValue } from "@effect/atom-react";
+import { getProviderOptionStatedValue } from "@t3tools/shared/model";
+import { getDescriptorStringValue, isReasoningSelect } from "@t3tools/client-runtime/model-traits";
 import { asLaunchingThread } from "@t3tools/client-runtime/state/thread-inbox";
 import { ThreadHoverCard, ThreadHoverCardTrigger } from "../ThreadHoverCard";
 import { ThreadTerminalStatusButton } from "../ThreadStatusIndicators";
@@ -22,6 +24,7 @@ import { type EnvironmentThreadSearchMatch } from "@t3tools/client-runtime/state
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import {
   AuthOrchestrationOperateScope,
+  isProviderDriverKind,
   type ContextMenuSource,
   type EnvironmentId,
   type EnvironmentMachineKind,
@@ -33,17 +36,18 @@ import {
   AlarmClockIcon,
   AlarmClockOffIcon,
   ArrowRightLeftIcon,
+  BotIcon,
   CheckIcon,
   ChevronDownIcon,
   ChevronRightIcon,
   CircleIcon,
   CircleAlertIcon,
   CircleCheckIcon,
-  CircleDashedIcon,
   CircleDotDashedIcon,
   ClockIcon,
   FolderGit2Icon,
   GitBranchIcon,
+  LoaderCircleIcon,
   MessageCircleQuestionIcon,
   PinIcon,
   PinOffIcon,
@@ -94,6 +98,7 @@ import {
   type SidebarDropVerb,
   resolveSidebarRowStatus,
   resolveThreadLastVisitedAt,
+  resolveWorkingStartedAt,
   shouldRecedeSidebarThread,
   useRetainedValue,
   withoutRemovedCheckout,
@@ -117,6 +122,8 @@ import { useThreadShell } from "../../state/entities";
 import { ProjectFavicon, type ProjectFaviconProject } from "../ProjectFavicon";
 import { ThreadSearchMatchExcerpt } from "../ThreadSearchMatch";
 import { makeWorkspaceFileDropHandlers } from "../chat/workspaceFileDrop";
+import { AgentElapsed } from "../chat/AgentElapsed";
+import { EffortGlyph, resolveEffortGlyph } from "../chat/EffortGlyph";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { getTriggerDisplayModelName } from "../chat/providerIconUtils";
 import { shouldShowInstanceBadge, type ProviderInstanceEntry } from "../../providerInstances";
@@ -148,6 +155,21 @@ export type SidebarProviderEntry = Pick<
   | "acpRegistryIconUrl"
   | "models"
 >;
+function sidebarModelParts(label: string) {
+  const leading = /^(?:gpt-)?(\d+(?:\.\d+)*)[ -]+(.+)$/i.exec(label);
+  if (leading) {
+    const name = leading[2]!;
+    return { name: name[0]!.toUpperCase() + name.slice(1), version: leading[1] };
+  }
+  const versioned = /^(.*?)[ -]+(\d+(?:[.-]\d+)*)(?:[ -]+(.*))?$/.exec(label);
+  return versioned
+    ? {
+        name: [versioned[1], versioned[3]].filter(Boolean).join(" "),
+        version: versioned[2]!.replaceAll("-", "."),
+      }
+    : { name: label };
+}
+
 function compactSidebarTimeLabel(timestamp: string, nowMs: number, resolve: MessageResolver) {
   const parts = formatRelativeTime(timestamp, nowMs, resolve);
   if (parts === null) return "";
@@ -157,14 +179,10 @@ function compactSidebarTimeLabel(timestamp: string, nowMs: number, resolve: Mess
 function PendingSyncLabel() {
   return (
     <SharedTooltipTrigger
-      render={<span />}
-      label={
-        <>
-          <T>Waiting to sync with its environment</T>
-        </>
-      }
+      render={<span className="flex" />}
+      label={<T>Waiting to sync with its environment</T>}
     >
-      <T>Pending</T>
+      <ClockIcon aria-hidden className="size-3.5 text-muted-foreground" />
     </SharedTooltipTrigger>
   );
 }
@@ -515,17 +533,33 @@ const dropVerbBadge: Record<SidebarDropVerb, ReactNode> = {
 };
 
 const TOP_STATUS_ICONS = {
-  working: CircleDashedIcon,
   waiting: CircleDotDashedIcon,
   input: MessageCircleQuestionIcon,
   request: UserRoundIcon,
   approval: ShieldQuestionIcon,
   failed: CircleAlertIcon,
-  done: CircleCheckIcon,
   woke: AlarmClockIcon,
 } as const;
 
-function TopStatusIcon(props: { icon: keyof typeof TOP_STATUS_ICONS; className: string }) {
+function TopStatusIcon(props: {
+  icon: keyof typeof TOP_STATUS_ICONS | "working" | "done";
+  className: string;
+}) {
+  if (props.icon === "working") {
+    return (
+      <LoaderCircleIcon
+        aria-hidden
+        ref={observeVisibleAnimation}
+        className={cn(
+          "motion-safe:visible-animate-spin shrink-0 [--animate-spin:spin_1s_steps(8)_infinite]",
+          props.className,
+        )}
+      />
+    );
+  }
+  if (props.icon === "done") {
+    return <span aria-hidden className="size-2 shrink-0 rounded-full bg-success" />;
+  }
   const Icon = TOP_STATUS_ICONS[props.icon];
   return <Icon aria-hidden className={cn("shrink-0", props.className)} />;
 }
@@ -638,7 +672,7 @@ function ThreadRenameInput(props: {
       }}
       onClick={(event) => event.stopPropagation()}
       onDoubleClick={(event) => event.stopPropagation()}
-      className="-mx-1 min-w-0 flex-1 rounded-sm bg-card px-1 text-sm font-medium text-card-foreground outline-none ring-1 ring-inset ring-input focus:ring-foreground"
+      className="-mx-1 min-w-0 flex-1 rounded-sm bg-card px-1 text-(length:--sidebar-row-text-size) font-medium text-card-foreground outline-none ring-1 ring-inset ring-input focus:ring-foreground"
     />
   );
 }
@@ -813,8 +847,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                         icon: "woke" as const,
                         className: "text-warning-foreground",
                       }
-                    : isUnread ||
-                        (props.familyDepth > 0 && thread.latestRun?.status === "completed")
+                    : isUnread && !props.isRouteThread
                       ? {
                           label: gt("Done", { $context: "thread status" }),
                           icon: "done" as const,
@@ -1073,7 +1106,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   ) : (
     <span
       className={cn(
-        "min-w-0 flex-1 truncate text-start text-sm",
+        "min-w-0 truncate text-start text-(length:--sidebar-row-text-size) leading-tight",
         shouldRecede ? "font-normal" : "font-medium",
       )}
       dir={textDirection(rowTitle)}
@@ -1214,10 +1247,31 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   const inFolder = variant === "folder";
   const familyIndent = Math.min(props.familyDepth, 4) * 12;
   const folderIndent = inFolder ? 36 + Math.min(props.folderDepth ?? 0, 3) * 10 : 10;
-  const modelTag = modelLabel.replace(
-    /^.*?\b(sol|astra|terra|luna|opus|sonnet|haiku)\b.*$/i,
-    (_, name: string) => name[0]!.toUpperCase() + name.slice(1).toLowerCase(),
-  );
+  const modelParts = sidebarModelParts(modelLabel);
+  const reasoning = selectedModel?.capabilities?.optionDescriptors?.find(isReasoningSelect);
+  const statedEffort = reasoning
+    ? getProviderOptionStatedValue(reasoning.id, thread.modelSelection)
+    : undefined;
+  const effort = reasoning
+    ? resolveEffortGlyph(
+        reasoning,
+        typeof statedEffort === "string"
+          ? statedEffort
+          : getDescriptorStringValue(reasoning, thread.modelSelection),
+      )
+    : null;
+  const driverKind =
+    providerEntry?.driverKind ?? (isProviderDriverKind(modelInstanceId) ? modelInstanceId : null);
+  const startedAt =
+    status === "working" || status === "waiting" || status === "preparing"
+      ? resolveWorkingStartedAt(thread)
+      : null;
+  const run = thread.latestRun;
+  const elapsed = startedAt
+    ? { status: "running" as const, startedAt, completedAt: null }
+    : run && thread.source.latestRunCompletedAt != null
+      ? { ...run, status: "completed" as const }
+      : null;
   const actionClassName =
     "inline-flex cursor-pointer items-center rounded-sm px-0.5 text-muted-foreground outline-none hover:text-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring";
   const action =
@@ -1310,7 +1364,10 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
             aria-busy={isRegeneratingTitle || undefined}
             className={cn(
               rowSurfaceClassName,
-              "flex h-9 items-center gap-1.5 pe-2.5 whitespace-nowrap",
+              "flex h-9 items-center gap-1 pe-2.5 whitespace-nowrap",
+              props.familyDepth > 0
+                ? "[--sidebar-row-text-size:var(--sidebar-agent-text-size,var(--text-sm))]"
+                : "[--sidebar-row-text-size:var(--sidebar-thread-text-size,var(--text-sm))]",
             )}
             onClick={handleClick}
             onPointerEnter={intentPrefetch.onPointerEnter}
@@ -1323,39 +1380,63 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
         }
       >
         {props.familyDepth > 0 ? (
-          <span aria-hidden className="h-full shrink-0 border-s border-sidebar-border" />
-        ) : !inFolder && props.project ? (
-          <ProjectFavicon project={props.project} className="size-4 shrink-0" />
+          <span aria-hidden className="absolute inset-y-0 -ms-1.5 border-s border-sidebar-border" />
         ) : null}
-        {statusIcon}
-        {draftIndicator}
-        {title}
+        <span className="flex w-5 shrink-0 items-center justify-center">
+          {props.childCount > 0 ? (
+            <button
+              type="button"
+              aria-label={familyLabel}
+              aria-expanded={props.familyExpanded}
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={(event) => {
+                event.stopPropagation();
+                props.onToggleFamily(threadKey, !props.familyExpanded);
+              }}
+              className={actionClassName}
+            >
+              <FamilyChevron aria-hidden className="size-3.5 rtl:-scale-x-100" />
+            </button>
+          ) : null}
+        </span>
+        {driverKind ? (
+          <ProviderInstanceIcon
+            driverKind={driverKind}
+            displayName={
+              providerEntry?.displayName ?? thread.runtime?.providerName ?? modelInstanceId
+            }
+            acpRegistryAgentId={providerEntry?.acpRegistryAgentId}
+            acpRegistryIconUrl={providerEntry?.acpRegistryIconUrl}
+            className="shrink-0"
+            iconClassName="size-3.5"
+          />
+        ) : (
+          <BotIcon aria-hidden className="size-3.5 shrink-0 text-muted-foreground" />
+        )}
+        <span className="max-w-16 min-w-0 truncate text-xs text-secondary-label">
+          {modelParts.name}
+        </span>
+        {modelParts.version ? (
+          <span className="shrink-0 text-xs text-secondary-label tabular-nums">
+            {modelParts.version}
+          </span>
+        ) : null}
+        {effort ? (
+          <span className="shrink-0 text-secondary-label" role="img" aria-label={effort.label}>
+            <EffortGlyph count={effort.count} filled={effort.filled} size="xs" />
+          </span>
+        ) : null}
+        <span className="flex min-w-0 flex-1 items-center gap-1">
+          {draftIndicator}
+          {title}
+          {pinIndicator}
+        </span>
         {isRegeneratingTitle ? (
           <span role="status" className="sr-only">
             <T>Regenerating title</T>
           </span>
         ) : null}
-        {pinIndicator}
         {terminalStatusIcon}
-        {prBadge}
-        {issueBadge}
-        <span className="max-w-16 shrink-0 truncate text-xs text-secondary-label">{modelTag}</span>
-        {props.childCount > 0 ? (
-          <button
-            type="button"
-            aria-label={familyLabel}
-            aria-expanded={props.familyExpanded}
-            onPointerDown={(event) => event.stopPropagation()}
-            onClick={(event) => {
-              event.stopPropagation();
-              props.onToggleFamily(threadKey, !props.familyExpanded);
-            }}
-            className={cn(actionClassName, "shrink-0 gap-0.5 text-xs tabular-nums")}
-          >
-            <FamilyChevron aria-hidden className="size-3.5 rtl:-scale-x-100" />
-            {props.childCount}
-          </button>
-        ) : null}
         {sortable?.isDragging || props.sweepAction !== null ? (
           dragDestination
         ) : (
@@ -1365,9 +1446,6 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
               jumpHintLabel && JUMP_HINT_SLOT_CLASS_NAME,
             )}
           >
-            {props.snoozeWakeLabelText !== null ? (
-              <span className="text-info-foreground tabular-nums">{props.snoozeWakeLabelText}</span>
-            ) : null}
             <span
               className={cn(
                 "pointer-events-none absolute end-0 flex items-center gap-0.5 opacity-0 group-any-hover/sidebar-row:pointer-events-auto group-any-hover/sidebar-row:static group-any-hover/sidebar-row:opacity-100 has-[:focus-visible]:pointer-events-auto has-[:focus-visible]:static has-[:focus-visible]:opacity-100",
@@ -1403,6 +1481,15 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
             {jumpHintLabel ? <JumpHintBadge label={jumpHintLabel} /> : null}
           </span>
         )}
+        {issueBadge ?? prBadge}
+        <span className="min-w-8 shrink-0 text-end text-xs text-muted-foreground tabular-nums">
+          {props.snoozeWakeLabelText !== null ? (
+            <span className="text-info-foreground">{props.snoozeWakeLabelText}</span>
+          ) : elapsed ? (
+            <AgentElapsed agent={elapsed} />
+          ) : null}
+        </span>
+        <span className="flex w-3.5 shrink-0 justify-center">{statusIcon}</span>
       </ThreadHoverCardTrigger>
     </li>
   );
@@ -1593,7 +1680,7 @@ export const SidebarSearchResultRow = memo(function SidebarSearchResultRow(props
             <span
               ref={isRegeneratingTitle ? observeVisibleAnimation : undefined}
               className={cn(
-                "min-w-0 flex-1 truncate",
+                "min-w-0 flex-1 truncate text-(length:--sidebar-thread-text-size,var(--text-sm)) leading-tight",
                 props.isSettled ? "font-normal" : "font-medium",
                 isRegeneratingTitle
                   ? "relative text-muted-foreground"

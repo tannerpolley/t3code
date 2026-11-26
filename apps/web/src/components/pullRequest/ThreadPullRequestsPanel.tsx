@@ -30,17 +30,21 @@ import { writeTextToClipboard } from "~/hooks/useCopyToClipboard";
 import { findProjectForChangeRequest } from "@t3tools/client-runtime/change-request-links";
 import { pullRequestLinkPanelTarget, useOpenPrLink } from "~/lib/openPullRequestLink";
 import { useClientSettings } from "~/hooks/useSettings";
+import { scopeProjectRef } from "@t3tools/client-runtime/environment";
+import { useRightPanelStore } from "~/rightPanelStore";
 import { usePrimaryEnvironmentId } from "~/state/environments";
 import { usePullRequestIntentPrefetch } from "./usePullRequestIntentPrefetch";
 import { cn } from "~/lib/utils";
 import { useShortcutModifierState } from "~/shortcutModifierState";
-import { useProjects, useServerConfigs, useThreadShell } from "~/state/entities";
+import { useProject, useProjects, useServerConfigs, useThreadShell } from "~/state/entities";
+import { repoIssueBoardBinding } from "~/state/issues";
 import { PullRequestChangeBreakdownStat } from "./PullRequestChangeBreakdownStat";
 import { PullRequestsUnavailableState } from "./PullRequestsUnavailableState";
 import { threadEnvironment } from "~/state/threads";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { RelativeTime } from "~/components/RelativeTime";
 import { ThreadDetailsIssueRows } from "../chat/ThreadDetailsIssueRows";
+import { RepoIssueBoard } from "../issue/RepoIssueBoard";
 import { Button } from "../ui/button";
 import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
 import { MiddleTruncate } from "../ui/middle-truncate";
@@ -405,10 +409,22 @@ function latestSyncedAt(links: ReadonlyArray<ThreadPullRequestLink>): string | n
 const lineKey = (line: PullRequestListLine) =>
   `${line.link.host}/${line.link.repository}#${line.link.number}`;
 
-export function ThreadPullRequestsPanel({ threadRef }: { threadRef: ScopedThreadRef }) {
+export function ThreadPullRequestsPanel({
+  threadRef,
+  projectId,
+  showRepoBoard,
+}: {
+  threadRef: ScopedThreadRef;
+  projectId: ProjectId | null;
+  showRepoBoard: boolean;
+}) {
   const gt = useGT();
   const configs = useServerConfigs();
-  if (configs.get(threadRef.environmentId) === undefined) {
+  const project = useProject(
+    projectId === null ? null : scopeProjectRef(threadRef.environmentId, projectId),
+  );
+  const config = configs.get(threadRef.environmentId);
+  if (config === undefined) {
     return (
       <PullRequestsUnavailableState
         title={gt("Linked items unavailable")}
@@ -416,10 +432,47 @@ export function ThreadPullRequestsPanel({ threadRef }: { threadRef: ScopedThread
       />
     );
   }
-  return <EnabledThreadPullRequestsPanel threadRef={threadRef} />;
+  const binding =
+    config.environment.capabilities.issues === true
+      ? repoIssueBoardBinding(project?.repositoryIdentity)
+      : undefined;
+  if (binding === undefined || projectId === null) {
+    return <EnabledThreadPullRequestsPanel threadRef={threadRef} />;
+  }
+  return (
+    <div className="flex h-full min-h-0 min-w-0 flex-col">
+      <div className="flex shrink-0 justify-end border-b px-2 py-1.5">
+        <Button
+          aria-pressed={showRepoBoard}
+          size="xs"
+          variant={showRepoBoard ? "secondary" : "ghost"}
+          onClick={() => useRightPanelStore.getState().openLinkedItems(threadRef, !showRepoBoard)}
+        >
+          <T>Repo board</T>
+        </Button>
+      </div>
+      <div className={cn("min-h-0", showRepoBoard ? "h-1/3 shrink-0 empty:hidden" : "flex-1")}>
+        <EnabledThreadPullRequestsPanel threadRef={threadRef} compact={showRepoBoard} />
+      </div>
+      {showRepoBoard ? (
+        <RepoIssueBoard
+          key={JSON.stringify([threadRef.environmentId, projectId, binding.host, binding.scope])}
+          threadRef={threadRef}
+          projectId={projectId}
+          binding={binding}
+        />
+      ) : null}
+    </div>
+  );
 }
 
-function EnabledThreadPullRequestsPanel({ threadRef }: { threadRef: ScopedThreadRef }) {
+function EnabledThreadPullRequestsPanel({
+  threadRef,
+  compact = false,
+}: {
+  threadRef: ScopedThreadRef;
+  compact?: boolean;
+}) {
   const gt = useGT();
   const thread = useThreadShell(threadRef);
   const issues = thread?.issues ?? [];
@@ -513,6 +566,7 @@ function EnabledThreadPullRequestsPanel({ threadRef }: { threadRef: ScopedThread
   };
 
   if (linkCount === 0 && issues.length === 0) {
+    if (compact) return null;
     return (
       <div className="flex h-full flex-col items-center justify-center gap-2 p-6 text-center">
         <PullRequestGlyph.link aria-hidden className="size-6 text-muted-foreground/60" />

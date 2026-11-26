@@ -1,5 +1,6 @@
 import { resolveTimelineMinimapPreview, type TimelineMinimapItem } from "./timelineMinimapItems";
-import { useRef, useState, type MouseEvent } from "react";
+import { useRef, useState, useSyncExternalStore, type MouseEvent } from "react";
+import type { StoreApi } from "zustand";
 import { T, useGT } from "gt-react";
 import { ChevronDownIcon, ChevronUpIcon } from "lucide-react";
 import { Button } from "../ui/button";
@@ -33,8 +34,7 @@ function onMouseButtonsReleased(onRelease: () => void): () => void {
 export function TimelineMinimap({
   hasPersistentGutter,
   hitStrip: { left: hitStripLeft, width: hitStripWidth },
-  currentIndex,
-  atEnd,
+  position,
   items,
   stripMap,
   onWheel,
@@ -42,14 +42,14 @@ export function TimelineMinimap({
 }: {
   hasPersistentGutter: boolean;
   hitStrip: { left: number; width: number };
-  currentIndex: number | null;
-  atEnd: boolean;
+  position: StoreApi<{ currentIndex: number | null; atEnd: boolean }>;
   items: ReadonlyArray<TimelineMinimapItem>;
   stripMap: Map<string, HTMLSpanElement>;
   onWheel: (event: WheelEvent) => void;
   onSelect: (item: TimelineMinimapItem) => void;
 }) {
   const gt = useGT();
+  const { currentIndex, atEnd } = useSyncExternalStore(position.subscribe, position.getState);
   const [activeIndex, setActiveIndex] = useState<number | null>(null);
   const wheelTargetRef = (node: HTMLDivElement | null) => {
     if (!node) return;
