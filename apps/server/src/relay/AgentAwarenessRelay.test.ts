@@ -167,7 +167,7 @@ describe("startup agent activity", () => {
 
 const makeTestRelay = Effect.fnUntraced(function* (
   options: {
-    readonly presence?: "home" | "away" | "off";
+    readonly presence?: () => Effect.Effect<"home" | "away" | "off">;
     readonly respond?: (attempt: number) => Response;
     readonly failSecretRead?: (name: string) => boolean;
     readonly linked?: boolean;
@@ -317,7 +317,7 @@ const makeTestRelay = Effect.fnUntraced(function* (
   const relay = yield* AgentAwarenessRelay.make.pipe(
     Effect.provide(EnvironmentKeys.layer),
     Effect.provideService(NotificationPresence.NotificationPresence, {
-      read: () => Effect.succeed(options.presence ?? "off"),
+      read: options.presence ?? (() => Effect.succeed("off")),
     }),
     Effect.provideService(ServerSecretStore.ServerSecretStore, secrets),
     Effect.provideService(ThreadManagementService.ThreadManagementService, threads),
@@ -346,22 +346,99 @@ const makeTestRelay = Effect.fnUntraced(function* (
 
 describe("AgentAwarenessRelay", () => {
   it.effect.each(["home", "away", "off"] as const)(
-    "publishes a waiting activity with the alert routing for %s",
+    "routes a subagent approval at %s presence",
     (presence) =>
       Effect.gen(function* () {
         const parent = shell({ status: "running" });
         const child = waitingChild();
         const { relay, publications } = yield* makeTestRelay({
-          presence,
+          presence: () => Effect.succeed(presence),
           readShell: (id) => Effect.succeed(id === child.id ? child : parent),
         });
         yield* relay.publishThread(CHILD_THREAD_ID);
-        assert.lengthOf(publications, 1);
-        assert.equal(publications[0]?.state?.phase, "waiting_for_approval");
-        assert.equal(
-          publications[0]?.state?.suppressNotification,
-          presence === "home" ? true : undefined,
+        assert.deepStrictEqual(
+          publications.map(({ state }) => state?.phase),
+          presence === "home" ? [] : ["waiting_for_approval"],
         );
+      }),
+  );
+
+  it.effect.each(["completed", "failed"] as const)(
+    "holds back %s while home and sends it with a fresh timestamp on departure",
+    (phase) =>
+      Effect.gen(function* () {
+        yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.makeUnsafe(NOW)));
+        const presence = yield* Ref.make<"home" | "away">("home");
+        const { relay, publications, currentShell } = yield* makeTestRelay({
+          presence: () => Ref.get(presence),
+        });
+        yield* relay.start();
+        yield* relay.publishThread(THREAD_ID);
+        yield* Ref.set(currentShell, shell({ status: phase }));
+        yield* relay.publishThread(THREAD_ID);
+        yield* TestClock.adjust("3 minutes");
+        yield* relay.drain;
+        assert.deepStrictEqual(
+          publications.map(({ state }) => state?.phase),
+          ["running"],
+        );
+
+        const departedAt = (yield* DateTime.now).epochMilliseconds;
+        yield* Ref.set(presence, "away");
+        yield* TestClock.adjust("20 seconds");
+        yield* relay.drain;
+        assert.deepStrictEqual(
+          publications.map(({ state }) => state?.phase),
+          ["running", phase],
+        );
+        assert.isAtLeast(Date.parse(publications[1]?.state?.updatedAt ?? ""), departedAt);
+      }),
+  );
+
+  it.effect(
+    "replays the latest withheld question on departure and drops superseded questions",
+    () =>
+      Effect.gen(function* () {
+        const presence = yield* Ref.make<"home" | "away">("home");
+        const shells = new Map<ThreadId, OrchestrationV2ThreadShell>();
+        const answeredThreadId = ThreadId.make("answered-thread");
+        const question = (id: ThreadId, request: string, title = "Thread") =>
+          shell({
+            id,
+            title,
+            pendingRuntimeRequest: {
+              id: RuntimeRequestId.make(request),
+              kind: "user_input",
+              createdAt: DateTime.makeUnsafe(NOW),
+            },
+          });
+        const { relay, publications } = yield* makeTestRelay({
+          presence: () => Ref.get(presence),
+          readShell: (id) => Effect.sync(() => shells.get(id) ?? null),
+        });
+        yield* relay.start();
+        shells.set(THREAD_ID, question(THREAD_ID, "first"));
+        shells.set(SECOND_THREAD_ID, question(SECOND_THREAD_ID, "superseded"));
+        shells.set(answeredThreadId, question(answeredThreadId, "answered"));
+        yield* relay.publishThread(THREAD_ID);
+        yield* relay.publishThread(SECOND_THREAD_ID);
+        yield* relay.publishThread(answeredThreadId);
+        shells.set(THREAD_ID, question(THREAD_ID, "latest", "Latest question"));
+        yield* relay.publishThread(THREAD_ID);
+        shells.set(SECOND_THREAD_ID, question(SECOND_THREAD_ID, "another"));
+        shells.set(answeredThreadId, shell({ id: answeredThreadId }));
+        assert.deepStrictEqual(publications, []);
+
+        yield* Ref.set(presence, "away");
+        yield* TestClock.adjust("15 seconds");
+        yield* relay.drain;
+        assert.deepStrictEqual(
+          publications.map(({ state }) => [state?.threadId, state?.phase, state?.threadTitle]),
+          [[THREAD_ID, "waiting_for_input", "Latest question"]],
+        );
+        yield* TestClock.adjust("15 seconds");
+        yield* relay.drain;
+        assert.lengthOf(publications, 1);
       }),
   );
   it.effect("publishes the parent as needing approval while its subagent waits", () =>

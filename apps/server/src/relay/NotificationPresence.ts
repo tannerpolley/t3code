@@ -11,7 +11,7 @@ import * as ChildProcessSpawner from "effect/process/ChildProcessSpawner";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as ServerSettings from "../serverSettings.ts";
 
-const CACHE_MS = 15_000;
+export const PRESENCE_REFRESH_MS = 15_000;
 const tailscaleV6 = new NodeNet.BlockList();
 tailscaleV6.addSubnet("fd7a:115c:a1e0::", 48, "ipv6");
 
@@ -84,7 +84,12 @@ export const layerWithProbe = <E>(
         );
         // Fail over immediately. After an away reading, require two LAN readings to return home.
         const result = lan && (previous === undefined || previous.lan) ? "home" : "away";
-        cached = { peer, result, lan, expiresAt: (yield* Clock.currentTimeMillis) + CACHE_MS };
+        cached = {
+          peer,
+          result,
+          lan,
+          expiresAt: (yield* Clock.currentTimeMillis) + PRESENCE_REFRESH_MS,
+        };
         return result;
       }, lock.withPermits(1));
       return NotificationPresence.of({ read });

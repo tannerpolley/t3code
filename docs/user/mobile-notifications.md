@@ -18,4 +18,4 @@ Notification permission and Android notification channels are controlled in syst
 
 In the desktop or web app, open **Settings → General → Notifications**. Select the environment that runs Tailscale and enter your phone’s Tailscale name under **Phone for notification routing**. Keep thread notifications enabled on the computer and T3 Connect push enabled on the phone. Clear the phone name to turn off routing.
 
-When the environment reaches the phone directly on its local network, input requests, approvals, completions, and failures use desktop system notifications. When the phone is away or unreachable, they use mobile push. Live Activities and Android ongoing activity cards continue to update.
+When the environment reaches the phone directly on its local network, input requests, approvals, completions, and failures use desktop system notifications. When the phone is away or unreachable, they use mobile push. Live Activities and Android ongoing activity cards may lag while the phone is home. After you leave, the phone can alert for pending requests and results that are still current.

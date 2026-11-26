@@ -13,9 +13,10 @@ Postgres because held requests need per-link ordering, retry timing, and larger 
 
 Deployment and Clerk configuration live in the [Connect setup runbook](../operations/02_connect-setup.md).
 
-Deploy relay presence support before enabling phone presence routing on an environment. The signed activity
-row carries the suppression decision through storage and queue delivery so later Live Activity aggregates
-cannot alert on a home-routed row. Older relays ignore the field and still send alerts.
+The hosted relay controls which activity states trigger push alerts. When phone presence is home, the
+environment withholds alert-capable states before publishing to the relay. While it has withheld alerts,
+it checks presence even without thread events. On departure it re-reads each thread before publishing,
+so a resolved request or superseded run cannot ring later.
 
 ## The relay is a trusted broker
 
