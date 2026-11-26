@@ -1,7 +1,7 @@
-import { ModelRoleLevel, OrchestratorMcpTaskRole } from "./modelRole.ts";
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
+import { OrchestratorMcpTaskRole } from "./delegatedRole.ts";
 
 import { AuthMcpClientAccess } from "./auth.ts";
 import {
@@ -138,6 +138,8 @@ export const OrchestratorMcpInteractionMode = Schema.Union([
 ]);
 export type OrchestratorMcpInteractionMode = typeof OrchestratorMcpInteractionMode.Type;
 
+export { OrchestratorMcpTaskRole } from "./delegatedRole.ts";
+
 export const OrchestratorMcpDelegatedTaskStatus = Schema.Literals([
   "queued",
   "starting",
@@ -166,16 +168,7 @@ export const OrchestratorMcpDelegateTaskInput = Schema.Struct({
     Schema.Union([OrchestratorMcpTarget, Schema.fromJsonString(OrchestratorMcpTarget)]),
   ),
   title: Schema.optional(OrchestratorMcpTitle),
-  role: Schema.optional(
-    OrchestratorMcpTaskRole.annotate({
-      description: "Uses a configured model role preset when no explicit target is given.",
-    }),
-  ),
-  level: Schema.optional(
-    ModelRoleLevel.annotate({
-      description: "Which model role preset to use. Defaults to complex.",
-    }),
-  ),
+  role: Schema.optional(OrchestratorMcpTaskRole),
   isolation: Schema.optional(
     Schema.Literals(["shared", "worktree"]).annotate({
       description:

@@ -13005,21 +13005,5 @@
   "7aa202a739c5f90d": "Gilt ab dem nächsten Zug für Codex-Threads und Worker mit der Standardeinstellung. Modelle verwenden die schnellste verfügbare Stufe bis zur gewählten Geschwindigkeit.",
   "afecbf6b765a2fb0": "Ultraschnell",
   "e2a5cf66eeec090e": "Standardgeschwindigkeit",
-  "e351e22d0be49f2b": "Codex-Geschwindigkeit: {speed} auf {environment}",
-  "e2555840cd6b2d65": "Orchestrierung",
-  "3beea516f473b63b": "Konzeption",
-  "219dddeccb47a07d": "Implementierung",
-  "985148ecc83b5671": "Überprüfung",
-  "2d3330cb24e41e36": "Textarbeit",
-  "0c23bbe7f6469013": "Routine",
-  "d460d2133155a484": "Komplex",
-  "4a622dbb8417d547": "Modellvorgaben nach Rolle",
-  "d0aa2973512c3206": "{role} · {level}",
-  "ffaaea2ba6dcba1f": "Modell des übergeordneten Threads übernehmen",
-  "01bc92c289dbdd0c": "Modell für {preset}",
-  "ffc5b096865720b0": "Denkaufwand für {preset}",
-  "62f1e3953c9dbbcd": "Standard-Denkaufwand",
-  "dc973cc9e1ab2e93": "Vorgabe für {preset} löschen",
-  "68e7321d3f3c2390": "Delegierte Aufgaben verwenden diese Vorgaben, wenn der Aufrufer eine Rolle ohne Ziel angibt.",
-  "681416f3db331ab9": "Vorgabe löschen"
+  "e351e22d0be49f2b": "Codex-Geschwindigkeit: {speed} auf {environment}"
 }

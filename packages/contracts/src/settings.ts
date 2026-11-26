@@ -34,7 +34,6 @@ import {
   DEFAULT_TEXT_GENERATION_REASONING_EFFORT,
   ProviderOptionSelections,
 } from "./model.ts";
-import { ModelRole, ModelRoleLevel, ModelRoles } from "./modelRole.ts";
 import { ModelSelection } from "./modelSelection.ts";
 import { ProjectScript, type ProjectMutation } from "./project.ts";
 import { DEFAULT_RUNTIME_MODE, RuntimeMode } from "./providerPolicy.ts";
@@ -1412,7 +1411,6 @@ export const CodexDefaultSpeed = Schema.Literals(["normal", "fast", "ultrafast"]
 export type CodexDefaultSpeed = typeof CodexDefaultSpeed.Type;
 
 export const ServerSettings = Schema.Struct({
-  modelRoles: ModelRoles.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   codexDefaultSpeed: Schema.NullOr(CodexDefaultSpeed).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
@@ -1868,13 +1866,6 @@ const ModelSelectionPatch = Schema.Struct({
 });
 
 export const ServerSettingsPatch = Schema.Struct({
-  setModelRole: Schema.optionalKey(
-    Schema.Struct({
-      role: ModelRole,
-      level: ModelRoleLevel,
-      selection: Schema.NullOr(ModelSelection),
-    }),
-  ),
   codexDefaultSpeed: Schema.optionalKey(Schema.NullOr(CodexDefaultSpeed)),
   setModelFavorites: Schema.optionalKey(
     Schema.Array(Schema.Struct({ ...ModelFavorite.fields, favorite: Schema.Boolean })),

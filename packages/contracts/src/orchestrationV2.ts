@@ -1,4 +1,4 @@
-import { OrchestratorMcpTaskRole } from "./modelRole.ts";
+import { OrchestratorMcpTaskRole } from "./delegatedRole.ts";
 import { OrchestrationMessageContext } from "./composerContext.ts";
 import { withRecordIdTable } from "./orchestrationV2IdTable.ts";
 import * as DateTime from "effect/DateTime";

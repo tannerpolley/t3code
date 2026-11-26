@@ -13012,21 +13012,5 @@
   "7aa202a739c5f90d": "Gäller från nästa tur för Codex-trådar och agenter som använder standarden. Modellerna använder den snabbaste hastighet de har stöd för, upp till ditt val.",
   "afecbf6b765a2fb0": "Ultrasnabb",
   "e2a5cf66eeec090e": "Standardhastighet",
-  "e351e22d0be49f2b": "Codex hastighet: {speed} på {environment}",
-  "e2555840cd6b2d65": "Samordnare",
-  "3beea516f473b63b": "Designer",
-  "219dddeccb47a07d": "Implementatör",
-  "985148ecc83b5671": "Granskare",
-  "2d3330cb24e41e36": "Skribent",
-  "0c23bbe7f6469013": "Rutin",
-  "d460d2133155a484": "Komplex",
-  "4a622dbb8417d547": "Modellförval per roll",
-  "d0aa2973512c3206": "{role} · {level}",
-  "ffaaea2ba6dcba1f": "Ärv den överordnade trådens modell",
-  "01bc92c289dbdd0c": "Modell för {preset}",
-  "ffc5b096865720b0": "Resonemangsnivå för {preset}",
-  "62f1e3953c9dbbcd": "Standardnivå för resonemang",
-  "dc973cc9e1ab2e93": "Rensa förvalet för {preset}",
-  "68e7321d3f3c2390": "Delegerade uppgifter använder dessa förval när en roll anges utan ett mål.",
-  "681416f3db331ab9": "Rensa förval"
+  "e351e22d0be49f2b": "Codex hastighet: {speed} på {environment}"
 }

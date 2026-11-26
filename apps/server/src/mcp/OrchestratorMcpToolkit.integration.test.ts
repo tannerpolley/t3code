@@ -110,7 +110,7 @@ const readDelegatedTaskStatusTranscript = Effect.fn("readDelegatedTaskStatusTran
         .replaceAll(queuedFollowupResult, followupResult)
         .replaceAll(
           delegatedPrompt,
-          `Act as the reviewer sub-agent for this task.\\n\\n${delegatedPrompt}`,
+          `Act as the writer sub-agent for this task.\\n\\n${delegatedPrompt}`,
         )
         .replace(
           /"name":"Replay fixture: delegated_task_status"/g,
@@ -261,12 +261,19 @@ describe("orchestrator MCP toolkit", () => {
           ),
         ),
       );
+      const parentProvider = makeProviderSnapshot({
+        instanceId: codexInstanceId,
+        driver: ProviderDriverKind.make("codex"),
+        model: codexModel,
+      });
       const layerProviderRegistry = ProviderRegistryMock.layer([
-        makeProviderSnapshot({
-          instanceId: codexInstanceId,
-          driver: ProviderDriverKind.make("codex"),
-          model: codexModel,
-        }),
+        {
+          ...parentProvider,
+          models: [
+            { slug: "another-model", name: "Another model", isCustom: false, capabilities: null },
+            ...parentProvider.models,
+          ],
+        },
       ]);
       const layerTest = layerOrchestratorToolkit.pipe(
         Layer.provideMerge(McpHttpServer.layerInProcessMcpServer),
@@ -369,11 +376,7 @@ describe("orchestrator MCP toolkit", () => {
         const delegatedCall = yield* invoke("delegate_task", {
           task: delegatedPrompt,
           title: delegatedPrompt,
-          role: "reviewer",
-          target: {
-            providerInstanceId: codexInstanceId,
-            model: codexModel,
-          },
+          role: "writer",
           mode: "async",
           clientRequestId: "delegate-codex-replay-1",
         });
@@ -424,10 +427,11 @@ describe("orchestrator MCP toolkit", () => {
           localChild(delegated.childThreadId),
         );
         expect(delegatedChild.thread.lineage.relationshipToParent).toBe("subagent");
-        expect(delegatedChild.thread.delegatedRole).toBe("reviewer");
+        expect(delegatedChild.thread.delegatedRole).toBe("writer");
+        expect(delegatedChild.thread.modelSelection).toEqual(codexSelection);
         const threads = yield* ThreadManagementService.ThreadManagementService;
         const childShell = yield* threads.getThreadShell(localChild(delegated.childThreadId));
-        expect(childShell?.delegatedRole).toBe("reviewer");
+        expect(childShell?.delegatedRole).toBe("writer");
         expect(isProviderNativeSubagentThread(delegatedChild.thread)).toBe(false);
         const followupStartSequence = yield* orchestrator.getThreadEventSequence(
           localChild(delegated.childThreadId),

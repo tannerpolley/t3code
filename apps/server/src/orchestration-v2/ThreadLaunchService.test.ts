@@ -518,11 +518,14 @@ it.effect("leaves delegated tasks and workflow agent steps out of the top-level 
       creationSource: "mcp",
       linkOrigin: { sessionId: "mcp-session:linked", label: "Linked laptop" },
       delegatedFrom: {
+        role: "implementation",
         environmentId: EnvironmentId.make("environment:linked"),
         threadId: ThreadId.make("thread:remote-parent"),
         title: "Remote parent",
       },
     });
+    const delegatedShell = yield* threads.getThreadShell(delegated.threadId);
+    assert.equal(delegatedShell?.delegatedRole, "implementation");
     const workflowStep = yield* launches.launch({
       ...launchInput({ command: "command:workflow-step", thread: "thread:workflow-step" }),
       createdBy: "system",

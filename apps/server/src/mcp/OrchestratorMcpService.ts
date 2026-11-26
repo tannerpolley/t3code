@@ -4,7 +4,6 @@ import {
   idleCompactionOf,
   isProviderAvailable,
   MessageId,
-  ModelRole,
   type ModelSelection,
   NodeId,
   ORCHESTRATOR_MCP_RUNNING_TASK_NEXT,
@@ -646,7 +645,6 @@ function endsTaskWait(result: OrchestratorMcpDelegateTaskResult): boolean {
 }
 
 const isApprovalRequestKind = Schema.is(ProviderRequestKind);
-const isModelRole = Schema.is(ModelRole);
 
 function pendingTaskApproval(
   child: Pick<OrchestrationV2ThreadProjection, "runs" | "nodes" | "runtimeRequests">,
@@ -2997,25 +2995,9 @@ const make = Effect.gen(function* () {
         operation: "delegate-task",
       });
       const isRetryOfAcceptedDelegation = yield* threadManagement.hasReceipt(commandId);
-      let requestedTarget = input.target;
-      if (requestedTarget === undefined && input.role !== undefined && isModelRole(input.role)) {
-        const settings = yield* serverSettings.getSettings.pipe(
-          Effect.mapError(() =>
-            failure("orchestration_error", "Unable to read model role presets."),
-          ),
-        );
-        const selection = settings.modelRoles[input.role]?.[input.level ?? "complex"];
-        if (selection?.instanceId !== undefined) {
-          requestedTarget = {
-            providerInstanceId: selection.instanceId,
-            model: selection.model,
-            options: selection.options ?? [],
-          };
-        }
-      }
       const target = yield* resolveTargetRechecking({
         parent,
-        target: requestedTarget,
+        target: input.target,
         providers,
         cwd: yield* parentWorkspaceCwd(parent),
         skipProjectEnablementFilter: isRetryOfAcceptedDelegation,

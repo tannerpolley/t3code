@@ -13005,21 +13005,5 @@
   "7aa202a739c5f90d": "Aplica-se no próximo turno às conversas e aos agentes do Codex que usam o padrão. Os modelos usam a maior velocidade compatível até o limite escolhido.",
   "afecbf6b765a2fb0": "Ultrarrápida",
   "e2a5cf66eeec090e": "Velocidade padrão",
-  "e351e22d0be49f2b": "Velocidade do Codex: {speed} em {environment}",
-  "e2555840cd6b2d65": "Orquestração",
-  "3beea516f473b63b": "Design",
-  "219dddeccb47a07d": "Implementação",
-  "985148ecc83b5671": "Revisão",
-  "2d3330cb24e41e36": "Redação",
-  "0c23bbe7f6469013": "Rotineira",
-  "d460d2133155a484": "Complexa",
-  "4a622dbb8417d547": "Predefinições de modelo por função",
-  "d0aa2973512c3206": "{role} · {level}",
-  "ffaaea2ba6dcba1f": "Herdar o modelo da conversa pai",
-  "01bc92c289dbdd0c": "Modelo para {preset}",
-  "ffc5b096865720b0": "Esforço para {preset}",
-  "62f1e3953c9dbbcd": "Esforço padrão",
-  "dc973cc9e1ab2e93": "Limpar a predefinição de {preset}",
-  "68e7321d3f3c2390": "As tarefas delegadas usam essas predefinições quando uma função é indicada sem um destino.",
-  "681416f3db331ab9": "Limpar predefinição"
+  "e351e22d0be49f2b": "Velocidade do Codex: {speed} em {environment}"
 }

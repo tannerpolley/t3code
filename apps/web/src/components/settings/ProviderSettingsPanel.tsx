@@ -137,7 +137,6 @@ import {
   resolveRemoteOperateAccess,
   resolveSelectedProviderEnvironmentId,
 } from "./ProviderSettingsPanel.logic";
-import { ModelRolesSettings } from "./ModelRolesSettings";
 import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 function providerInstanceName(instance: ProviderInstanceConfig): string {
@@ -600,10 +599,6 @@ export function EnvironmentProviderSettings({
   const supportsProjectProviderOverrides = useAtomValue(
     serverEnvironment.configValueAtom(environmentId),
     (config) => config?.environment.capabilities.projectProviderInstanceOverrides === true,
-  );
-  const supportsModelRolePresets = useAtomValue(
-    serverEnvironment.configValueAtom(environmentId),
-    (config) => config?.environment.capabilities.modelRolePresets === true,
   );
   const refreshServerProviders = useAtomCommand(serverEnvironment.refreshProviders, {
     reportFailure: false,
@@ -1155,14 +1150,6 @@ export function EnvironmentProviderSettings({
           </div>
         </SettingsGroup>
       </SettingsSection>
-
-      {supportsModelRolePresets && targetInstanceId === undefined && projectIds.length === 0 ? (
-        <ModelRolesSettings
-          environmentId={environmentId}
-          providers={serverProviders}
-          disabled={readOnly || !canWriteSettings}
-        />
-      ) : null}
 
       {rows.some((row) => row.driver === "codex") ? (
         <SettingsSection title="Codex">
