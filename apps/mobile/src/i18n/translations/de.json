@@ -5703,5 +5703,21 @@
   "99451a5d2d40440f": "Zurückgezogen von {by}.",
   "3ee30a50b70fffab": "Zurückgezogen von {by}: {reason}",
   "201490988858b511": "zurückgezogen von {by}",
-  "46d614fa7b4bf1e5": "Workflow-Ausführungen"
+  "46d614fa7b4bf1e5": "Workflow-Ausführungen",
+  "219dddeccb47a07d": "Implementierer",
+  "985148ecc83b5671": "Prüfer",
+  "3beea516f473b63b": "Designer",
+  "2d3330cb24e41e36": "Autor",
+  "68375af4f21f9e39": "Rechercheur",
+  "203199494de634a1": "Tester",
+  "a430c357cb87ebd5": "Benutzereingabe konnte nicht übermittelt werden.",
+  "192de2b9424e1da6": "Frage eines Agenten",
+  "8c402efda5958564": "1 von {total}",
+  "612e62ca46e29fb4": "Fragen schließen",
+  "258946ae98c11cea": "Ihre eigene Antwort",
+  "b8ec2dcad78ef780": "Oder geben Sie Ihre eigene Antwort ein",
+  "1accce409be44f6b": "Zurück",
+  "735fa8731e0670ae": "Senden",
+  "7f8cb8174c6d288f": "Weiter",
+  "538a08613f07568c": "{count, plural, one {{count} Kind-Agent} other {{count} Kind-Agenten}}"
 }

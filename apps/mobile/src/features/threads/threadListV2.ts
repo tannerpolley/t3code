@@ -1,3 +1,7 @@
+import {
+  sidebarFamilyRows,
+  type SidebarFamilyRow,
+} from "@t3tools/client-runtime/state/sidebar-families";
 import { msg } from "gt-react-native";
 import {
   canSnooze,
@@ -444,6 +448,7 @@ export interface ThreadListV2ThreadListItem {
   readonly showTrailingDivider: boolean;
   /** Include queued state in item equality; outbox writes do not update thread shells. */
   readonly hasQueuedMessages: boolean;
+  readonly family?: Pick<SidebarFamilyRow, "depth" | "descendantCount" | "expanded">;
   readonly canMoveUp: boolean;
   readonly canMoveDown: boolean;
 }
@@ -520,6 +525,9 @@ export function threadListV2ListItemsAreEqual(
         previous.snoozePresetMinute === item.snoozePresetMinute &&
         previous.showTrailingDivider === item.showTrailingDivider &&
         previous.hasQueuedMessages === item.hasQueuedMessages &&
+        previous.family?.depth === item.family?.depth &&
+        previous.family?.descendantCount === item.family?.descendantCount &&
+        previous.family?.expanded === item.family?.expanded &&
         previous.canMoveUp === item.canMoveUp &&
         previous.canMoveDown === item.canMoveDown
       );
@@ -581,6 +589,12 @@ function resolveThreadListV2ItemTimeLabel(
 export function buildThreadListV2ListItems(input: {
   readonly items: ReadonlyArray<ThreadListV2Item>;
   readonly pendingTasks: ReadonlyArray<PendingNewTask>;
+  readonly families?: {
+    readonly children: ReadonlyMap<string, readonly EnvironmentThreadShell[]>;
+    readonly expansion: ReadonlyMap<string, boolean>;
+    readonly routeKey: string | null;
+    readonly now: string;
+  };
   readonly workingCount?: number;
   readonly workingShelfExpanded?: boolean;
   readonly workingShelfHeaderIndex?: number | null;
@@ -599,7 +613,7 @@ export function buildThreadListV2ListItems(input: {
 }): ThreadListV2ListItem[] {
   const resolve = input.resolve ?? m;
   const queuedThreadKeys = input.queuedThreadKeys?.size ? input.queuedThreadKeys : undefined;
-  const threadItems = input.items.map((item): ThreadListV2ListItem => {
+  const buildThreadItem = (item: ThreadListV2Item): ThreadListV2ThreadListItem => {
     const snoozeWakeLabelText =
       item.snoozed && item.thread.snoozedUntil != null && input.snoozeLabelNow !== undefined
         ? snoozeWakeLabel(item.thread.snoozedUntil, { now: input.snoozeLabelNow }, resolve)
@@ -629,7 +643,8 @@ export function buildThreadListV2ListItems(input: {
       canMoveUp: move?.canMoveUp === true,
       canMoveDown: move?.canMoveDown === true,
     };
-  });
+  };
+  const threadItems = input.items.map(buildThreadItem);
   const pendingItems = input.pendingTasks.map((pendingTask, index): ThreadListV2ListItem => ({
     type: "v2-pending",
     key: `v2-${pendingTask.key}`,
@@ -678,9 +693,41 @@ export function buildThreadListV2ListItems(input: {
     });
     result.push(...threadItems.slice(settledShelfHeaderIndex));
   }
-  return result.map((entry, index) => {
+  const families = input.families;
+  const familyRows =
+    families &&
+    sidebarFamilyRows(
+      input.items.map(({ thread }) => thread),
+      families.children,
+      families.expansion,
+      families.routeKey,
+    );
+  const rows =
+    familyRows && families
+      ? result.flatMap((entry): ThreadListV2ListItem[] => {
+          if (entry.type !== "v2-thread") return [entry];
+          const { thread } = entry.item;
+          const family = familyRows.get(`${thread.environmentId}:${thread.id}`);
+          if (!family || family[0]?.descendantCount === 0) return [entry];
+          return family.map(({ thread, depth, descendantCount, expanded }) => {
+            const row =
+              depth === 0
+                ? entry
+                : buildThreadItem({
+                    thread,
+                    variant: entry.item.variant,
+                    pinned: thread.pinnedAt != null,
+                    snoozed: false,
+                    wokeAt: resolveThreadListV2WokeAt(thread, { now: families.now }),
+                    isLast: false,
+                  });
+            return { ...row, family: { depth, descendantCount, expanded } };
+          });
+        })
+      : result;
+  return rows.map((entry, index) => {
     if (entry.type !== "v2-thread" && entry.type !== "v2-pending") return entry;
-    const next = result[index + 1];
+    const next = rows[index + 1];
     const showTrailingDivider =
       next?.type === "v2-thread" || (next?.type === "v2-pending" && !next.showPendingDivider);
     return showTrailingDivider === entry.showTrailingDivider

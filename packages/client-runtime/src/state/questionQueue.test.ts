@@ -2,11 +2,7 @@ import { EnvironmentId, RuntimeRequestId, ThreadId } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import { expect, it } from "vite-plus/test";
 
-import {
-  collectPendingQuestions,
-  deferQuestions,
-  visibleQuestionQueue,
-} from "./QuestionPopup.logic";
+import { collectPendingQuestions, deferQuestions, visibleQuestionQueue } from "./questionQueue.ts";
 
 function shell(id: string, minute: number, requestId = id) {
   return {

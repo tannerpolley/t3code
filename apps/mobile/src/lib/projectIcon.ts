@@ -2,7 +2,6 @@ import { isScratchProject } from "@t3tools/client-runtime/state/projects";
 import { ProjectIconColor, type ProjectIconOverride } from "@t3tools/contracts";
 import { isProjectFaviconFallbackUrl } from "@t3tools/shared/projectFavicon";
 import { projectMonogram } from "@t3tools/shared/projectMonogram";
-import type { AppSymbolName } from "../components/ui/AppSymbol";
 
 export type ProjectIconGlyph =
   | { readonly kind: "emoji"; readonly emoji: string }
@@ -45,18 +44,6 @@ export function resolveProjectIconGlyph(
     case undefined:
       return null;
   }
-}
-
-const SYMBOL_BY_LUCIDE_NAME: Partial<Record<string, AppSymbolName>> = {
-  "message-square-dashed": "text.bubble",
-};
-
-export function resolveProjectIconSymbol(
-  projectIcon: ProjectIconOverride | null | undefined,
-): { readonly name: AppSymbolName; readonly color: ProjectIconColor } | null {
-  if (projectIcon?.kind !== "lucide") return null;
-  const name = SYMBOL_BY_LUCIDE_NAME[projectIcon.name];
-  return name ? { name, color: projectIcon.color } : null;
 }
 
 export type ProjectChipIcon = { readonly kind: "favicon"; readonly uri: string } | ProjectIconGlyph;

@@ -1,6 +1,6 @@
+import { sidebarRowModel, sidebarRoleLabels } from "@t3tools/client-runtime/sidebar-row-model";
 import { useAtomMount, useAtomValue } from "@effect/atom-react";
-import { getProviderOptionStatedValue } from "@t3tools/shared/model";
-import { getDescriptorStringValue, isReasoningSelect } from "@t3tools/client-runtime/model-traits";
+import { getTriggerDisplayModelName } from "../chat/providerIconUtils";
 import { asLaunchingThread } from "@t3tools/client-runtime/state/thread-inbox";
 import { ThreadHoverCard, ThreadHoverCardTrigger } from "../ThreadHoverCard";
 import { ThreadTerminalStatusButton } from "../ThreadStatusIndicators";
@@ -123,9 +123,8 @@ import { ProjectFavicon, type ProjectFaviconProject } from "../ProjectFavicon";
 import { ThreadSearchMatchExcerpt } from "../ThreadSearchMatch";
 import { makeWorkspaceFileDropHandlers } from "../chat/workspaceFileDrop";
 import { AgentElapsed } from "../chat/AgentElapsed";
-import { EffortGlyph, resolveEffortGlyph } from "../chat/EffortGlyph";
+import { EffortGlyph } from "../chat/EffortGlyph";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
-import { getTriggerDisplayModelName } from "../chat/providerIconUtils";
 import { shouldShowInstanceBadge, type ProviderInstanceEntry } from "../../providerInstances";
 import { useThreadRunningTerminalIds } from "../../state/terminalSessions";
 import { InlineButton } from "../ui/button";
@@ -155,21 +154,6 @@ export type SidebarProviderEntry = Pick<
   | "acpRegistryIconUrl"
   | "models"
 >;
-function sidebarModelParts(label: string) {
-  const leading = /^(?:gpt-)?(\d+(?:\.\d+)*)[ -]+(.+)$/i.exec(label);
-  if (leading) {
-    const name = leading[2]!;
-    return { name: name[0]!.toUpperCase() + name.slice(1), version: leading[1] };
-  }
-  const versioned = /^(.*?)[ -]+(\d+(?:[.-]\d+)*)(?:[ -]+(.*))?$/.exec(label);
-  return versioned
-    ? {
-        name: [versioned[1], versioned[3]].filter(Boolean).join(" "),
-        version: versioned[2]!.replaceAll("-", "."),
-      }
-    : { name: label };
-}
-
 function compactSidebarTimeLabel(timestamp: string, nowMs: number, resolve: MessageResolver) {
   const parts = formatRelativeTime(timestamp, nowMs, resolve);
   if (parts === null) return "";
@@ -564,15 +548,6 @@ function TopStatusIcon(props: {
   return <Icon aria-hidden className={cn("shrink-0", props.className)} />;
 }
 
-const roleLabels = {
-  implementation: msg("Implementor"),
-  review: msg("Reviewer"),
-  design: msg("Designer"),
-  writer: msg("Writer"),
-  research: msg("Researcher"),
-  test: msg("Tester"),
-};
-
 type SidebarThreadRowProps = {
   thread: SidebarThreadSummary;
   variant: "card" | "slim" | "folder";
@@ -727,7 +702,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   };
   const role = thread.delegatedRole;
   const rowTitle =
-    role === undefined || role === "general" ? thread.title : messages(roleLabels[role]);
+    role === undefined || role === "general" ? thread.title : messages(sidebarRoleLabels[role]);
   const isRegeneratingTitle = thread.titleRegeneration != null;
   const localLastVisitedAt = useUiStateStore((state) => state.threadLastVisitedAtById[threadKey]);
   const lastVisitedAt = resolveThreadLastVisitedAt(thread.lastVisitedAt, localLastVisitedAt);
@@ -889,9 +864,11 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   const selectedModel = providerEntry?.models.find(
     (model) => model.slug === thread.modelSelection.model,
   );
-  const modelLabel = selectedModel
-    ? getTriggerDisplayModelName(selectedModel, providerEntry?.driverKind)
-    : thread.modelSelection.model;
+  const { modelLabel, modelParts, effort } = sidebarRowModel(
+    thread.modelSelection,
+    selectedModel,
+    providerEntry?.driverKind,
+  );
 
   const detailsTooltip = (
     <SidebarThreadTooltip
@@ -1247,19 +1224,6 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   const inFolder = variant === "folder";
   const familyIndent = Math.min(props.familyDepth, 4) * 12;
   const folderIndent = inFolder ? 36 + Math.min(props.folderDepth ?? 0, 3) * 10 : 10;
-  const modelParts = sidebarModelParts(modelLabel);
-  const reasoning = selectedModel?.capabilities?.optionDescriptors?.find(isReasoningSelect);
-  const statedEffort = reasoning
-    ? getProviderOptionStatedValue(reasoning.id, thread.modelSelection)
-    : undefined;
-  const effort = reasoning
-    ? resolveEffortGlyph(
-        reasoning,
-        typeof statedEffort === "string"
-          ? statedEffort
-          : getDescriptorStringValue(reasoning, thread.modelSelection),
-      )
-    : null;
   const driverKind =
     providerEntry?.driverKind ?? (isProviderDriverKind(modelInstanceId) ? modelInstanceId : null);
   const startedAt =

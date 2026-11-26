@@ -1,3 +1,4 @@
+import { steadyThreadShells } from "../../state/threads";
 import { useGT, useMessages } from "gt-react-native";
 
 import { useContentTopInset } from "../../components/ui/useBarInset";
@@ -75,6 +76,7 @@ import { useQueuedThreadKeys } from "../../state/use-thread-outbox";
 import {
   ThreadListV2PendingRow,
   ThreadListV2Row,
+  THREAD_ROW_VIEWABILITY,
   ThreadListV2SettledShelfHeader,
   ThreadListV2ShowMoreRow,
   ThreadListV2SnoozedShelfHeader,
@@ -418,7 +420,12 @@ export function HomeScreen(props: HomeScreenProps) {
     items: threadListV2Items,
     contentOnlyThreadKeys,
     olderSettledShelf,
+    selectedRowKey,
+    setFamilyExpanded,
   } = useThreadListV2({
+    familyThreads: useAtomValue(steadyThreadShells.quietThreadShellsAtom),
+    delegatedUnderParent: useAtomValue(steadyThreadShells.delegatedUnderParentAtom),
+    openThreadKey: activeNewTask ? null : (primaryColumn?.selectedThreadKey ?? null),
     threads: props.threads,
     pendingTasks: props.pendingTasks,
     environmentId: props.selectedEnvironmentId,
@@ -531,10 +538,13 @@ export function HomeScreen(props: HomeScreenProps) {
     return (
       <ThreadListV2Row
         pane={sidebarSurface ? "sidebar" : "screen"}
-        selected={scopedThreadKey(thread.environmentId, thread.id) === selectedThreadKey}
+        selected={scopedThreadKey(thread.environmentId, thread.id) === selectedRowKey}
         fullSwipeWidth={fullSwipeWidth}
         onNewThreadOnBranch={props.onNewThreadOnBranch}
         thread={thread}
+        family={item.family}
+        listVisible={props.visible}
+        onToggleFamily={setFamilyExpanded}
         variant={item.item.variant}
         hasQueuedMessages={item.hasQueuedMessages}
         snoozed={item.item.snoozed}
@@ -578,9 +588,10 @@ export function HomeScreen(props: HomeScreenProps) {
         pinningSupported={pinningEnvironmentIds.has(thread.environmentId)}
         autoSettleOptOutSupported={autoSettleOptOutEnvironmentIds.has(thread.environmentId)}
         reorderSupported={
-          item.item.pinned
+          !item.family?.depth &&
+          (item.item.pinned
             ? pinReorderEnvironmentIds.has(thread.environmentId)
-            : !workingShelfEnabled && activeReorderEnvironmentIds.has(thread.environmentId)
+            : !workingShelfEnabled && activeReorderEnvironmentIds.has(thread.environmentId))
         }
         canMoveUp={item.canMoveUp}
         canMoveDown={item.canMoveDown}
@@ -609,6 +620,8 @@ export function HomeScreen(props: HomeScreenProps) {
     savedConnectionsById: props.savedConnectionsById,
     searchQuery: props.searchQuery,
     selectedThreadKey,
+    selectedRowKey,
+    visible: props.visible,
     threadSearchMatchByKey,
     workingShelfEnabled,
   };
@@ -780,6 +793,7 @@ export function HomeScreen(props: HomeScreenProps) {
                 renderScrollComponent={Platform.OS === "ios" ? renderHomeScrollView : undefined}
                 data={threadListV2Items}
                 renderItem={renderV2Item}
+                viewabilityConfig={THREAD_ROW_VIEWABILITY}
                 keyExtractor={v2KeyExtractor}
                 getItemType={(item) => item.type}
                 itemsAreEqual={threadListV2ListItemsAreEqual}

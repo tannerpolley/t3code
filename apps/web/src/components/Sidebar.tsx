@@ -291,11 +291,10 @@ import {
 } from "./sidebar/SidebarThreadRow";
 import {
   indexSidebarChildren,
-  setSidebarFamilyExpanded,
-  sidebarFamilyExpansion,
   sidebarFamilyRows,
   type SidebarFamilyRow,
-} from "./sidebar/sidebarFamilies";
+} from "@t3tools/client-runtime/state/sidebar-families";
+import { setSidebarFamilyExpanded, sidebarFamilyExpansion } from "./sidebar/sidebarFamilies";
 import {
   draftTerminalLabel,
   SidebarDraftBlock,

@@ -1,3 +1,4 @@
+import { steadyThreadShells } from "../../state/threads";
 import { useGT, useMessages } from "gt-react-native";
 import { useActiveNewTask } from "../../state/active-new-task";
 import { ThreadUndoNotice } from "../home/ThreadUndoNotice";
@@ -64,6 +65,7 @@ import { WorkspaceSidebarColumn } from "../layout/workspace/WorkspaceSidebarColu
 import {
   ThreadListV2PendingRow,
   ThreadListV2Row,
+  THREAD_ROW_VIEWABILITY,
   ThreadListV2SettledShelfHeader,
   ThreadListV2ShowMoreRow,
   ThreadListV2SnoozedShelfHeader,
@@ -276,7 +278,12 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
     items: threadListV2Items,
     contentOnlyThreadKeys,
     olderSettledShelf,
+    selectedRowKey,
+    setFamilyExpanded,
   } = useThreadListV2({
+    familyThreads: useAtomValue(steadyThreadShells.quietThreadShellsAtom),
+    delegatedUnderParent: useAtomValue(steadyThreadShells.delegatedUnderParentAtom),
+    openThreadKey: activeNewTask ? null : props.selectedThreadKey,
     threads: launchingThreads,
     pendingTasks,
     environmentId: options.selectedEnvironmentId,
@@ -359,7 +366,8 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
   // Recycle equality needs project/search data for titles and favicons; keep the minute clock on items to limit updates.
   const listExtraData = {
     activeNewTask,
-    selectedThreadKey: selectedThreadKey ?? "",
+    selectedThreadKey: selectedRowKey ?? "",
+    visible: props.visible,
     projectByKey,
     projectTitleByProjectKey,
     savedConnectionsById,
@@ -420,6 +428,9 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
           <ThreadListV2Row
             onNewThreadOnBranch={props.onNewThreadOnBranch}
             thread={thread}
+            family={item.family}
+            listVisible={props.visible}
+            onToggleFamily={setFamilyExpanded}
             variant={item.item.variant}
             hasQueuedMessages={item.hasQueuedMessages}
             snoozed={item.item.snoozed}
@@ -453,8 +464,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
             searchQuery={threadSearch.query}
             pane="sidebar"
             selected={
-              !activeNewTask &&
-              scopedThreadKey(thread.environmentId, thread.id) === selectedThreadKey
+              !activeNewTask && scopedThreadKey(thread.environmentId, thread.id) === selectedRowKey
             }
             fullSwipeWidth={props.width - 20}
             onSelectThread={handleSelectThread}
@@ -471,9 +481,10 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
             pinningSupported={pinningEnvironmentIds.has(thread.environmentId)}
             autoSettleOptOutSupported={autoSettleOptOutEnvironmentIds.has(thread.environmentId)}
             reorderSupported={
-              item.item.pinned
+              !item.family?.depth &&
+              (item.item.pinned
                 ? pinReorderEnvironmentIds.has(thread.environmentId)
-                : !workingShelfEnabled && activeReorderEnvironmentIds.has(thread.environmentId)
+                : !workingShelfEnabled && activeReorderEnvironmentIds.has(thread.environmentId))
             }
             canMoveUp={item.canMoveUp}
             canMoveDown={item.canMoveDown}
@@ -625,6 +636,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
                 itemsAreEqual={sidebarItemsAreEqual}
                 keyExtractor={(item) => item.key}
                 renderItem={renderListItem}
+                viewabilityConfig={THREAD_ROW_VIEWABILITY}
                 automaticallyAdjustsScrollIndicatorInsets
                 // The column lays the list under its bar, glass or solid; UIKit insets it past both.
                 contentInsetAdjustmentBehavior="automatic"
@@ -682,6 +694,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
                 itemsAreEqual={sidebarItemsAreEqual}
                 keyExtractor={(item) => item.key}
                 renderItem={renderListItem}
+                viewabilityConfig={THREAD_ROW_VIEWABILITY}
                 contentContainerStyle={{
                   paddingBottom: floatingTabsEnabled
                     ? FLOATING_TABS.bottom + FLOATING_TABS.edge + fabSize
