@@ -13011,5 +13011,8 @@
   "68375af4f21f9e39": "Rechercheur",
   "203199494de634a1": "Tester",
   "a10ffc530930e59e": "{pullRequest}, {checks}",
-  "538a08613f07568c": "{count, plural, one {{count} Kind-Agent} other {{count} Kind-Agenten}}"
+  "538a08613f07568c": "{count, plural, one {{count} Kind-Agent} other {{count} Kind-Agenten}}",
+  "71f8e3f9f3efc6c5": "Telefon für die Benachrichtigungsweiterleitung",
+  "1351099395ec0ac4": "Unterschiedliche Werte",
+  "09bbffae7a01aef8": "Gib den Tailscale-Namen deines Telefons ein. Thread-Benachrichtigungen erscheinen auf dem Desktop, wenn das Telefon im lokalen Netzwerk des Hosts ist, und unterwegs auf dem Telefon. Lass das Feld leer, um die Funktion zu deaktivieren."
 }

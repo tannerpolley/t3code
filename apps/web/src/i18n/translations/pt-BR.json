@@ -13011,5 +13011,8 @@
   "68375af4f21f9e39": "Pesquisador",
   "203199494de634a1": "Testador",
   "a10ffc530930e59e": "{pullRequest}, {checks}",
-  "538a08613f07568c": "{count, plural, one {{count} agente filho} other {{count} agentes filhos}}"
+  "538a08613f07568c": "{count, plural, one {{count} agente filho} other {{count} agentes filhos}}",
+  "71f8e3f9f3efc6c5": "Celular para encaminhar notificações",
+  "1351099395ec0ac4": "Valores diferentes",
+  "09bbffae7a01aef8": "Digite o nome do seu celular no Tailscale. Os alertas das conversas chegam ao computador quando o celular está na rede local do host e ao celular quando está fora dela. Deixe em branco para desativar."
 }

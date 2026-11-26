@@ -9,9 +9,15 @@ import {
   unlockNotificationAudio,
 } from "../../threadNotifications";
 import { Select, SelectItem, SelectPopup, SelectTrigger, SelectValue } from "../ui/select";
+import { Input } from "../ui/input";
+import { useSettingsScope } from "./SettingsScopeContext";
 import { SettingsRow } from "./settingsLayout";
 import { useSearchableSetting } from "./settingsSearch";
-import { useScopedSettings, useUpdateScopedSettings } from "./useScopedSettings";
+import {
+  useScopedSettings,
+  useScopedSettingsMixed,
+  useUpdateScopedSettings,
+} from "./useScopedSettings";
 
 export function NotificationSettings() {
   const searchableSetting = useSearchableSetting();
@@ -92,6 +98,42 @@ export function NotificationSettings() {
             ))}
           </SelectPopup>
         </Select>
+      }
+    />
+  );
+}
+
+export function NotificationPresenceSettings() {
+  const gt = useGT();
+  const searchableSetting = useSearchableSetting();
+  const { targets } = useSettingsScope();
+  const peer = useScopedSettings((settings) => settings.notificationPresencePeer);
+  const mixed = useScopedSettingsMixed(["notificationPresencePeer"]);
+  const updateSettings = useUpdateScopedSettings();
+  return (
+    <SettingsRow
+      serverScoped
+      settingKeys={["notificationPresencePeer"]}
+      {...searchableSetting("notification-presence-peer")}
+      description={gt(
+        "Enter your phone’s Tailscale name. Thread alerts go to the desktop when the phone is on the host’s local network and to the phone when away. Leave blank to turn this off.",
+      )}
+      control={
+        <Input
+          key={JSON.stringify([targets.map((target) => target.environmentId), mixed, peer])}
+          size="sm"
+          className="w-full sm:w-56"
+          aria-label={gt("Phone for notification routing")}
+          defaultValue={mixed ? "" : peer}
+          placeholder={mixed ? gt("Mixed values") : undefined}
+          onBlur={(event) => {
+            const value = event.currentTarget.value.trim();
+            if (value !== (mixed ? "" : peer)) updateSettings({ notificationPresencePeer: value });
+          }}
+          onKeyDown={(event) => {
+            if (event.key === "Enter" && !event.nativeEvent.isComposing) event.currentTarget.blur();
+          }}
+        />
       }
     />
   );

@@ -13,6 +13,10 @@ Postgres because held requests need per-link ordering, retry timing, and larger 
 
 Deployment and Clerk configuration live in the [Connect setup runbook](../operations/02_connect-setup.md).
 
+Deploy relay presence support before enabling phone presence routing on an environment. The signed activity
+row carries the suppression decision through storage and queue delivery so later Live Activity aggregates
+cannot alert on a home-routed row. Older relays ignore the field and still send alerts.
+
 ## The relay is a trusted broker
 
 - **DPoP-bound bootstrap minting.** For a linked user, the relay asks the environment to mint a

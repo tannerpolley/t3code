@@ -13018,5 +13018,8 @@
   "68375af4f21f9e39": "Utredare",
   "203199494de634a1": "Testare",
   "a10ffc530930e59e": "{pullRequest}, {checks}",
-  "538a08613f07568c": "{count, plural, one {{count} underagent} other {{count} underagenter}}"
+  "538a08613f07568c": "{count, plural, one {{count} underagent} other {{count} underagenter}}",
+  "71f8e3f9f3efc6c5": "Telefon för vidarebefordran av aviseringar",
+  "1351099395ec0ac4": "Olika värden",
+  "09bbffae7a01aef8": "Ange telefonens Tailscale-namn. Trådaviseringar visas på datorn när telefonen är på värddatorns lokala nätverk och på telefonen när den är utanför nätverket. Lämna fältet tomt för att stänga av funktionen."
 }

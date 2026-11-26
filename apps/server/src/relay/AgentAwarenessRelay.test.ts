@@ -43,6 +43,7 @@ import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import * as AgentAwarenessRelay from "./AgentAwarenessRelay.ts";
+import * as NotificationPresence from "./NotificationPresence.ts";
 
 const THREAD_ID = ThreadId.make("relay-thread");
 const SECOND_THREAD_ID = ThreadId.make("relay-thread-2");
@@ -166,6 +167,7 @@ describe("startup agent activity", () => {
 
 const makeTestRelay = Effect.fnUntraced(function* (
   options: {
+    readonly presence?: "home" | "away" | "off";
     readonly respond?: (attempt: number) => Response;
     readonly failSecretRead?: (name: string) => boolean;
     readonly linked?: boolean;
@@ -314,6 +316,9 @@ const makeTestRelay = Effect.fnUntraced(function* (
   };
   const relay = yield* AgentAwarenessRelay.make.pipe(
     Effect.provide(EnvironmentKeys.layer),
+    Effect.provideService(NotificationPresence.NotificationPresence, {
+      read: () => Effect.succeed(options.presence ?? "off"),
+    }),
     Effect.provideService(ServerSecretStore.ServerSecretStore, secrets),
     Effect.provideService(ThreadManagementService.ThreadManagementService, threads),
     Effect.provideService(ServerEnvironment.ServerEnvironment, {
@@ -340,6 +345,25 @@ const makeTestRelay = Effect.fnUntraced(function* (
 });
 
 describe("AgentAwarenessRelay", () => {
+  it.effect.each(["home", "away", "off"] as const)(
+    "publishes a waiting activity with the alert routing for %s",
+    (presence) =>
+      Effect.gen(function* () {
+        const parent = shell({ status: "running" });
+        const child = waitingChild();
+        const { relay, publications } = yield* makeTestRelay({
+          presence,
+          readShell: (id) => Effect.succeed(id === child.id ? child : parent),
+        });
+        yield* relay.publishThread(CHILD_THREAD_ID);
+        assert.lengthOf(publications, 1);
+        assert.equal(publications[0]?.state?.phase, "waiting_for_approval");
+        assert.equal(
+          publications[0]?.state?.suppressNotification,
+          presence === "home" ? true : undefined,
+        );
+      }),
+  );
   it.effect("publishes the parent as needing approval while its subagent waits", () =>
     Effect.gen(function* () {
       const shells = yield* Ref.make(

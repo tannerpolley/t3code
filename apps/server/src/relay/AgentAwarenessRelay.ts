@@ -54,6 +54,7 @@ import * as ThreadManagement from "../orchestration-v2/ThreadManagementService.t
 import { isSnoozed } from "../orchestration-v2/ThreadSettlementService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
 import { forkParked } from "../serverActivation.ts";
+import * as NotificationPresence from "./NotificationPresence.ts";
 
 export class AgentAwarenessRelay extends Context.Service<
   AgentAwarenessRelay,
@@ -426,6 +427,7 @@ export function resolveAgentAwarenessRelayActiveThreadIds(input: {
 /** @public */
 export const make = Effect.gen(function* () {
   const secrets = yield* ServerSecretStore.ServerSecretStore;
+  const presence = yield* NotificationPresence.NotificationPresence;
   const serverEnvironment = yield* ServerEnvironment.ServerEnvironment;
   const threads = yield* ThreadManagement.ThreadManagementService;
   const projects = yield* ProjectService.ProjectService;
@@ -537,6 +539,16 @@ export const make = Effect.gen(function* () {
       readonly state: RelayAgentActivityState | null;
       readonly reason: string;
     }) {
+      const phase = input.state?.phase;
+      const canAlert =
+        phase === "waiting_for_approval" ||
+        phase === "waiting_for_input" ||
+        phase === "completed" ||
+        phase === "failed";
+      const state =
+        canAlert && input.state !== null && (yield* presence.read()) === "home"
+          ? { ...input.state, suppressNotification: true as const }
+          : input.state;
       if (cachedRelayClient === undefined) {
         cachedRelayClient = yield* makeRelayClient(relayConfig);
       }
@@ -545,7 +557,7 @@ export const make = Effect.gen(function* () {
         relayIssuer: relayConfig.issuer,
         environmentId,
         threadId,
-        state: input.state,
+        state,
         jti: yield* random.uuidV4(),
       }).pipe(Effect.provideService(EnvironmentSigningKey, signingKey));
 
@@ -565,7 +577,7 @@ export const make = Effect.gen(function* () {
             threadId,
           },
           payload: {
-            state: input.state,
+            state,
             proof,
           },
         })

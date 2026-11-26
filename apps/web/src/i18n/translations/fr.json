@@ -13011,5 +13011,8 @@
   "68375af4f21f9e39": "Chercheur",
   "203199494de634a1": "Testeur",
   "a10ffc530930e59e": "{pullRequest}, {checks}",
-  "538a08613f07568c": "{count, plural, one {{count} agent enfant} other {{count} agents enfants}}"
+  "538a08613f07568c": "{count, plural, one {{count} agent enfant} other {{count} agents enfants}}",
+  "71f8e3f9f3efc6c5": "Téléphone pour le routage des notifications",
+  "1351099395ec0ac4": "Valeurs différentes",
+  "09bbffae7a01aef8": "Saisissez le nom Tailscale de votre téléphone. Les alertes des fils arrivent sur l’ordinateur quand le téléphone est sur le réseau local de l’hôte, et sur le téléphone quand il est ailleurs. Laissez ce champ vide pour désactiver cette fonction."
 }

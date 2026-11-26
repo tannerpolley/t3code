@@ -102,4 +102,22 @@ describe("shared agent activity policy", () => {
     ).toBe(false);
     expect(shouldAlertForActivity({ ...input, nowMs: 180_000 })).toBe(false);
   });
+
+  it.each(["waiting_for_approval", "waiting_for_input", "completed", "failed"] as const)(
+    "keeps a suppressed %s on the activity card without alerting",
+    (phase) => {
+      const waiting = { ...state, phase, suppressNotification: true as const };
+      const other = { ...state, phase, threadId: ThreadId.make("other") };
+      const nextAggregate = aggregate([waiting, other]);
+      const previousAggregate = aggregate([state, { ...state, threadId: other.threadId }]);
+      const input = { previousAggregate, nextAggregate, preferences, nowMs: 0 };
+      expect(nextAggregate.activities).toHaveLength(2);
+      expect(shouldAlertForActivity({ ...waiting, preferences, nowMs: 0 })).toBe(false);
+      const alerts =
+        phase === "completed" || phase === "failed"
+          ? terminalTransitionRows(input)
+          : attentionTransitionRows(input);
+      expect(alerts.map((activity) => activity.threadId)).toEqual([other.threadId]);
+    },
+  );
 });

@@ -74,6 +74,7 @@ export function attentionTransitionRows(input: TransitionInput) {
     (row) =>
       isAttentionPhase(row.phase) &&
       !previouslyAttention.has(rowKey(row)) &&
+      !row.suppressNotification &&
       alertAllowedForPhase(input.preferences, row.phase),
   );
 }
@@ -108,6 +109,7 @@ export function terminalTransitionRows(
   ).filter((row) => {
     return (
       alertAllowedForPhase(input.preferences, row.phase) &&
+      !row.suppressNotification &&
       isFreshTerminalNotification(row.updatedAt, input.nowMs)
     );
   });
@@ -142,11 +144,13 @@ export function alertForTerminalAggregate(input: {
   readonly preferences: RelayAgentAwarenessPreferences | null;
 }): AgentActivityAlert | null {
   const row = input.aggregate?.activities[0];
-  if (!row || (row.phase !== "completed" && row.phase !== "failed")) return null;
+  if (!row || row.suppressNotification || (row.phase !== "completed" && row.phase !== "failed"))
+    return null;
   return alertAllowedForPhase(input.preferences, row.phase) ? alertForActivityRows([row]) : null;
 }
 
 export function shouldAlertForActivity(input: {
+  readonly suppressNotification?: true;
   readonly phase: RelayAgentActivityAggregateRow["phase"];
   readonly updatedAt: string;
   readonly preferences: RelayAgentAwarenessPreferences | null;
@@ -154,6 +158,7 @@ export function shouldAlertForActivity(input: {
 }): boolean {
   return (
     input.preferences?.notificationsEnabled === true &&
+    !input.suppressNotification &&
     alertAllowedForPhase(input.preferences, input.phase) &&
     ((input.phase !== "completed" && input.phase !== "failed") ||
       isFreshTerminalNotification(input.updatedAt, input.nowMs))

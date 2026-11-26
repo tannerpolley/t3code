@@ -551,6 +551,7 @@ const make = Effect.gen(function* () {
         Effect.map(
           (current) =>
             current !== null &&
+            !current.suppressNotification &&
             current.phase === input.phase &&
             current.updatedAt === input.updatedAt,
         ),
@@ -583,6 +584,7 @@ const make = Effect.gen(function* () {
           return (
             current !== undefined &&
             current.phase === row.phase &&
+            current.suppressNotification === row.suppressNotification &&
             current.updatedAt === row.updatedAt
           );
         });
