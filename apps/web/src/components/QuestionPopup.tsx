@@ -1,7 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { scopeProjectRef } from "@t3tools/client-runtime/environment";
-import { enabledEnvironmentIds } from "@t3tools/client-runtime/state/connections";
 import {
   buildPendingUserInputAnswers,
   setPendingUserInputCustomAnswer,
@@ -14,14 +13,9 @@ import {
   type AtomCommandResult,
 } from "@t3tools/client-runtime/state/runtime";
 import { seedUserInputDraftAnswers } from "@t3tools/client-runtime/state/thread-requests";
-import {
-  AuthOrchestrationOperateScope,
-  type EnvironmentId,
-  type ScopedThreadRef,
-} from "@t3tools/contracts";
+import { AuthOrchestrationOperateScope, type ScopedThreadRef } from "@t3tools/contracts";
 import { projectScriptCwd } from "@t3tools/shared/projectScripts";
 import { Link } from "@tanstack/react-router";
-import { Atom } from "effect/reactivity";
 import { T, useGT, useMessages } from "gt-react";
 import { MessageCircleQuestionIcon, XIcon } from "lucide-react";
 import { useRef, useState } from "react";
@@ -39,37 +33,16 @@ import { ComposerPendingUserInputPanel } from "./chat/ComposerPendingUserInputPa
 import { Button } from "./ui/button";
 import { Textarea } from "./ui/textarea";
 import {
-  collectPendingQuestions,
+  createPendingQuestionsAtom,
   deferQuestions,
   visibleQuestionQueue,
   type PendingQuestion,
-} from "./QuestionPopup.logic";
+} from "@t3tools/client-runtime/state/question-queue";
 
-const environmentThreadsAtom = Atom.family((environmentId: EnvironmentId) =>
-  threadEnvironment.snapshotAtom(environmentId).pipe(Atom.map((snapshot) => snapshot?.threads)),
+const pendingQuestionsAtom = createPendingQuestionsAtom(
+  environmentCatalog.catalogValueAtom,
+  threadEnvironment.snapshotAtom,
 );
-
-let previousQuestions: ReadonlyArray<PendingQuestion> = [];
-// Shell updates unrelated to questions must not re-render the popup.
-const pendingQuestionsAtom = Atom.make((get) => {
-  const next = collectPendingQuestions(
-    Array.from(
-      enabledEnvironmentIds(get(environmentCatalog.catalogValueAtom)),
-      (environmentId) => ({
-        environmentId,
-        threads: get(environmentThreadsAtom(environmentId)) ?? [],
-      }),
-    ),
-  );
-  if (
-    next.length === previousQuestions.length &&
-    next.every((question, index) => question.key === previousQuestions[index]?.key)
-  ) {
-    return previousQuestions;
-  }
-  previousQuestions = next;
-  return next;
-}).pipe(Atom.withLabel("web-pending-questions"));
 
 export function QuestionPopup({ shownThread }: { shownThread: ScopedThreadRef | null }) {
   const enabled = useClientSettings((settings) => settings.openQuestionsAutomatically);

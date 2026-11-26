@@ -1,3 +1,4 @@
+import * as NodeNet from "node:net";
 import { ExecutionEnvironmentDescriptor } from "@t3tools/contracts";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as NetService from "@t3tools/shared/Net";
@@ -33,7 +34,7 @@ const tailscaleCommandForPlatform = (platform: NodeJS.Platform): "tailscale" | "
 
 const TailscaleCommandContext = {
   executable: Schema.Literals(["tailscale", "tailscale.exe"]),
-  subcommand: Schema.Literals(["status", "serve", "debug"]),
+  subcommand: Schema.Literals(["status", "serve", "debug", "ping"]),
   argumentCount: Schema.Number,
 };
 
@@ -242,7 +243,7 @@ export const parseTailscaleStatus = (
   );
 
 const readTailscaleOutput = Effect.fn("tailscale.readTailscaleOutput")(function* (
-  subcommand: "status" | "serve" | "debug",
+  subcommand: typeof TailscaleCommandContext.subcommand.Type,
   args: readonly string[],
 ) {
   const spawner = yield* ChildProcessSpawner.ChildProcessSpawner;
@@ -302,6 +303,59 @@ const readTailscaleOutput = Effect.fn("tailscale.readTailscaleOutput")(function*
         ),
     }),
   );
+});
+
+const decodeTailnetPeers = Schema.decodeEffect(
+  Schema.fromJsonString(
+    Schema.Struct({
+      BackendState: Schema.String,
+      Peer: Schema.optionalKey(
+        Schema.Record(
+          Schema.String,
+          Schema.Struct({
+            HostName: Schema.String,
+            DNSName: Schema.String,
+            Online: Schema.Boolean,
+            TailscaleIPs: Schema.Array(Schema.String),
+          }),
+        ),
+      ),
+    }),
+  ),
+);
+
+export const probeTailnetPeer = Effect.fn("tailscale.probeTailnetPeer")(function* (name: string) {
+  const status = yield* readTailscaleOutput("status", ["status", "--json"]).pipe(
+    Effect.flatMap((raw) =>
+      decodeTailnetPeers(raw).pipe(
+        Effect.mapError((cause) => new TailscaleStatusParseError({ cause })),
+      ),
+    ),
+  );
+  if (status.BackendState !== "Running") return null;
+  const label = name.toLowerCase().replace(/\.$/u, "");
+  const peers = Object.values(status.Peer ?? {}).filter((peer) => {
+    const dnsName = peer.DNSName.toLowerCase().replace(/\.$/u, "");
+    return (
+      peer.HostName.toLowerCase() === label || dnsName === label || dnsName.split(".")[0] === label
+    );
+  });
+  const peer = peers.length === 1 ? peers[0] : undefined;
+  const ip = peer?.TailscaleIPs[0];
+  if (!peer?.Online || ip === undefined || NodeNet.isIP(ip) === 0) return null;
+  const output = yield* readTailscaleOutput("ping", [
+    "ping",
+    "--c=3",
+    "--timeout=1s",
+    "--until-direct=true",
+    ip,
+  ]);
+  for (const line of output.trimEnd().split("\n").reverse()) {
+    const path = /^pong from .+ via (\S+) in \S+\s*$/u.exec(line)?.[1];
+    const endpoint = path?.match(/^(?:\[([^\]]+)\]|([^:]+)):\d+$/u);
+    if (endpoint) return endpoint[1] ?? endpoint[2] ?? null;
+  }
+  return null;
 });
 
 export const readTailscaleStatus = readTailscaleOutput("status", ["status", "--json"]).pipe(

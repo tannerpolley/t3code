@@ -13022,5 +13022,13 @@
   "7f8cb8174c6d288f": "Siguiente",
   "11abf926b7c35e41": "Más tarde",
   "7a79d0584eb504c0": "Abrir preguntas automáticamente",
-  "7ea072883f6d0a22": "Muestra un panel flotante cuando un agente hace una pregunta en otro hilo."
+  "7ea072883f6d0a22": "Muestra un panel flotante cuando un agente hace una pregunta en otro hilo.",
+  "71f8e3f9f3efc6c5": "Teléfono para dirigir las notificaciones",
+  "1351099395ec0ac4": "Valores distintos",
+  "09bbffae7a01aef8": "Introduce el nombre de Tailscale de tu teléfono. Los avisos de los hilos llegan al ordenador cuando el teléfono está en la red local del equipo anfitrión y al teléfono cuando está fuera. Deja el campo en blanco para desactivar esta función.",
+  "f9dd8ad51e9f5d1b": "URL del servidor ntfy",
+  "77fff3a927ba1009": "El servidor que envía los avisos al teléfono. El valor predeterminado es https://ntfy.sh.",
+  "a4739b023dc96d9a": "Tema de ntfy",
+  "fa74035ae7d791cf": "Suscríbete a este tema en la aplicación ntfy de tu teléfono. Mantén el tema en privado. Déjalo en blanco para desactivar los avisos de ntfy.",
+  "b9418d854bf3a44b": "Generar tema"
 }

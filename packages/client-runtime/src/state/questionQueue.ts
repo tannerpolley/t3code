@@ -1,10 +1,13 @@
 import type {
   EnvironmentId,
   OrchestrationV2ThreadShell,
+  OrchestrationV2ShellSnapshot,
   RuntimeRequestId,
   ScopedThreadRef,
 } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
+import { Atom } from "effect/reactivity";
+import { enabledEnvironmentIds } from "./connections.ts";
 
 export interface PendingQuestion {
   readonly key: string;
@@ -68,4 +71,29 @@ export function deferQuestions(
 ): ReadonlySet<string> {
   const visible = action === "later" ? queue.slice(0, 1) : queue;
   return new Set([...deferred, ...visible.map(({ key }) => key)]);
+}
+
+export function createPendingQuestionsAtom(
+  catalog: Atom.Atom<Parameters<typeof enabledEnvironmentIds>[0]>,
+  snapshot: (environmentId: EnvironmentId) => Atom.Atom<OrchestrationV2ShellSnapshot | null>,
+) {
+  const threads = Atom.family((environmentId: EnvironmentId) =>
+    snapshot(environmentId).pipe(Atom.map((value) => value?.threads)),
+  );
+  let previous: ReadonlyArray<PendingQuestion> = [];
+  return Atom.make((get) => {
+    const next = collectPendingQuestions(
+      Array.from(enabledEnvironmentIds(get(catalog)), (environmentId) => ({
+        environmentId,
+        threads: get(threads(environmentId)) ?? [],
+      })),
+    );
+    if (
+      next.length === previous.length &&
+      next.every((question, index) => question.key === previous[index]?.key)
+    )
+      return previous;
+    previous = next;
+    return next;
+  }).pipe(Atom.withLabel("pending-questions"));
 }

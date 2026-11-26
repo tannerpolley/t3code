@@ -2,7 +2,7 @@ import { useGT } from "gt-react-native";
 import { SymbolView } from "./ui/AppSymbol";
 import { AppText } from "./ui/AppText";
 import { Image } from "expo-image";
-import { memo, useLayoutEffect, useMemo, useState } from "react";
+import { lazy, Suspense, memo, useLayoutEffect, useMemo, useState } from "react";
 import { View } from "react-native";
 import type { EnvironmentId, ProjectIconOverride } from "@t3tools/contracts";
 import {
@@ -19,7 +19,6 @@ import {
   projectAutoMonogram,
   projectIconColorClassNames,
   resolveProjectIconGlyph,
-  resolveProjectIconSymbol,
   type ProjectIconGlyph,
 } from "../lib/projectIcon";
 import { resolveProjectFaviconColorScheme } from "../lib/projectFaviconColorScheme";
@@ -31,6 +30,8 @@ import {
   markProjectFaviconFailed,
   markProjectFaviconLoaded,
 } from "../lib/projectFaviconRequests";
+
+const ProjectLucideIcon = lazy(() => import("./ProjectLucideIcon"));
 
 const EMPTY_FAVICON_URL = Atom.make<string | null>(null);
 
@@ -44,7 +45,6 @@ export const ProjectFavicon = memo(function ProjectFavicon(props: {
   readonly projectIcon?: ProjectIconOverride | null;
 }) {
   const size = props.size ?? 42;
-  const symbol = resolveProjectIconSymbol(props.projectIcon);
   const glyph = resolveProjectIconGlyph(props.projectIcon, props.projectTitle);
   const faviconUrl = useAtomValue(
     props.workspaceRoot == null || glyph !== null
@@ -64,14 +64,12 @@ export const ProjectFavicon = memo(function ProjectFavicon(props: {
         : getProjectFaviconCacheKey(props.environmentId, props.workspaceRoot, renderableFaviconUrl)
       : null;
 
-  if (symbol !== null) {
+  if (props.projectIcon?.kind === "lucide" && glyph !== null) {
+    const fallback = <ProjectIconGlyphView glyph={glyph} size={size} />;
     return (
-      <SymbolView
-        name={symbol.name}
-        size={size}
-        tintColorClassName={projectIconColorClassNames(symbol.color).tint}
-        type="monochrome"
-      />
+      <Suspense fallback={fallback}>
+        <ProjectLucideIcon icon={props.projectIcon} size={size} fallback={fallback} />
+      </Suspense>
     );
   }
 

@@ -3,6 +3,22 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./state/sidebar-families": {
+      "types": "./src/state/sidebarFamilies.ts",
+      "default": "./src/state/sidebarFamilies.ts"
+    },
+    "./state/question-queue": {
+      "types": "./src/state/questionQueue.ts",
+      "default": "./src/state/questionQueue.ts"
+    },
+    "./sidebar-row-model": {
+      "types": "./src/sidebarRowModel.ts",
+      "default": "./src/sidebarRowModel.ts"
+    },
+    "./provider-model-display": {
+      "types": "./src/providerModelDisplay.ts",
+      "default": "./src/providerModelDisplay.ts"
+    },
     "./pull-request-diff-fold": {
       "types": "./src/pullRequestDiffFold.ts",
       "default": "./src/pullRequestDiffFold.ts"

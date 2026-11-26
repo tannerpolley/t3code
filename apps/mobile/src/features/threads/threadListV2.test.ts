@@ -1,3 +1,4 @@
+import { indexSidebarChildren } from "@t3tools/client-runtime/state/sidebar-families";
 import { threadSearchMatchKey } from "@t3tools/client-runtime/state/thread-search";
 import { createInboxReturnTracker } from "@t3tools/client-runtime/state/thread-inbox";
 import { presentThreadShell } from "@t3tools/client-runtime/state/models";
@@ -1337,11 +1338,19 @@ describe("cross-section thread drops", () => {
   });
 });
 
-it("excludes subagents from navigation, search and ordering while retaining user forks", () => {
+it("nests live subagents under their parent without putting them in navigation ordering", () => {
   const root = makeThread({ id: ThreadId.make("root"), title: "Root" });
   const child = makeThread({
     id: ThreadId.make("child"),
     title: "Child",
+    runtime: {
+      status: "running",
+      activeRunId: null,
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      providerName: "Codex",
+      lastError: null,
+      updatedAt: NOW,
+    },
     lineage: { parentThreadId: root.id, rootThreadId: root.id, relationshipToParent: "subagent" },
   });
   const fork = makeThread({
@@ -1350,11 +1359,43 @@ it("excludes subagents from navigation, search and ordering while retaining user
     lineage: { parentThreadId: root.id, rootThreadId: root.id, relationshipToParent: "fork" },
   });
   const threads = [root, child, fork];
-  expect(
-    buildThreadListV2Items({ threads, environmentId: null, searchQuery: "", now: NOW }).items.map(
-      (item) => item.thread.id,
-    ),
-  ).toEqual([fork.id, root.id]);
+  const { items } = buildThreadListV2Items({
+    threads,
+    environmentId: null,
+    searchQuery: "",
+    now: NOW,
+  });
+  expect(items.map((item) => item.thread.id)).toEqual([fork.id, root.id]);
+  const parentKey = `${environmentId}:${root.id}`;
+  const listRows = (expansion: ReadonlyMap<string, boolean>) =>
+    buildThreadListV2ListItems({
+      items,
+      pendingTasks: [],
+      families: {
+        children: indexSidebarChildren(threads, new Set()),
+        expansion,
+        routeKey: null,
+        now: NOW,
+      },
+    });
+  const expanded = listRows(new Map());
+  const collapsed = listRows(new Map([[parentKey, false]]));
+  expect(expanded.map((item) => item.type === "v2-thread" && item.item.thread.id)).toEqual([
+    fork.id,
+    root.id,
+    child.id,
+  ]);
+  expect(collapsed.map((item) => item.type === "v2-thread" && item.item.thread.id)).toEqual([
+    fork.id,
+    root.id,
+  ]);
+  const expandedParent = expanded.find(
+    (item) => item.type === "v2-thread" && item.item.thread.id === root.id,
+  )!;
+  const collapsedParent = collapsed.find(
+    (item) => item.type === "v2-thread" && item.item.thread.id === root.id,
+  )!;
+  expect(threadListV2ListItemsAreEqual(expandedParent, collapsedParent)).toBe(false);
   expect(
     buildThreadListV2Items({ threads, environmentId: null, searchQuery: "Child", now: NOW }).items,
   ).toEqual([]);

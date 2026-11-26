@@ -1,3 +1,5 @@
+import { BackgroundQuestionPopup } from "./features/threads/BackgroundQuestionPopup";
+import { parseActiveThreadPath } from "./features/keyboard/hardwareKeyboardCommands";
 import { isDraftThreadRoute } from "./features/threads/thread-route-state";
 import { ComponentCatalogScreen } from "./features/development/ComponentCatalogScreen";
 import { PullRequestGuideStopScreen } from "./features/pull-requests/guide/PullRequestGuideScreen";
@@ -506,6 +508,13 @@ function RootStackLayout(props: {
               >
                 {props.children}
                 <HardwareKeyboardCommandOverlay />
+                <BackgroundQuestionPopup
+                  shownThread={
+                    workspaceLocation.routeName === "Thread"
+                      ? parseActiveThreadPath(workspaceLocation.pathname)
+                      : null
+                  }
+                />
               </AdaptiveWorkspaceLayout>
             </AndroidWorkspaceTabsProvider>
           </WorkspaceConnectionStatusProvider>

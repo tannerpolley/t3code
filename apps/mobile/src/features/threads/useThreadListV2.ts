@@ -1,6 +1,9 @@
+import { useAtom } from "@effect/atom-react";
+import { Atom } from "effect/reactivity";
+import { indexSidebarChildren } from "@t3tools/client-runtime/state/sidebar-families";
 import type { OlderSettledScope } from "@t3tools/client-runtime/state/threads";
 import type { EnvironmentId } from "@t3tools/contracts";
-import { useMemo, useSyncExternalStore } from "react";
+import { useCallback, useMemo, useSyncExternalStore } from "react";
 
 import { keepMarked } from "../../i18n/messages";
 import { scopedProjectKey } from "../../lib/scopedEntities";
@@ -27,6 +30,8 @@ function useKeySet(newlineSeparatedKeys: string): ReadonlySet<string> {
   );
 }
 
+const familyExpansionAtom = Atom.make<ReadonlyMap<string, boolean>>(new Map()).pipe(Atom.keepAlive);
+
 type LayoutInput = Parameters<typeof buildThreadListV2Items>[0];
 
 /**
@@ -46,6 +51,9 @@ function observeInbox(
  */
 export function useThreadListV2(input: {
   readonly threads: LayoutInput["threads"];
+  readonly familyThreads: LayoutInput["threads"];
+  readonly delegatedUnderParent: ReadonlySet<string>;
+  readonly openThreadKey: string | null;
   readonly pendingTasks: ReadonlyArray<PendingNewTask>;
   readonly environmentId: EnvironmentId | null;
   readonly projectRefs: LayoutInput["projectRefs"];
@@ -68,6 +76,23 @@ export function useThreadListV2(input: {
   readonly selectedThreadKey: string | null;
 }) {
   const { threads, workingShelfEnabled } = input;
+  const [expansion, setExpansion] = useAtom(familyExpansionAtom);
+  const children = useMemo(
+    () => indexSidebarChildren(input.familyThreads, input.delegatedUnderParent),
+    [input.familyThreads, input.delegatedUnderParent],
+  );
+  const families = useMemo(
+    () =>
+      input.searchQuery.trim() || children.size === 0
+        ? undefined
+        : {
+            children,
+            expansion,
+            routeKey: input.openThreadKey,
+            now: input.now,
+          },
+    [children, expansion, input.openThreadKey, input.now, input.searchQuery],
+  );
   const layoutTime = useMemo(
     () => threadListV2LayoutTime({ threads, now: input.now, searchQuery: input.searchQuery }),
     [threads, input.now, input.searchQuery],
@@ -214,6 +239,7 @@ export function useThreadListV2(input: {
     () =>
       buildThreadListV2ListItems({
         items: layout.items,
+        families,
         pendingTasks,
         workingCount: layout.workingCount,
         workingShelfExpanded: input.workingShelfExpanded,
@@ -233,6 +259,7 @@ export function useThreadListV2(input: {
       }),
     [
       layout,
+      families,
       pendingTasks,
       input.workingShelfExpanded,
       input.snoozedShelfExpanded,
@@ -244,7 +271,22 @@ export function useThreadListV2(input: {
       input.shelfPreferencesLoaded,
     ],
   );
-  return { layout, items, contentOnlyThreadKeys, olderSettledShelf };
+  const setFamilyExpanded = useCallback(
+    (key: string, expanded: boolean) =>
+      setExpansion((current) => new Map(current).set(key, expanded)),
+    [setExpansion],
+  );
+  const selectedRowKey = items.some((row) => row.key === `v2-thread:${input.openThreadKey}`)
+    ? input.openThreadKey
+    : input.selectedThreadKey;
+  return {
+    layout,
+    items,
+    contentOnlyThreadKeys,
+    olderSettledShelf,
+    selectedRowKey,
+    setFamilyExpanded,
+  };
 }
 
 /** The list's scope per environment: its projects there, or every project. */

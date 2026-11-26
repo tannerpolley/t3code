@@ -5697,5 +5697,21 @@
   "99451a5d2d40440f": "Retirada por {by}.",
   "3ee30a50b70fffab": "Retirada por {by}: {reason}",
   "201490988858b511": "retirada por {by}",
-  "46d614fa7b4bf1e5": "Execuções de workflow"
+  "46d614fa7b4bf1e5": "Execuções de workflow",
+  "219dddeccb47a07d": "Implementador",
+  "985148ecc83b5671": "Revisor",
+  "3beea516f473b63b": "Designer",
+  "2d3330cb24e41e36": "Redator",
+  "68375af4f21f9e39": "Pesquisador",
+  "203199494de634a1": "Testador",
+  "a430c357cb87ebd5": "Falha ao enviar a resposta.",
+  "192de2b9424e1da6": "Pergunta de um agente",
+  "8c402efda5958564": "1 de {total}",
+  "612e62ca46e29fb4": "Fechar perguntas",
+  "258946ae98c11cea": "Sua própria resposta",
+  "b8ec2dcad78ef780": "Ou digite sua própria resposta",
+  "1accce409be44f6b": "Voltar",
+  "735fa8731e0670ae": "Enviar",
+  "7f8cb8174c6d288f": "Próximo",
+  "538a08613f07568c": "{count, plural, one {{count} agente filho} other {{count} agentes filhos}}"
 }

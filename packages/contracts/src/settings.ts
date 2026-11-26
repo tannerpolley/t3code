@@ -996,7 +996,7 @@ export type UsageLimitSourceConfig = typeof UsageLimitSourceConfig.Type;
 export const TextGeneratorKind = Schema.Literals(["openaiCompatible", "anthropic"]);
 export type TextGeneratorKind = typeof TextGeneratorKind.Type;
 
-const TextGeneratorBaseUrl = TrimmedNonEmptyString.check(
+const HttpBaseUrl = TrimmedNonEmptyString.check(
   Schema.isMaxLength(2048),
   Schema.makeFilter((value) => {
     try {
@@ -1013,12 +1013,13 @@ const TextGeneratorBaseUrl = TrimmedNonEmptyString.check(
     }
   }),
 );
+const NtfyTopic = TrimmedString.check(Schema.isPattern(/^[-_A-Za-z0-9]{0,64}$/u));
 
 /** A model API that only generates text. Its key shares the id namespace with provider instances. */
 export const TextGeneratorConfig = Schema.Struct({
   kind: TextGeneratorKind,
   label: Schema.optional(TrimmedNonEmptyString),
-  baseUrl: TextGeneratorBaseUrl,
+  baseUrl: HttpBaseUrl,
   apiKey: SettingsSecretValue.pipe(Schema.withDecodingDefault(Effect.succeed("")), secretSetting),
   enabled: Schema.Boolean.pipe(Schema.withDecodingDefault(Effect.succeed(true))),
 });
@@ -1594,6 +1595,11 @@ export const ServerSettings = Schema.Struct({
   environmentIcon: ForwardCompatibleNullable(EnvironmentMachineKind).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
+  notificationPresencePeer: TrimmedString.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
+  notificationNtfyServerUrl: HttpBaseUrl.pipe(
+    Schema.withDecodingDefault(Effect.succeed("https://ntfy.sh")),
+  ),
+  notificationNtfyTopic: NtfyTopic.pipe(Schema.withDecodingDefault(Effect.succeed(""))),
   /** Null inherits t3.json, then local; omit it on the wire for older clients requiring a literal. */
   defaultThreadEnvMode: OmittedWhenNull(ThreadEnvMode),
   newWorktreesStartFromOrigin: Schema.Boolean.pipe(
@@ -2019,6 +2025,9 @@ export const ServerSettingsPatch = Schema.Struct({
   defaultAppearance: Schema.optionalKey(DefaultAppearancePreference),
   defaultAppearanceSetAt: Schema.optionalKey(Schema.String.check(Schema.isMaxLength(64))),
   environmentIcon: Schema.optionalKey(Schema.NullOr(EnvironmentMachineKind)),
+  notificationPresencePeer: Schema.optionalKey(TrimmedString),
+  notificationNtfyServerUrl: Schema.optionalKey(HttpBaseUrl),
+  notificationNtfyTopic: Schema.optionalKey(NtfyTopic),
   defaultThreadEnvMode: Schema.optionalKey(Schema.NullOr(ThreadEnvMode)),
   newWorktreesStartFromOrigin: Schema.optionalKey(Schema.Boolean),
   worktreeSubmodules: Schema.optionalKey(Schema.NullOr(WorktreeSubmodules)),

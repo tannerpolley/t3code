@@ -1,5 +1,6 @@
 import {
   DEFAULT_SERVER_SETTINGS,
+  WS_METHODS,
   type EnvironmentId,
   type EnvironmentTheme,
   type ServerConfig,
@@ -15,6 +16,7 @@ import {
   type EnvironmentPresentation,
 } from "@t3tools/client-runtime/connection";
 import { createServerEnvironmentAtoms } from "@t3tools/client-runtime/state/server";
+import { createEnvironmentRpcCommand } from "@t3tools/client-runtime/state/runtime";
 import { createOutdatedServerUpdateCommand } from "@t3tools/client-runtime/state/outdatedServerUpdate";
 import { createEnvironmentServerConfigsAtom } from "@t3tools/client-runtime/state/shell";
 import { mergeWithDefaultKeybindings } from "@t3tools/shared/keybindings";
@@ -41,6 +43,10 @@ export const environmentUpdateStatesAtom = environmentAtomList(
   serverEnvironment.updateStateAtom,
 );
 export const updateOutdatedServer = createOutdatedServerUpdateCommand(connectionAtomRuntime);
+export const readNotificationPresence = createEnvironmentRpcCommand(connectionAtomRuntime, {
+  label: "environment-data:notification-presence:read",
+  tag: WS_METHODS.serverReadNotificationPresence,
+});
 export const environmentServerConfigsAtom = createEnvironmentServerConfigsAtom({
   catalogValueAtom: environmentCatalog.catalogValueAtom,
   serverConfigValueAtom: serverEnvironment.configValueAtom,

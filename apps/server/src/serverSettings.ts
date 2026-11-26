@@ -144,6 +144,7 @@ const normalizeServerSettings = (
 export interface SettingsClient {
   readonly secretReferences: boolean;
   readonly httpUsageLimitSources?: boolean;
+  readonly canWriteSettings?: boolean;
 }
 
 export function redactServerSettingsForClient(
@@ -163,6 +164,7 @@ export function redactServerSettingsForClient(
       );
   return {
     ...shaped,
+    notificationNtfyTopic: client.canWriteSettings ? shaped.notificationNtfyTopic : "",
     secretProviders: withoutUnknownSecretProviderConfigs(shaped),
     // Older clients decode only "cliproxy" sources and reject the whole settings payload otherwise.
     usageLimitSources: client.httpUsageLimitSources

@@ -335,6 +335,19 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
     }),
   );
 
+  it.effect("only returns the ntfy topic to clients with settings-write permission", () =>
+    Effect.gen(function* () {
+      const settings = yield* decodeServerSettings({ notificationNtfyTopic: "private-ntfy-topic" });
+      for (const canWriteSettings of [true, false]) {
+        const client = ServerSettingsModule.redactServerSettingsForClient(settings, {
+          secretReferences: true,
+          canWriteSettings,
+        });
+        assert.equal(client.notificationNtfyTopic, canWriteSettings ? "private-ntfy-topic" : "");
+      }
+    }),
+  );
+
   it.effect("stores no secret provider of an unloaded kind or with a config its kind rejects", () =>
     Effect.gen(function* () {
       const service = yield* ServerSettingsModule.ServerSettingsService;

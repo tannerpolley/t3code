@@ -1258,6 +1258,7 @@ export type AgentAwarenessThread = ProjectThreadAwarenessV2Input["thread"] &
     | "activeRunId"
     | "latestRunId"
     | "hasActionableProposedPlan"
+    | "delegatedRole"
   >;
 
 type ShellThreadRow = {
@@ -9562,6 +9563,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               latestRunId: state.latestRunId,
               hasActionableProposedPlan: state.hasActionableProposedPlan,
               title: state.thread.title,
+              ...(state.thread.delegatedRole === undefined
+                ? {}
+                : { delegatedRole: state.thread.delegatedRole }),
               lineage: state.thread.lineage,
               modelSelection: state.thread.modelSelection,
               settledOverride: state.thread.settledOverride,

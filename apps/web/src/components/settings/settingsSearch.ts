@@ -784,6 +784,21 @@ export const SETTINGS_SEARCH_ITEMS = [
     searchTerms: [msg("notification toast popup completion input approval failure")],
   },
   {
+    id: "notification-presence-peer",
+    title: msg("Phone for notification routing"),
+    to: "/settings/general",
+  },
+  {
+    id: "notification-ntfy-server",
+    title: msg("ntfy server URL"),
+    to: "/settings/general",
+  },
+  {
+    id: "notification-ntfy-topic",
+    title: msg("ntfy topic"),
+    to: "/settings/general",
+  },
+  {
     id: "language",
     title: msg("Language"),
     to: "/settings/general",
