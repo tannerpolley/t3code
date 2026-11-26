@@ -34,6 +34,7 @@ import {
 } from "../sourceControl/threadPullRequests.ts";
 import { issueReference, noteReference, pullRequestReference } from "./runReferences.ts";
 import { isProjectPath } from "./WorkflowAgents.ts";
+import * as WorkflowThreads from "./WorkflowThreads.ts";
 import type { ReferenceInput } from "./WorkflowStore.ts";
 
 export class WorkflowForgeError extends Schema.TaggedError<WorkflowForgeError>()(
@@ -302,6 +303,7 @@ export class WorkflowForge extends Context.Service<
       }) => Effect.Effect<IssueCreateResult, WorkflowForgeError>;
     };
     readonly pullRequests: {
+      readonly cleanUpCreator: WorkflowThreads.WorkflowThreads["Service"]["cleanUpCreator"];
       readonly list: (
         query: PullRequestQuery,
       ) => Effect.Effect<ReadonlyArray<PullRequest>, WorkflowForgeError>;
@@ -344,6 +346,7 @@ export const unavailable = WorkflowForge.of({
     create: missing("Issues"),
   },
   pullRequests: {
+    cleanUpCreator: missing("PR creator cleanup"),
     list: missing("Pull requests"),
     read: missing("Pull requests"),
     comment: missing("Pull requests"),
@@ -357,6 +360,7 @@ export const layer = Layer.effect(
     const issues = yield* IssueService.IssueService;
     const pullRequests = yield* PullRequestService.PullRequestService;
     const projects = yield* ProjectService.ProjectService;
+    const threads = yield* Effect.serviceOption(WorkflowThreads.WorkflowThreads);
 
     const projectIdOf = Effect.fn("WorkflowForge.projectIdOf")(function* (project: string) {
       if (!isProjectPath(project)) return ProjectId.make(project);
@@ -498,6 +502,9 @@ export const layer = Layer.effect(
         }),
       },
       pullRequests: {
+        cleanUpCreator: Option.isSome(threads)
+          ? threads.value.cleanUpCreator
+          : unavailable.pullRequests.cleanUpCreator,
         list: Effect.fn("WorkflowForge.pullRequests.list")(function* (query) {
           const result = yield* pullRequests
             .list({

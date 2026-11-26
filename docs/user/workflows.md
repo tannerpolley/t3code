@@ -202,3 +202,17 @@ with the details. The question lets you acknowledge the handoff. The issue stays
 and the branch and any PR are kept for you to resolve. To deliberately retry a stopped issue,
 return it to Todo and start a new `issue-pipeline` run with a new key and an input containing
 `project` (the registered checkout path) and `url` (the issue URL).
+
+## Clean up after a delegated pull request merges
+
+Enable Workflows, point `T3CODE_WORKFLOWS` at the fork's `workflows` directory, and set
+`T3_MERGE_CLEANUP_PROJECTS` to a JSON array of absolute repository roots registered as
+T3 projects. When a project tracks several repositories, register each repository
+separately and run its implementation children in that project.
+
+The [merge cleanup workflow](../../workflows/merge-cleanup.ts) watches new pull requests.
+After a merge and the creator's current turn, it archives the delegated thread and
+removes its worktree if it is clean and still at the merged head. It deletes the remote
+head branch through the host and keeps the local branch. Issue references in the PR
+title or description identify the issues to complete. The run records any worktree it kept
+and why.
