@@ -39,11 +39,12 @@ sed -i -E "s/applicationId '[^']+'/applicationId '$PACKAGE'/; s/versionCode [0-9
 sed -i -E "s|<string name=\"app_name\">[^<]*</string>|<string name=\"app_name\">$APP_NAME</string>|" "$strings"
 grep -q "applicationId '$PACKAGE'" "$gradle_file" && grep -q ">$APP_NAME<" "$strings" || { echo "Prebuild output changed; the applicationId or app name patch did not apply."; exit 1; }
 
-echo "# Building (capped at 8 cores and 8 GB)"
+echo "# Building (capped at 8 cores and 12 GB)"
 cd android
 # taskset caps the cores ninja and Gradle see; the scope caps memory. --no-daemon leaves nothing running.
+# A clean prebuild recompiles native code: 8 clang jobs beside the Gradle heap passed 8 GB (2026-11-26).
 gradle() {
-  systemd-run --user --scope --quiet -p MemoryHigh=7G -p MemoryMax=8G \
+  systemd-run --user --scope --quiet -p MemoryHigh=11G -p MemoryMax=12G \
     taskset -c 0-7 nice -n 10 ./gradlew "$@" -x lintVitalAnalyzeRelease -x lintVitalRelease \
     --no-daemon --max-workers=8 -PreactNativeArchitectures=arm64-v8a \
     -Pkotlin.compiler.execution.strategy=in-process "-Dorg.gradle.jvmargs=-Xmx4096m -XX:MaxMetaspaceSize=1024m"
