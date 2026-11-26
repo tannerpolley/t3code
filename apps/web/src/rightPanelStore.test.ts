@@ -41,6 +41,32 @@ async function reloadRightPanelStore() {
 }
 
 describe("rightPanelStore", () => {
+  it("keeps the repository board inside the thread's existing Linked items tab", async () => {
+    const store = useRightPanelStore.getState();
+    store.open(refA, "pull-requests");
+    store.openLinkedItems(refA, true);
+    store.open(refB, "pull-requests");
+
+    const tabs = (ref: typeof refA) =>
+      selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, ref).surfaces;
+    expect(tabs(refA)).toEqual([
+      { id: "pull-requests", kind: "pull-requests", showRepoBoard: true },
+    ]);
+    expect(tabs(refB)).toEqual([{ id: "pull-requests", kind: "pull-requests" }]);
+
+    await reloadRightPanelStore();
+    store.closeSurface(refA, "pull-requests");
+    await reopenClosedView(useClosedViewStore.getState().entries[0]!, {
+      workspaceAvailable: true,
+      openPreview: () => {
+        throw new Error("Linked items must not create a browser session");
+      },
+    });
+    expect(tabs(refA)[0]).toMatchObject({ showRepoBoard: true });
+    store.openLinkedItems(refA, false);
+    expect(tabs(refA)).toEqual([{ id: "pull-requests", kind: "pull-requests" }]);
+  });
+
   it("opens a hosted side chat's panel actions in its parent's panel until unhosted", () => {
     const store = useRightPanelStore.getState();
     const unhost = hostRightPanel(refB, refA);

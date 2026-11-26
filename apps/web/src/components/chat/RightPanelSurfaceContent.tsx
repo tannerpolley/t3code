@@ -231,7 +231,13 @@ export function RightPanelSurfaceContent(props: {
         />
       );
     case "pull-requests":
-      return <ThreadPullRequestsPanel threadRef={threadRef} />;
+      return (
+        <ThreadPullRequestsPanel
+          threadRef={threadRef}
+          projectId={props.pullRequest.projectId}
+          showRepoBoard={surface.showRepoBoard === true}
+        />
+      );
     case "thread":
       // Not lazy: revealing a suspended tiptap editor tears down its view and crashes the composer.
       return (

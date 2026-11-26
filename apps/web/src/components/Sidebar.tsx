@@ -138,6 +138,8 @@ import { isCommandPaletteOpen, openCommandPalette } from "../commandPaletteBus";
 import { registerSettleAndAdvance } from "../settleAndAdvance";
 import { resolveThreadActionProjectRef, startNewThreadFromContext } from "../lib/chatThreadActions";
 import { useClientSettings } from "../hooks/useSettings";
+import { useRightPanelStore } from "../rightPanelStore";
+import { repoIssueBoardBinding } from "../state/issues";
 import { useCopyToClipboard } from "../hooks/useCopyToClipboard";
 import { useLocalStorage } from "../hooks/useLocalStorage";
 import { useNowMinute } from "../hooks/useNowMinute";
@@ -1411,6 +1413,19 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
       const api = readLocalApi();
       if (!api) return;
       void (async () => {
+        const activeProjectId =
+          routeDraftThread?.projectId ?? newThreadContext.activeThread?.projectId;
+        const issueProjects = group.memberProjects.filter(
+          (project) =>
+            serverConfigs.get(project.environmentId)?.environment.capabilities.issues === true &&
+            repoIssueBoardBinding(project.repositoryIdentity) !== undefined,
+        );
+        const currentIssueProject = issueProjects.find(
+          (project) =>
+            project.environmentId === routeThreadRef?.environmentId &&
+            project.id === activeProjectId,
+        );
+        const issueProject = currentIssueProject ?? issueProjects[0];
         const placementActions = new Map<string, () => void>();
         const moveMenus = writableLayouts.flatMap(({ environmentId, record }) => {
           const projectIds = sectionProjectIds(group, environmentId);
@@ -1472,6 +1487,9 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           api.contextMenu.show(
             [
               { id: "new-thread", label: gt("New thread") },
+              ...(issueProject
+                ? [{ id: "repo-issue-board", label: gt("Open repository issue board") }]
+                : []),
               ...moveMenus,
               { id: "copy-path", label: gt("Copy path") },
               ...(canPinProject(group)
@@ -1493,6 +1511,23 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           case "new-thread":
             startThreadInProjectFolder(group);
             return;
+          case "repo-issue-board": {
+            if (issueProject === undefined) return;
+            if (isMobile) setOpenMobile(false);
+            if (currentIssueProject !== undefined && routeThreadRef !== null) {
+              useRightPanelStore.getState().openLinkedItems(routeThreadRef, true);
+              return;
+            }
+            const draft = await handleNewThread(
+              scopeProjectRef(issueProject.environmentId, issueProject.id),
+            );
+            if (draft !== null) {
+              useRightPanelStore
+                .getState()
+                .openLinkedItems(scopeThreadRef(issueProject.environmentId, draft.threadId), true);
+            }
+            return;
+          }
           case "copy-path":
             copyPathToClipboard(group.workspaceRoot, { path: group.workspaceRoot });
             return;

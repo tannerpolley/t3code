@@ -37,6 +37,8 @@ import { ThreadDetailsItemsMenuItems } from "./ThreadDetailsItemsMenu";
 import { resolveThreadDetailsVisibility, THREAD_DETAILS_ITEMS } from "./threadDetailsItems";
 import { useClientSettings } from "../../hooks/useSettings";
 import { useProject, useServerConfigs } from "../../state/entities";
+import { repoIssueBoardBinding } from "../../state/issues";
+import { useRightPanelStore } from "../../rightPanelStore";
 import { filesystemEnvironment } from "../../state/filesystem";
 import { useEnvironmentQuery } from "../../state/query";
 import { ThreadDetailsThreadPrRows } from "./ThreadDetailsPrRows";
@@ -48,6 +50,7 @@ import {
   THREAD_DETAILS_PANEL_LABEL_CLASS,
 } from "./threadDetailsPanelStyles";
 import { Menu, MenuPopup } from "../ui/menu";
+import { IssueGlyph } from "../issue/issuePresentation";
 
 interface ThreadDetailsPanelProps extends Pick<
   ComponentProps<typeof ThreadDetailsCard>,
@@ -199,6 +202,10 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
             (visible.gitActions || (visible.changes && folderIsRepo)),
           // Also for a project that tracks nothing: a thread can change a submodule.
           repositories: offersGit && density !== "essential" && visible.gitActions,
+          repoBoard:
+            visible.gitActions &&
+            serverConfig?.environment.capabilities.issues === true &&
+            repoIssueBoardBinding(project?.repositoryIdentity) !== undefined,
         };
         return (
           <>
@@ -256,7 +263,11 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
                 </ThreadDetailsSection>
               ) : null}
 
-              {show.branch || show.pullRequests || show.git || show.repositories ? (
+              {show.branch ||
+              show.pullRequests ||
+              show.git ||
+              show.repositories ||
+              show.repoBoard ? (
                 <ThreadDetailsSection
                   headingId="thread-details-version-control-heading"
                   title={gt("Version Control")}
@@ -286,6 +297,20 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
                         {...(props.draftId ? { draftId: props.draftId } : {})}
                         {...(props.onOpenChanges ? { onOpenChanges: props.onOpenChanges } : {})}
                       />
+                    ) : null}
+                    {show.repoBoard ? (
+                      <ThreadDetailsControl
+                        size="xs"
+                        variant="ghost"
+                        onClick={() =>
+                          useRightPanelStore.getState().openLinkedItems(activeThreadRef, true)
+                        }
+                      >
+                        <IssueGlyph.issue aria-hidden className={THREAD_DETAILS_PANEL_ICON_CLASS} />
+                        <span className={cn("ml-0.5", THREAD_DETAILS_PANEL_LABEL_CLASS)}>
+                          {gt("Open repository issue board")}
+                        </span>
+                      </ThreadDetailsControl>
                     ) : null}
                     {show.repositories ? (
                       <ThreadRepositorySections

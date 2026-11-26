@@ -271,6 +271,7 @@ import { useEnvironmentScope } from "~/state/session";
 import { primaryServerKeybindingsAtom, serverEnvironment } from "../state/server";
 import { hostEnvironmentIdAtom } from "../state/primaryEnvironment";
 import { threadEnvironment } from "../state/threads";
+import { repoIssueBoardBinding } from "../state/issues";
 import {
   resolveProviderSkillsForCwd,
   resolveProvidersForCwd,
@@ -2128,7 +2129,9 @@ export default function ChatView(props: ChatViewProps) {
     isServerThread && supportsThreadPullRequests && visiblePullRequestCount > 0;
   const linkedItemsSurfaceAvailable =
     pullRequestsSurfaceAvailable ||
-    (isServerThread && (activeThreadShell?.issues?.length ?? 0) > 0);
+    (isServerThread && (activeThreadShell?.issues?.length ?? 0) > 0) ||
+    (serverConfig?.environment.capabilities.issues === true &&
+      repoIssueBoardBinding(activeProject?.repositoryIdentity) !== undefined);
   const { state: deviceState, loaded: deviceStateLoaded } = useDeviceState(
     activeThreadRef?.environmentId ?? null,
   );
