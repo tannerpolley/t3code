@@ -18,6 +18,11 @@ environment withholds alert-capable states before publishing to the relay. While
 it checks presence even without thread events. On departure it re-reads each thread before publishing,
 so a resolved request or superseded run cannot ring later.
 
+The Android fork uses ntfy for phone alerts. The environment sends them only when presence is away,
+using the same thread recheck as relay replay. ntfy receives the project, thread title or role, alert
+status, and thread link. The subscription topic is excluded from settings responses for sessions
+without settings-write permission and from outbound HTTP traces.
+
 ## The relay is a trusted broker
 
 - **DPoP-bound bootstrap minting.** For a linked user, the relay asks the environment to mint a

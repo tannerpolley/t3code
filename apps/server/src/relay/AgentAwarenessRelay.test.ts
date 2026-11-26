@@ -42,13 +42,17 @@ import * as ProjectionStore from "../orchestration-v2/ProjectionStore.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as ThreadManagementService from "../orchestration-v2/ThreadManagementService.ts";
 import * as ProjectService from "../project/ProjectService.ts";
+import * as ServerSettings from "../serverSettings.ts";
 import * as AgentAwarenessRelay from "./AgentAwarenessRelay.ts";
 import * as NotificationPresence from "./NotificationPresence.ts";
+import * as NtfyAlerts from "./NtfyAlerts.ts";
 
 const THREAD_ID = ThreadId.make("relay-thread");
 const SECOND_THREAD_ID = ThreadId.make("relay-thread-2");
 const PROJECT_ID = ProjectId.make("relay-project");
 const NOW = "2026-09-04T12:00:00.000Z";
+const NTFY_URL = "https://ntfy.example.test/notifications/";
+const NTFY_TOPIC = "t3-test-76d5ed183662d375effc415ffc145f0f";
 
 function shell(overrides: Partial<OrchestrationV2ThreadShell> = {}): OrchestrationV2ThreadShell {
   return {
@@ -168,6 +172,8 @@ describe("startup agent activity", () => {
 const makeTestRelay = Effect.fnUntraced(function* (
   options: {
     readonly presence?: () => Effect.Effect<"home" | "away" | "off">;
+    readonly ntfyTopic?: string;
+    readonly respondToNtfy?: (attempt: number) => Response;
     readonly respond?: (attempt: number) => Response;
     readonly failSecretRead?: (name: string) => boolean;
     readonly linked?: boolean;
@@ -277,6 +283,13 @@ const makeTestRelay = Effect.fnUntraced(function* (
     readonly authorization: string | null;
     readonly state: RelayAgentActivityState | null;
   }> = [];
+  const ntfyRequests: Array<{
+    url: string;
+    method: string | undefined;
+    headers: Headers;
+    body: string;
+    redirect: RequestInit["redirect"];
+  }> = [];
   const fetch: typeof globalThis.fetch = Object.assign(
     (
       input: Parameters<typeof globalThis.fetch>[0],
@@ -286,9 +299,20 @@ const makeTestRelay = Effect.fnUntraced(function* (
       if (typeof body !== "string" && !(body instanceof Uint8Array)) {
         return Promise.reject(new Error("Expected a serialized activity publish payload"));
       }
-      const payload = decodePublishPayload(
-        typeof body === "string" ? body : new TextDecoder().decode(body),
-      );
+      const text = typeof body === "string" ? body : new TextDecoder().decode(body);
+      if (String(input).startsWith(NTFY_URL)) {
+        ntfyRequests.push({
+          url: String(input),
+          method: init?.method,
+          headers: new Headers(init?.headers),
+          body: text,
+          redirect: init?.redirect,
+        });
+        return Promise.resolve(
+          options.respondToNtfy?.(ntfyRequests.length) ?? Response.json({ id: "message-1" }),
+        );
+      }
+      const payload = decodePublishPayload(text);
       publications.push({
         url: String(input),
         authorization: new Headers(init?.headers).get("authorization"),
@@ -315,7 +339,21 @@ const makeTestRelay = Effect.fnUntraced(function* (
     deletedAt: null,
   };
   const relay = yield* AgentAwarenessRelay.make.pipe(
-    Effect.provide(EnvironmentKeys.layer),
+    Effect.provide(
+      Layer.merge(
+        EnvironmentKeys.layer,
+        NtfyAlerts.layer.pipe(
+          Layer.provide(FetchHttpClient.layer),
+          Layer.provide(
+            ServerSettings.layerTest({
+              notificationPresencePeer: "pixel-9",
+              notificationNtfyServerUrl: NTFY_URL,
+              notificationNtfyTopic: options.ntfyTopic ?? "",
+            }),
+          ),
+        ),
+      ),
+    ),
     Effect.provideService(NotificationPresence.NotificationPresence, {
       read: options.presence ?? (() => Effect.succeed("off")),
     }),
@@ -341,7 +379,16 @@ const makeTestRelay = Effect.fnUntraced(function* (
     Effect.provideService(FetchHttpClient.Fetch, fetch),
     Effect.provide(NodeCrypto.layer),
   );
-  return { relay, secrets, secretReads, currentShell, shellReads, publications, catchUp };
+  return {
+    relay,
+    secrets,
+    secretReads,
+    currentShell,
+    shellReads,
+    publications,
+    ntfyRequests,
+    catchUp,
+  };
 });
 
 describe("AgentAwarenessRelay", () => {
@@ -350,15 +397,20 @@ describe("AgentAwarenessRelay", () => {
     (presence) =>
       Effect.gen(function* () {
         const parent = shell({ status: "running" });
-        const child = waitingChild();
-        const { relay, publications } = yield* makeTestRelay({
+        const child = waitingChild({ delegatedRole: "review" });
+        const { relay, publications, ntfyRequests } = yield* makeTestRelay({
           presence: () => Effect.succeed(presence),
+          ntfyTopic: NTFY_TOPIC,
           readShell: (id) => Effect.succeed(id === child.id ? child : parent),
         });
         yield* relay.publishThread(CHILD_THREAD_ID);
         assert.deepStrictEqual(
           publications.map(({ state }) => state?.phase),
           presence === "home" ? [] : ["waiting_for_approval"],
+        );
+        assert.deepStrictEqual(
+          ntfyRequests.map(({ body }) => body),
+          presence === "away" ? ["Project / review needs your approval."] : [],
         );
       }),
   );
@@ -369,8 +421,9 @@ describe("AgentAwarenessRelay", () => {
       Effect.gen(function* () {
         yield* TestClock.setTime(DateTime.toEpochMillis(DateTime.makeUnsafe(NOW)));
         const presence = yield* Ref.make<"home" | "away">("home");
-        const { relay, publications, currentShell } = yield* makeTestRelay({
+        const { relay, publications, ntfyRequests, currentShell } = yield* makeTestRelay({
           presence: () => Ref.get(presence),
+          ntfyTopic: NTFY_TOPIC,
         });
         yield* relay.start();
         yield* relay.publishThread(THREAD_ID);
@@ -382,6 +435,7 @@ describe("AgentAwarenessRelay", () => {
           publications.map(({ state }) => state?.phase),
           ["running"],
         );
+        assert.lengthOf(ntfyRequests, 0);
 
         const departedAt = (yield* DateTime.now).epochMilliseconds;
         yield* Ref.set(presence, "away");
@@ -392,6 +446,10 @@ describe("AgentAwarenessRelay", () => {
           ["running", phase],
         );
         assert.isAtLeast(Date.parse(publications[1]?.state?.updatedAt ?? ""), departedAt);
+        assert.deepStrictEqual(
+          ntfyRequests.map(({ body }) => body),
+          [phase === "completed" ? "Project / Thread finished." : "Project / Thread failed."],
+        );
       }),
   );
 
@@ -412,8 +470,9 @@ describe("AgentAwarenessRelay", () => {
               createdAt: DateTime.makeUnsafe(NOW),
             },
           });
-        const { relay, publications } = yield* makeTestRelay({
+        const { relay, publications, ntfyRequests } = yield* makeTestRelay({
           presence: () => Ref.get(presence),
+          ntfyTopic: NTFY_TOPIC,
           readShell: (id) => Effect.sync(() => shells.get(id) ?? null),
         });
         yield* relay.start();
@@ -428,6 +487,7 @@ describe("AgentAwarenessRelay", () => {
         shells.set(SECOND_THREAD_ID, question(SECOND_THREAD_ID, "another"));
         shells.set(answeredThreadId, shell({ id: answeredThreadId }));
         assert.deepStrictEqual(publications, []);
+        assert.deepStrictEqual(ntfyRequests, []);
 
         yield* Ref.set(presence, "away");
         yield* TestClock.adjust("15 seconds");
@@ -439,7 +499,76 @@ describe("AgentAwarenessRelay", () => {
         yield* TestClock.adjust("15 seconds");
         yield* relay.drain;
         assert.lengthOf(publications, 1);
+        assert.deepStrictEqual(
+          ntfyRequests.map(({ body }) => body),
+          ["Project / Latest question needs your answer."],
+        );
       }),
+  );
+  it.effect.each(["", NTFY_TOPIC])(
+    "uses ntfy without a relay link only when a topic is set",
+    (topic) =>
+      Effect.gen(function* () {
+        const { relay, publications, ntfyRequests, currentShell } = yield* makeTestRelay({
+          linked: false,
+          presence: () => Effect.succeed("away"),
+          ntfyTopic: topic,
+        });
+        yield* Ref.set(
+          currentShell,
+          shell({
+            title: "Check the result",
+            pendingRuntimeRequest: {
+              id: RuntimeRequestId.make("private-question-id"),
+              kind: "user_input",
+              createdAt: DateTime.makeUnsafe(NOW),
+            },
+          }),
+        );
+        yield* relay.publishThread(THREAD_ID);
+        yield* relay.publishThread(THREAD_ID);
+        assert.lengthOf(publications, 0);
+        assert.lengthOf(ntfyRequests, topic ? 1 : 0);
+        const request = ntfyRequests[0];
+        if (!request) return;
+        assert.equal(request.method, "POST");
+        assert.equal(request.url, NTFY_URL + topic);
+        assert.equal(request.redirect, "error");
+        assert.equal(request.headers.get("title"), "T3 Code");
+        assert.equal(request.headers.get("content-type"), "text/plain; charset=utf-8");
+        assert.equal(
+          request.headers.get("click"),
+          "t3code://threads/relay-environment/relay-thread",
+        );
+        assert.equal(request.body, "Project / Check the result needs your answer.");
+      }),
+  );
+  it.effect("retries an ntfy failure without publishing the same relay state twice", () =>
+    Effect.gen(function* () {
+      const { relay, publications, ntfyRequests, currentShell } = yield* makeTestRelay({
+        presence: () => Effect.succeed("away"),
+        ntfyTopic: NTFY_TOPIC,
+        respondToNtfy: (attempt) =>
+          attempt === 1 ? new Response(null, { status: 503 }) : Response.json({ id: "message-2" }),
+      });
+      yield* Ref.set(
+        currentShell,
+        shell({
+          pendingRuntimeRequest: {
+            id: RuntimeRequestId.make("question"),
+            kind: "user_input",
+            createdAt: DateTime.makeUnsafe(NOW),
+          },
+        }),
+      );
+      yield* relay.publishThread(THREAD_ID);
+      assert.lengthOf(ntfyRequests, 1);
+      assert.lengthOf(publications, 1);
+      yield* TestClock.adjust("1 second");
+      yield* relay.drain;
+      assert.lengthOf(ntfyRequests, 2);
+      assert.lengthOf(publications, 1);
+    }),
   );
   it.effect("publishes the parent as needing approval while its subagent waits", () =>
     Effect.gen(function* () {

@@ -13037,5 +13037,10 @@
   "7ea072883f6d0a22": "Visar en flytande panel när en agent ställer en fråga i en annan tråd.",
   "71f8e3f9f3efc6c5": "Telefon för vidarebefordran av aviseringar",
   "1351099395ec0ac4": "Olika värden",
-  "09bbffae7a01aef8": "Ange telefonens Tailscale-namn. Trådaviseringar visas på datorn när telefonen är på värddatorns lokala nätverk och på telefonen när den är utanför nätverket. Lämna fältet tomt för att stänga av funktionen."
+  "09bbffae7a01aef8": "Ange telefonens Tailscale-namn. Trådaviseringar visas på datorn när telefonen är på värddatorns lokala nätverk och på telefonen när den är utanför nätverket. Lämna fältet tomt för att stänga av funktionen.",
+  "f9dd8ad51e9f5d1b": "Serveradress för ntfy",
+  "77fff3a927ba1009": "Servern som skickar aviseringar till telefonen. Standard är https://ntfy.sh.",
+  "a4739b023dc96d9a": "ntfy-ämne",
+  "fa74035ae7d791cf": "Prenumerera på det här ämnet i ntfy-appen på telefonen. Håll ämnet hemligt. Lämna fältet tomt för att stänga av ntfy-aviseringar.",
+  "b9418d854bf3a44b": "Generera ämne"
 }

@@ -789,6 +789,16 @@ export const SETTINGS_SEARCH_ITEMS = [
     to: "/settings/general",
   },
   {
+    id: "notification-ntfy-server",
+    title: msg("ntfy server URL"),
+    to: "/settings/general",
+  },
+  {
+    id: "notification-ntfy-topic",
+    title: msg("ntfy topic"),
+    to: "/settings/general",
+  },
+  {
     id: "language",
     title: msg("Language"),
     to: "/settings/general",

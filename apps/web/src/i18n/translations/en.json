@@ -13039,5 +13039,10 @@
   "7ea072883f6d0a22": "Show a floating panel when an agent asks a question in another thread.",
   "71f8e3f9f3efc6c5": "Phone for notification routing",
   "1351099395ec0ac4": "Mixed values",
-  "09bbffae7a01aef8": "Enter your phone’s Tailscale name. Thread alerts go to the desktop when the phone is on the host’s local network and to the phone when away. Leave blank to turn this off."
+  "09bbffae7a01aef8": "Enter your phone’s Tailscale name. Thread alerts go to the desktop when the phone is on the host’s local network and to the phone when away. Leave blank to turn this off.",
+  "f9dd8ad51e9f5d1b": "ntfy server URL",
+  "77fff3a927ba1009": "The server that sends phone alerts. The default is https://ntfy.sh.",
+  "a4739b023dc96d9a": "ntfy topic",
+  "fa74035ae7d791cf": "Subscribe to this topic in the ntfy app on your phone. Keep the topic private. Leave it blank to turn off ntfy alerts.",
+  "b9418d854bf3a44b": "Generate topic"
 }

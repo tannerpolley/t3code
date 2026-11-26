@@ -13030,5 +13030,10 @@
   "7ea072883f6d0a22": "Zeigt ein schwebendes Fenster, wenn ein Agent in einem anderen Thread eine Frage stellt.",
   "71f8e3f9f3efc6c5": "Telefon für die Benachrichtigungsweiterleitung",
   "1351099395ec0ac4": "Unterschiedliche Werte",
-  "09bbffae7a01aef8": "Gib den Tailscale-Namen deines Telefons ein. Thread-Benachrichtigungen erscheinen auf dem Desktop, wenn das Telefon im lokalen Netzwerk des Hosts ist, und unterwegs auf dem Telefon. Lass das Feld leer, um die Funktion zu deaktivieren."
+  "09bbffae7a01aef8": "Gib den Tailscale-Namen deines Telefons ein. Thread-Benachrichtigungen erscheinen auf dem Desktop, wenn das Telefon im lokalen Netzwerk des Hosts ist, und unterwegs auf dem Telefon. Lass das Feld leer, um die Funktion zu deaktivieren.",
+  "f9dd8ad51e9f5d1b": "ntfy-Server-URL",
+  "77fff3a927ba1009": "Der Server, der Handy-Benachrichtigungen sendet. Standard ist https://ntfy.sh.",
+  "a4739b023dc96d9a": "ntfy-Thema",
+  "fa74035ae7d791cf": "Abonniere dieses Thema in der ntfy-App auf deinem Handy. Halte das Thema geheim. Lass das Feld leer, um ntfy-Benachrichtigungen auszuschalten.",
+  "b9418d854bf3a44b": "Thema generieren"
 }

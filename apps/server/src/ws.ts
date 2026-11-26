@@ -37,6 +37,7 @@ import {
   AuthOrchestrationOperateScope,
   AuthTerminalOperateScope,
   AuthProvidersManageScope,
+  AuthSettingsWriteScope,
   type AuthEnvironmentScope,
   ProviderDriverKind,
   type ScheduledTaskListResult,
@@ -1466,11 +1467,15 @@ export const layerWsRpc = (
   clientAnalyticsProps: Readonly<Record<string, unknown>>,
   serverBrowser: ServerBrowser.ServerBrowser["Service"],
   reportProfiles: ServerBrowser.ProfileReporter,
-  settingsClient: ServerSettings.SettingsClient,
+  clientCapabilities: ServerSettings.SettingsClient,
 ) =>
   Layer.effectContext(
     Effect.gen(function* () {
       const currentSessionId = currentSession.sessionId;
+      const settingsClient = {
+        ...clientCapabilities,
+        canWriteSettings: currentSession.scopes.includes(AuthSettingsWriteScope),
+      };
       const sidebarLayout = yield* SidebarLayout.SidebarLayoutService;
       const sql = yield* SqlClient.SqlClient;
       const threadManagement = yield* ThreadManagementService.ThreadManagementService;

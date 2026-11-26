@@ -13030,5 +13030,10 @@
   "7ea072883f6d0a22": "Affiche un panneau flottant lorsqu’un agent pose une question dans un autre fil.",
   "71f8e3f9f3efc6c5": "Téléphone pour le routage des notifications",
   "1351099395ec0ac4": "Valeurs différentes",
-  "09bbffae7a01aef8": "Saisissez le nom Tailscale de votre téléphone. Les alertes des fils arrivent sur l’ordinateur quand le téléphone est sur le réseau local de l’hôte, et sur le téléphone quand il est ailleurs. Laissez ce champ vide pour désactiver cette fonction."
+  "09bbffae7a01aef8": "Saisissez le nom Tailscale de votre téléphone. Les alertes des fils arrivent sur l’ordinateur quand le téléphone est sur le réseau local de l’hôte, et sur le téléphone quand il est ailleurs. Laissez ce champ vide pour désactiver cette fonction.",
+  "f9dd8ad51e9f5d1b": "URL du serveur ntfy",
+  "77fff3a927ba1009": "Le serveur qui envoie les alertes sur le téléphone. Par défaut, https://ntfy.sh.",
+  "a4739b023dc96d9a": "Sujet ntfy",
+  "fa74035ae7d791cf": "Abonnez-vous à ce sujet dans l’application ntfy sur votre téléphone. Gardez le sujet confidentiel. Laissez ce champ vide pour désactiver les alertes ntfy.",
+  "b9418d854bf3a44b": "Générer un sujet"
 }
