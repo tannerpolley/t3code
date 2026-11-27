@@ -933,20 +933,12 @@ export function shouldRecedeSidebarThread(input: {
   isWoke: boolean;
   isActive: boolean;
   isSelected: boolean;
+  isSubagent: boolean;
 }): boolean {
-  if (
-    input.isActive ||
-    input.isSelected ||
-    input.status === "input" ||
-    input.status === "request"
-  ) {
-    return false;
-  }
-  if (input.status === "preparing" || input.status === "working" || input.status === "waiting") {
-    return true;
-  }
+  if (input.isActive || input.isSelected) return false;
+  // Fork: working rows stay bright; a finished subagent recedes even unread, a finished main thread once seen.
   if (input.status === "ready" || input.status === "approval") {
-    return !input.isUnread && !input.isWoke;
+    return input.isSubagent || (!input.isUnread && !input.isWoke);
   }
   return false;
 }
