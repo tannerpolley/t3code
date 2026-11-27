@@ -160,6 +160,10 @@ import {
 } from "../state/entities";
 import { environmentPresentations } from "../state/presentation";
 import { primaryServerKeybindingsAtom } from "../state/server";
+import { useRunningTerminalsByThreadKey } from "../state/terminalSessions";
+import { useSidebarWorkflowRuns } from "../state/sidebarWorkflowRuns";
+import { projectTasks } from "@t3tools/client-runtime/state/project-tasks";
+import { SidebarProjectTasks } from "./sidebar/SidebarProjectTasks";
 import { environmentProjects } from "../state/projects";
 import { threadEnvironment } from "../state/threads";
 import { useOlderSettledShelf, useOlderSettledShelfGrowth } from "../state/olderSettledShelf";
@@ -372,6 +376,7 @@ const SETTLED_SHELF_EXPANDED_KEY = "t3code:sidebar:settled-expanded";
 const SNOOZED_SHELF_EXPANDED_KEY = "t3code:sidebar:snoozed-expanded";
 const WORKING_SHELF_EXPANDED_KEY = "t3code:sidebar:working-expanded";
 const ROLE_SECTIONS_COLLAPSED_KEY = "t3code:sidebar:role-sections-collapsed";
+const TASK_SECTIONS_EXPANDED_KEY = "t3code:sidebar:task-sections-expanded";
 const EMPTY_ROLE_SECTION_KEYS: readonly string[] = [];
 const ROLE_SECTION_KEYS_SCHEMA = Schema.Array(Schema.String);
 const NO_CHILDREN: ReadonlyMap<string, readonly EnvironmentThreadShell[]> = new Map();
@@ -1288,6 +1293,14 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           ),
         );
   const threads = useQuietThreadShells();
+  const [expandedTaskSections, setExpandedTaskSections] = useLocalStorage(
+    TASK_SECTIONS_EXPANDED_KEY,
+    EMPTY_ROLE_SECTION_KEYS,
+    ROLE_SECTION_KEYS_SCHEMA,
+  );
+  const taskEnvironmentIds = [...new Set(threads.map((thread) => thread.environmentId))];
+  const runningTerminals = useRunningTerminalsByThreadKey(taskEnvironmentIds);
+  const workflowRuns = useSidebarWorkflowRuns(taskEnvironmentIds);
   const promotingDraftThreadKeys = usePromotingDraftThreadKeys();
   const listedThreads =
     promotingDraftThreadKeys.length === 0
@@ -1860,7 +1873,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     return mapping;
   })();
 
-  const navigateToThread = (threadRef: ScopedThreadRef) => {
+  const navigateToThread = (threadRef: ScopedThreadRef, taskId?: string) => {
     if (useThreadSelectionStore.getState().selectedThreadKeys.size > 0) {
       clearSelection();
     }
@@ -1871,6 +1884,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     return router.navigate({
       to: "/$environmentId/$threadId",
       params: buildThreadRouteParams(threadRef),
+      ...(taskId === undefined ? {} : { hash: `task:${encodeURIComponent(taskId)}` }),
     });
   };
 
@@ -4102,6 +4116,18 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                           }
                           const { folder } = row;
                           const folderRow = sidebarFolderRowId(folder.group.projectKey);
+                          const memberKeys = new Set(
+                            folder.group.memberProjectRefs.map(
+                              (member) => `${member.environmentId}:${member.projectId}`,
+                            ),
+                          );
+                          const tasks = projectTasks(
+                            threads.filter((thread) =>
+                              memberKeys.has(`${thread.environmentId}:${thread.projectId}`),
+                            ),
+                            runningTerminals,
+                            workflowRuns,
+                          );
                           items.push(
                             <SidebarProjectFolderHeader
                               key={folderRow}
@@ -4158,6 +4184,41 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                                   ])
                                 ),
                             ),
+                            ...(!folder.collapsed && tasks.length > 0
+                              ? [
+                                  <SidebarProjectTasks
+                                    key={`tasks:${folderRow}`}
+                                    id={`tasks:${folderRow}`}
+                                    parent={folderRow}
+                                    depth={row.depth}
+                                    tasks={tasks}
+                                    now={Date.parse(snoozeNow)}
+                                    collapsed={!expandedTaskSections.includes(folderRow)}
+                                    onToggle={() =>
+                                      setExpandedTaskSections((current) =>
+                                        current.includes(folderRow)
+                                          ? current.filter((key) => key !== folderRow)
+                                          : [...current, folderRow],
+                                      )
+                                    }
+                                    onOpen={(task) => {
+                                      const ref = scopeThreadRef(
+                                        task.thread.environmentId,
+                                        task.thread.id,
+                                      );
+                                      if (task.kind === "terminals") {
+                                        useRightPanelStore.getState().openTerminal(ref, task.id);
+                                      }
+                                      void navigateToThread(
+                                        ref,
+                                        task.kind === "commands" || task.kind === "monitors"
+                                          ? task.id
+                                          : undefined,
+                                      );
+                                    }}
+                                  />,
+                                ]
+                              : []),
                           );
                         }
                         continue;
