@@ -11123,12 +11123,6 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
               }),
           ),
         );
-      if (parentProjection.thread.retirement !== undefined) {
-        return yield* retirementRefusal(
-          command,
-          parentProjection.thread.retirement.successorThreadId,
-        );
-      }
       const parentRun = parentProjection.runs.find(
         (candidate) => candidate.id === command.parentRunId,
       );
