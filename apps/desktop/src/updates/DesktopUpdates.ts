@@ -65,6 +65,7 @@ const CHANNEL_CHANGE_RETRY_DELAY = Duration.seconds(1);
 const CHANNEL_CHANGE_RETRIES = 30;
 const AUTO_UPDATE_STARTUP_DELAY = "15 seconds";
 const AUTO_UPDATE_POLL_INTERVAL = "4 hours";
+const STAGED_BUILD_POLL_INTERVAL = "3 minutes";
 const UPDATE_CHECK_WAIT = Duration.seconds(90);
 
 type UpdateAction = "check" | "download" | "install" | "install-recovery" | "channel";
@@ -1153,6 +1154,25 @@ export const make = Effect.gen(function* () {
       }),
       Effect.forkScoped,
     );
+    if (forkUpdates) {
+      // Listing the staged folder is cheap; only a new build runs the visible check.
+      yield* Effect.sleep(STAGED_BUILD_POLL_INTERVAL).pipe(
+        Effect.andThen(forkUpdates.detect()),
+        Effect.flatMap((version) =>
+          Ref.get(updateStateRef).pipe(
+            Effect.flatMap((state) =>
+              version !== null && version !== state.downloadedVersion
+                ? checkForUpdates("staged-build")
+                : Effect.void,
+            ),
+          ),
+        ),
+        // The four-hour poll reports a staged folder it cannot read.
+        Effect.ignore,
+        Effect.forever,
+        Effect.forkScoped,
+      );
+    }
     yield* Effect.sleep(AUTO_UPDATE_POLL_INTERVAL).pipe(
       Effect.andThen(checkForUpdates("poll")),
       Effect.forever,

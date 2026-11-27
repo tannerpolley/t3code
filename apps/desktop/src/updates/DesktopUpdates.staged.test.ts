@@ -2,9 +2,14 @@ import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
 import * as HostProcess from "@t3tools/shared/HostProcess";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
+import * as Layer from "effect/Layer";
+import * as Option from "effect/Option";
 import * as Path from "effect/Path";
 import * as Ref from "effect/Ref";
+import * as Stream from "effect/Stream";
+import * as TestClock from "effect/testing/TestClock";
 import type { RelaunchOptions } from "electron";
 
 import * as DesktopState from "../app/DesktopState.ts";
@@ -66,6 +71,35 @@ describe.skipIf(HostProcess.Platform.defaultValue() === "win32")("staged AppImag
         assert.equal((yield* updates.check("manual")).state.downloadedVersion, minimumVersion);
       }).pipe(Effect.provide(harness.layer));
     }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect(
+    "offers a build staged after startup within minutes, checking only once it appears",
+    () =>
+      Effect.gen(function* () {
+        const { harness, stage } = yield* fixture;
+        yield* Effect.scoped(
+          Effect.gen(function* () {
+            const updates = yield* DesktopUpdates.DesktopUpdates;
+            yield* updates.configure;
+            const { changes } = yield* updates.subscribe;
+            const statuses: string[] = [];
+            const offer = yield* changes.pipe(
+              Stream.tap((state) => Effect.sync(() => void statuses.push(state.status))),
+              Stream.filter((state) => state.downloadedVersion === offered),
+              Stream.runHead,
+              Effect.forkScoped,
+            );
+            yield* TestClock.adjust("15 seconds");
+            yield* TestClock.adjust("3 minutes");
+            yield* stage(offered);
+            yield* TestClock.adjust("3 minutes");
+            assert.isTrue(Option.isSome(yield* Fiber.join(offer)));
+            // The startup check and the one for the new build; empty polls stay invisible.
+            assert.equal(statuses.filter((status) => status === "checking").length, 2);
+          }),
+        ).pipe(Effect.provide(Layer.merge(TestClock.layer(), harness.layer)));
+      }).pipe(Effect.provide(NodeServices.layer)),
   );
 
   it.effect(
