@@ -2,6 +2,7 @@ import type { EnvironmentServerConfig } from "@t3tools/client-runtime/connection
 import { scopeThreadRef, scopedThreadKey } from "@t3tools/client-runtime/environment";
 import { resolveThreadWorkingStartedAt } from "@t3tools/client-runtime/state/models";
 import { isShownUnderParent } from "@t3tools/client-runtime/state/threads";
+import type { SidebarAgentState } from "@t3tools/client-runtime/state/sidebar-families";
 import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { threadPullRequestSearchTerms } from "@t3tools/shared/threadPullRequests";
 import * as React from "react";
@@ -1041,6 +1042,47 @@ export function resolveSidebarFolderDot(
   if (hasUnread) return "unread";
   if (statuses.has("working") || statuses.has("preparing")) return "working";
   return null;
+}
+
+/** What a section or closed folder counts a thread as: working, needing you, or failed. */
+export function resolveSidebarAgentState(
+  thread: ThreadStatusInput & SidebarThreadStatusInput,
+): SidebarAgentState | null {
+  switch (resolveSidebarRowStatus(thread)) {
+    case "approval":
+    case "input":
+    case "request":
+    case "limited":
+      return "attention";
+    case "failed":
+      return "failed";
+    case "preparing":
+    case "working":
+      return "working";
+    case "waiting":
+      // Blocked on a child is still a running turn; an idle session is not.
+      return thread.runtime?.status === "running" ? "working" : null;
+    default:
+      return null;
+  }
+}
+
+/** "2 working · 1 waiting on you · 1 failed", leaving out zeros; `short` says "waiting". */
+export function formatSidebarAgentStates(
+  counts: Readonly<Record<SidebarAgentState, number>>,
+  resolve: MessageResolver = m,
+  short = false,
+): string {
+  const parts = [
+    counts.working > 0 ? resolve(msg("{count} working", { count: counts.working })) : null,
+    counts.attention > 0
+      ? short
+        ? resolve(msg("{count} waiting", { count: counts.attention }))
+        : resolve(msg("{count} waiting on you", { count: counts.attention }))
+      : null,
+    counts.failed > 0 ? resolve(msg("{count} failed", { count: counts.failed })) : null,
+  ];
+  return parts.filter((part) => part !== null).join(" · ");
 }
 
 /**

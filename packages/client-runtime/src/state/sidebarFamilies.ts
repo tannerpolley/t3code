@@ -89,3 +89,81 @@ export function sidebarFamilyRows(
     }),
   );
 }
+
+const SIDEBAR_AGENT_ROLES = [
+  "implementation",
+  "review",
+  "design",
+  "writer",
+  "research",
+  "test",
+  "other",
+] as const;
+export type SidebarAgentRole = (typeof SIDEBAR_AGENT_ROLES)[number];
+
+function sidebarAgentRole(thread: Pick<EnvironmentThreadShell, "delegatedRole">) {
+  const role = thread.delegatedRole;
+  return role === undefined || role === "general" ? "other" : role;
+}
+
+export interface SidebarRoleSection {
+  /** Names the project and role; collapse state is saved under it. */
+  key: string;
+  role: SidebarAgentRole;
+  threads: readonly EnvironmentThreadShell[];
+}
+
+/**
+ * Child agents by project, then by role in `SIDEBAR_AGENT_ROLES` order, newest first.
+ * Roles with no children are left out, and so are children whose project has no folder.
+ */
+export function sidebarRoleSections(
+  childrenByParent: ReadonlyMap<string, readonly EnvironmentThreadShell[]>,
+  folderKeyOf: (thread: EnvironmentThreadShell) => string | undefined,
+) {
+  const byFolder = new Map<string, Map<SidebarAgentRole, EnvironmentThreadShell[]>>();
+  for (const children of childrenByParent.values()) {
+    for (const child of children) {
+      const folderKey = folderKeyOf(child);
+      if (folderKey === undefined) continue;
+      const roles = byFolder.get(folderKey) ?? new Map();
+      byFolder.set(folderKey, roles);
+      const role = sidebarAgentRole(child);
+      const threads = roles.get(role);
+      if (threads === undefined) roles.set(role, [child]);
+      else threads.push(child);
+    }
+  }
+  return new Map(
+    [...byFolder].map(([folderKey, roles]) => [
+      folderKey,
+      SIDEBAR_AGENT_ROLES.flatMap((role): SidebarRoleSection[] => {
+        const threads = roles.get(role);
+        return threads === undefined
+          ? []
+          : [
+              {
+                key: `${folderKey}:${role}`,
+                role,
+                threads: [...threads].sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
+              },
+            ];
+      }),
+    ]),
+  );
+}
+
+export type SidebarAgentState = "working" | "attention" | "failed";
+
+/** How many threads are in each state; the caller decides each thread's state. */
+export function countSidebarAgentStates<T>(
+  threads: readonly T[],
+  stateOf: (thread: T) => SidebarAgentState | null,
+) {
+  const counts: Record<SidebarAgentState, number> = { working: 0, attention: 0, failed: 0 };
+  for (const thread of threads) {
+    const state = stateOf(thread);
+    if (state !== null) counts[state] += 1;
+  }
+  return counts;
+}
