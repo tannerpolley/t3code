@@ -8510,10 +8510,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         threadIds,
         listedOnly = false,
         includeDeleted = false,
+        includeLifeRing = true,
       }: ShellSnapshotOptions & {
         readonly listedOnly?: boolean;
         // A retained fork still shows the history of a deleted source run.
         readonly includeDeleted?: boolean;
+        readonly includeLifeRing?: boolean;
       } = {},
     ) =>
       sql<ShellThreadRow>`
@@ -8521,6 +8523,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               t.thread_id,
               t.payload_json,
               t.fork_run_ids_json,
+              ${
+                includeLifeRing
+                  ? sql`
               json_extract(usage.payload_json, '$.tokenUsage.usedTokens') AS context_used_tokens,
               COALESCE(json_extract(usage.payload_json, '$.tokenUsage.autoCompactThreshold'),
                 json_extract(usage.payload_json, '$.tokenUsage.maxTokens')) AS context_window_tokens,
@@ -8530,15 +8535,15 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               CASE WHEN json_extract(t.payload_json, '$.lineage.parentThreadId') IS NULL
                 AND json_extract(t.payload_json, '$.delegatedFrom') IS NULL
                 THEN (
-                  SELECT COUNT(*) FROM orchestration_v2_projection_turn_items item
+                  SELECT COUNT(*) FROM orchestration_v2_projection_turn_items compaction_item
                     INDEXED BY orchestration_v2_projection_turn_items_thread_type_idx
-                  WHERE item.thread_id = t.thread_id
-                    AND item.type = 'compaction' AND item.status = 'completed'
+                  WHERE compaction_item.thread_id = t.thread_id
+                    AND compaction_item.type = 'compaction' AND compaction_item.status = 'completed'
                     AND NOT EXISTS (
                       SELECT 1 FROM orchestration_v2_projection_runs run
                       JOIN orchestration_v2_projection_messages prompt
                         ON prompt.message_id = json_extract(run.payload_json, '$.userMessageId')
-                      WHERE run.run_id = item.run_id
+                      WHERE run.run_id = compaction_item.run_id
                         AND (
                           ${trimmedMessageText("prompt")} = ${IDLE_COMPACTION_TEXT}
                           OR (
@@ -8555,6 +8560,17 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 JOIN orchestration_v2_projection_subagents task ON task.subagent_id = pending.value
                 WHERE task.status IN ('pending', 'idle', 'running', 'waiting')
               ) END AS retiring_worker_count,
+              `
+                  : sql`
+              NULL AS context_used_tokens,
+              NULL AS context_window_tokens,
+              NULL AS context_usage_at,
+              NULL AS latest_compaction_at,
+              NULL AS latest_compaction_tokens,
+              NULL AS compaction_count,
+              NULL AS retiring_worker_count,
+              `
+              }
               CASE
                 WHEN json_extract(t.payload_json, '$.forkedFrom.type') = 'run'
                   AND json_extract(t.payload_json, '$.lineage.sideChat') IS NOT 1
@@ -8703,6 +8719,9 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   AND plan.status = 'active'
               ) AS has_actionable_proposed_plan
             FROM orchestration_v2_projection_threads t
+            ${
+              includeLifeRing
+                ? sql`
             LEFT JOIN orchestration_v2_projection_provider_turns usage ON usage.provider_turn_id = (
               SELECT turn.provider_turn_id FROM orchestration_v2_projection_provider_turns turn
                 INDEXED BY orchestration_v2_projection_provider_turns_usage_idx
@@ -8715,17 +8734,20 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               LIMIT 1
             )
             LEFT JOIN orchestration_v2_projection_turn_items compaction ON compaction.turn_item_id = (
-              SELECT item.turn_item_id FROM orchestration_v2_projection_turn_items item
+              SELECT compaction_item.turn_item_id FROM orchestration_v2_projection_turn_items compaction_item
                 INDEXED BY orchestration_v2_projection_turn_items_thread_type_idx
               WHERE json_extract(t.payload_json, '$.lineage.parentThreadId') IS NULL
                 AND json_extract(t.payload_json, '$.delegatedFrom') IS NULL
-                AND item.thread_id = t.thread_id
-                AND item.type = 'compaction' AND item.status = 'completed'
-                AND (item.provider_thread_id IS NULL
-                  OR item.provider_thread_id = json_extract(t.payload_json, '$.activeProviderThreadId'))
-              ORDER BY item.ordinal DESC, item.turn_item_id DESC
+                AND compaction_item.thread_id = t.thread_id
+                AND compaction_item.type = 'compaction' AND compaction_item.status = 'completed'
+                AND (compaction_item.provider_thread_id IS NULL
+                  OR compaction_item.provider_thread_id = json_extract(t.payload_json, '$.activeProviderThreadId'))
+              ORDER BY compaction_item.ordinal DESC, compaction_item.turn_item_id DESC
               LIMIT 1
             )
+            `
+                : sql``
+            }
             LEFT JOIN orchestration_v2_projection_runs active ON active.run_id = (
               SELECT r.run_id
               FROM orchestration_v2_projection_runs r
@@ -9660,10 +9682,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         const { threadRows, providerThreadRows, pendingTurnItemRows, sequenceRows } =
           yield* sql.withTransaction(
             Effect.gen(function* () {
-              const threadRows = yield* selectShellThreadRows(
-                threadId,
-                threadId === undefined ? { location: "active", listedOnly: true } : {},
-              );
+              const threadRows = yield* selectShellThreadRows(threadId, {
+                includeLifeRing: false,
+                ...(threadId === undefined ? { location: "active", listedOnly: true } : {}),
+              });
               const ids = threadRows.map((row) => ThreadId.make(row.thread_id));
               const providerThreadRows =
                 ids.length === 0 ? [] : yield* selectShellProviderThreadRows(ids);
