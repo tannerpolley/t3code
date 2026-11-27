@@ -3,6 +3,10 @@
   "private": true,
   "type": "module",
   "exports": {
+    "./state/project-tasks": {
+      "types": "./src/state/project-tasks.ts",
+      "default": "./src/state/project-tasks.ts"
+    },
     "./state/sidebar-families": {
       "types": "./src/state/sidebarFamilies.ts",
       "default": "./src/state/sidebarFamilies.ts"

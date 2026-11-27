@@ -281,6 +281,36 @@ export function useThreadRunningTerminalIds(input: {
   return selectRunningSubprocessTerminalIds(sessions ?? []);
 }
 
+const runningTerminalFamily = Atom.family((environmentId: EnvironmentId) =>
+  Atom.make((get) => {
+    const metadata = get(terminalEnvironment.metadata({ environmentId, input: null }));
+    return metadata._tag === "Success"
+      ? metadata.value.filter((terminal) => terminal.hasRunningSubprocess)
+      : [];
+  }).pipe(Atom.withLabel(`web-running-terminals:${environmentId}`)),
+);
+const runningTerminalList = environmentAtomList("web-running-terminals", runningTerminalFamily);
+
+/** One subscription per environment, shared across all project folders. */
+export function useRunningTerminalsByThreadKey(environmentIds: ReadonlyArray<EnvironmentId>) {
+  const readable = useEnvironmentsWithScope(
+    environmentIds.map((environmentId) => ({ environmentId })),
+    AuthTerminalReadScope,
+  );
+  const ids = environmentIds.filter((environmentId) => readable.has(environmentId));
+  const results = useAtomValue(runningTerminalList(environmentIdsKey(ids)));
+  const byThread = new Map<string, TerminalSummary[]>();
+  results.forEach((terminals, index) => {
+    for (const terminal of terminals) {
+      const key = `${ids[index]}:${terminal.threadId}`;
+      const entries = byThread.get(key) ?? [];
+      entries.push(terminal);
+      byThread.set(key, entries);
+    }
+  });
+  return byThread;
+}
+
 // A string so status updates that keep every label notify no one.
 const terminalLabelsFamily = Atom.family((environmentId: EnvironmentId) =>
   Atom.make((get) => {

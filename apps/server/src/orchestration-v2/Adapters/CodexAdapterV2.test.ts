@@ -8072,6 +8072,28 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         yield* harness.firstTerminal;
         const terminal = harness.terminalEvents()[0]!;
         assert.equal(terminal.status, "completed");
+        yield* harness.until(() =>
+          harness.events.some(
+            (event) =>
+              event.type === "provider_thread.updated" &&
+              event.providerThread.pendingBackgroundTasks?.some(
+                (task) => task.taskId === BG_COMMAND_ITEM,
+              ),
+          ),
+        );
+        assert.deepEqual(
+          harness.events
+            .flatMap((event) =>
+              event.type === "provider_thread.updated" &&
+              event.providerThread.pendingBackgroundTasks?.some(
+                (task) => task.taskId === BG_COMMAND_ITEM,
+              )
+                ? [event.providerThread.pendingBackgroundTasks]
+                : [],
+            )
+            .at(-1),
+          [{ taskId: BG_COMMAND_ITEM, kind: "command", description: BG_COMMAND }],
+        );
         assert.isTrue(yield* harness.hasPendingBackgroundWork);
         assert.isFalse(
           yield* harness.runtime.hasPendingBackgroundWorkForThread!({
@@ -8098,6 +8120,16 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           requestRuntimeRestart: true,
         });
         yield* Deferred.await(stopped);
+        assert.deepEqual(
+          harness.events
+            .flatMap((event) =>
+              event.type === "provider_thread.updated"
+                ? [event.providerThread.pendingBackgroundTasks]
+                : [],
+            )
+            .at(-1),
+          [],
+        );
         assert.isFalse(yield* harness.hasPendingBackgroundWork);
         assert.lengthOf(harness.terminalEvents(), 1);
         assert.equal(harness.terminalEvents()[0]?.status, "completed");
