@@ -1429,7 +1429,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
                 maskImage: "radial-gradient(transparent 43%, black 50%)",
               }}
             />
-            {lifeRing.count}
+            {lifeRing.count > 0 ? lifeRing.count : null}
           </span>
         ) : null}
         <span className="flex w-5 shrink-0 items-center justify-center">
