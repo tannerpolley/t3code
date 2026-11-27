@@ -6,6 +6,7 @@ import * as DateTime from "effect/DateTime";
 import * as Duration from "effect/Duration";
 import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Effect from "effect/Effect";
+import * as Fiber from "effect/Fiber";
 import * as FileSystem from "effect/FileSystem";
 import * as Layer from "effect/Layer";
 import * as Option from "effect/Option";
@@ -1534,6 +1535,19 @@ export const layerInProcessMcpServer = McpServer.middleware<{
   { global: true },
 ).pipe(Layer.provideMerge(McpServer.McpServer.layer));
 
+const layerDelegatedToolVisibility = McpServer.visibility(
+  ({ target }) =>
+    Effect.serviceOption(McpInvocationContext.McpInvocationContext).pipe(
+      Effect.map((scope) =>
+        McpInvocationContext.visibleToDelegatedRole(
+          target,
+          Option.getOrUndefined(scope)?.thread?.leafWorker,
+        ),
+      ),
+    ),
+  { global: true },
+);
+
 export const layerMcpTransport = <RA, RE, RR>(registrations: Layer.Layer<RA, RE, RR>) =>
   McpServer.layerHttp({
     name: "T3 Code",
@@ -1541,7 +1555,7 @@ export const layerMcpTransport = <RA, RE, RR>(registrations: Layer.Layer<RA, RE,
     path: MCP_HTTP_PATH,
     protocols: mcpProtocols,
     allowSessionTermination: true,
-    registrations,
+    registrations: Layer.mergeAll(registrations, layerDelegatedToolVisibility),
   }).pipe(Layer.provide(layerMcpAuthMiddleware));
 
 /** Every tool the T3 MCP server advertises. AgentContextBudget.test.ts measures this set. */
@@ -1570,16 +1584,27 @@ const layerToolExposure = Layer.effect(
   Effect.gen(function* () {
     const server = yield* McpServer.McpServer;
     return McpToolExposure.make(
-      () =>
-        server.tools
-          // Search finds only what this caller could list; these predicates read the request's scope.
-          .filter(({ annotations }) => {
-            const enabledWhen = Context.getOrUndefined(annotations, McpSchema.EnabledWhen);
-            return (
-              enabledWhen === undefined || enabledWhen({ protocolVersion: "", capabilities: {} })
-            );
-          })
-          .map(({ tool }) => ({ name: tool.name, description: tool.description ?? "" })),
+      () => {
+        const fiber = Fiber.getCurrent();
+        const leafWorker =
+          fiber &&
+          Context.getOrUndefined(fiber.context, McpInvocationContext.McpInvocationContext)?.thread
+            ?.leafWorker;
+        return (
+          server.tools
+            .filter(({ tool }) =>
+              McpInvocationContext.visibleToDelegatedRole(tool.name, leafWorker),
+            )
+            // Search finds only what this caller could list; these predicates read the request's scope.
+            .filter(({ annotations }) => {
+              const enabledWhen = Context.getOrUndefined(annotations, McpSchema.EnabledWhen);
+              return (
+                enabledWhen === undefined || enabledWhen({ protocolVersion: "", capabilities: {} })
+              );
+            })
+            .map(({ tool }) => ({ name: tool.name, description: tool.description ?? "" }))
+        );
+      },
       () => server.notifications["notifications/tools/list_changed"]({}),
     );
   }),

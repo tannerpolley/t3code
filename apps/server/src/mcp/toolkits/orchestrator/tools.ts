@@ -89,7 +89,7 @@ const OrchestratorCapabilitiesTool = Tool.make("orchestrator_capabilities", {
 
 const DelegateTaskTool = Tool.make("delegate_task", {
   description:
-    "Start a child with only `task`. No history or secrets. Choose `complexity` (routine by default, or complex) to apply that role pick. It overrides provider/model/options unless effort is `orchestrator`, which keeps your options. `isolation:'worktree'` separates checkouts. Keep `taskId` for `task_status`/`task_cancel`.",
+    "Start a child with only `task`. No history or secrets. `complexity` selects the role pick (default `routine`). It overrides provider/model/options, except effort `orchestrator` keeps your options. `isolation:'worktree'` separates checkouts. Keep `taskId` for `task_status`/`task_cancel`.",
   parameters: OrchestratorMcpDelegateTaskInput,
   success: OrchestratorMcpDelegateTaskResult,
   failure: OrchestratorMcpFailure,

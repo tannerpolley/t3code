@@ -13,12 +13,27 @@ export const DelegationModelRole = Schema.Literals([
   "writer",
 ]);
 export type DelegationModelRole = typeof DelegationModelRole.Type;
+export const isDelegationModelRole = Schema.is(DelegationModelRole);
 
 export const OrchestratorMcpTaskRole = Schema.Literals([
   ...DelegationModelRole.literals,
   "general",
+  "orchestrator",
 ]);
 export type OrchestratorMcpTaskRole = typeof OrchestratorMcpTaskRole.Type;
+
+export function delegatedLeafSkill(role: OrchestratorMcpTaskRole | undefined) {
+  switch (role) {
+    case "review":
+      return "role-reviewer";
+    case "implementation":
+    case "research":
+    case "test":
+      return "role-implementor";
+    default:
+      return undefined;
+  }
+}
 
 export const DelegationComplexity = Schema.Literals(["routine", "complex"]);
 export type DelegationComplexity = typeof DelegationComplexity.Type;

@@ -2256,13 +2256,18 @@ it.effect(
 it.effect("lists optional tools to a deferring client only after tool_search loads them", () =>
   Effect.scoped(
     Effect.gen(function* () {
-      const scopeFor = (token: string): McpInvocationContext.McpThreadInvocationScope => ({
+      const scopeFor = (
+        token: string,
+        leafWorker = false,
+      ): McpInvocationContext.McpThreadInvocationScope => ({
         environmentId,
         requestNamespace: token,
         thread: {
           threadId: ThreadId.make(`thread-${token}`),
           providerSessionId: token,
-          providerInstanceId: ProviderInstanceId.make("copilot"),
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          subagent: true,
+          leafWorker,
         },
         client: undefined,
         capabilities: new Set(["orchestration"]),
@@ -2271,6 +2276,7 @@ it.effect("lists optional tools to a deferring client only after tool_search loa
       const scopes = new Map([
         ["deferringToken", scopeFor("deferringToken")],
         ["otherToken", scopeFor("otherToken")],
+        ["leafToken", scopeFor("leafToken", true)],
       ]);
       const tool = (name: string, description: string) =>
         Tool.make(name, {
@@ -2283,6 +2289,7 @@ it.effect("lists optional tools to a deferring client only after tool_search loa
         tool("delegate_task", "Delegates a task."),
         tool("preview_open", "Opens a browser preview."),
         tool("schedule_task", "Schedules a task."),
+        tool("request_secret", "Requests a credential."),
       );
       const reads = McpToolAccess.reads(() => Effect.succeed({}));
       const serverLayer = McpHttpServer.layerMcpTransport(
@@ -2293,6 +2300,7 @@ it.effect("lists optional tools to a deferring client only after tool_search loa
               delegate_task: reads,
               preview_open: reads,
               schedule_task: reads,
+              request_secret: reads,
             }),
           ),
           McpHttpServer.layerToolSearch,
@@ -2356,6 +2364,7 @@ it.effect("lists optional tools to a deferring client only after tool_search loa
                   .sort(),
               ),
             ),
+            callRaw: (name: string) => rpc("tools/call", { name, arguments: {} }),
             call: (name: string, args: object) =>
               rpc("tools/call", { name, arguments: args }).pipe(
                 Effect.map((body) => (body as { result: { structuredContent?: unknown } }).result),
@@ -2364,9 +2373,24 @@ it.effect("lists optional tools to a deferring client only after tool_search loa
         });
 
       const deferring = yield* session("deferringToken", true);
-      const other = yield* session("otherToken", false);
+      const orchestrator = yield* session("otherToken", false);
+      const leaf = yield* session("leafToken", false);
+      const leafDeferred = yield* session("leafToken", true);
+      expect(yield* leaf.listed).toEqual(["preview_open", "request_secret"]);
+      expect(yield* leafDeferred.listed).toEqual(["tool_search"]);
+      expect(
+        (yield* leafDeferred.call("tool_search", { query: "schedule_task delegate_task" }))
+          .structuredContent,
+      ).toEqual({ tools: [] });
+      expect(yield* leaf.callRaw("delegate_task")).toHaveProperty("error");
+      expect((yield* leaf.call("request_secret", {})).structuredContent).toEqual({});
       expect(yield* deferring.listed).toEqual(["delegate_task", "tool_search"]);
-      expect(yield* other.listed).toEqual(["delegate_task", "preview_open", "schedule_task"]);
+      expect(yield* orchestrator.listed).toEqual([
+        "delegate_task",
+        "preview_open",
+        "request_secret",
+        "schedule_task",
+      ]);
       // Unlisted tools stay callable.
       expect((yield* deferring.call("schedule_task", {})).structuredContent).toEqual({});
 
@@ -2374,7 +2398,12 @@ it.effect("lists optional tools to a deferring client only after tool_search loa
         (yield* deferring.call("tool_search", { query: "browser" })).structuredContent,
       ).toEqual({ tools: [{ name: "preview_open", description: "Opens a browser preview." }] });
       expect(yield* deferring.listed).toEqual(["delegate_task", "preview_open", "tool_search"]);
-      expect(yield* other.listed).toEqual(["delegate_task", "preview_open", "schedule_task"]);
+      expect(yield* orchestrator.listed).toEqual([
+        "delegate_task",
+        "preview_open",
+        "request_secret",
+        "schedule_task",
+      ]);
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );

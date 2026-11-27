@@ -139,6 +139,8 @@ export const OrchestratorMcpInteractionMode = Schema.Union([
 export type OrchestratorMcpInteractionMode = typeof OrchestratorMcpInteractionMode.Type;
 
 export {
+  delegatedLeafSkill,
+  isDelegationModelRole,
   DelegationComplexity,
   DelegationModelRole,
   OrchestratorMcpTaskRole,
