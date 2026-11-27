@@ -18,6 +18,7 @@ import {
   type RepositoryIdentity,
   RunId,
   type ServerProvider,
+  type ServerSettings as ServerSettingsShape,
   ThreadId,
   TurnItemId,
 } from "@t3tools/contracts";
@@ -232,8 +233,8 @@ const boxProjects: ReadonlyArray<Project> = [
   },
 ];
 
-const serveBox = (thread: BoxThread) => {
-  return servePeer(box, boxToolkitLayer(thread));
+const serveBox = (thread: BoxThread, roleModels?: ServerSettingsShape["roleModels"]) => {
+  return servePeer(box, boxToolkitLayer(thread, roleModels));
 };
 
 const boxRunId = RunId.make("run:box");
@@ -241,7 +242,7 @@ const boxLaterRunId = RunId.make("run:box-later");
 const boxQueuedRunId = RunId.make("run:box-queued");
 const continuationOf = (runId: RunId) => RunId.make(`${runId}:restarted`);
 
-const boxToolkitLayer = (thread: BoxThread) => {
+const boxToolkitLayer = (thread: BoxThread, roleModels: ServerSettingsShape["roleModels"] = {}) => {
   const runId = boxRunId;
   const interrupts = new Set<string>();
   const shellOf = (threadId: ThreadId) =>
@@ -618,7 +619,7 @@ const boxToolkitLayer = (thread: BoxThread) => {
     ),
     Layer.provide(Layer.mock(ProjectCloneTracker.ProjectCloneTracker)({})),
     Layer.provide(Layer.mock(SecretRequests.SecretRequests)({})),
-    Layer.provide(ServerSettings.layerTest()),
+    Layer.provide(ServerSettings.layerTest({ roleModels })),
     Layer.provide(NodeServices.layer),
   );
 };
@@ -1367,6 +1368,46 @@ it.effect("a task naming another driver there never runs its model on the parent
       expect((yield* Ref.get(thread.launchedWith))?.modelSelection.instanceId).toBe(
         boxClaude.instanceId,
       );
+    }),
+  ).pipe(Effect.provide(NodeHttpServer.layerTest)),
+);
+
+it.effect("a linked task uses the role model saved on the execution environment", () =>
+  Effect.scoped(
+    Effect.gen(function* () {
+      const thread = yield* makeBoxThread;
+      const effort = { id: "effort", value: "high" };
+      const model = { instanceId: boxClaude.instanceId, model: "claude-sonnet-4-6" };
+      const b = yield* serveBox(thread, { implementation: { ...model, effort } });
+      const offers = yield* SubscriptionRef.make<
+        ReadonlyArray<ProviderContinuationRequests.ProviderContinuationRequest>
+      >([]);
+      const database = yield* SqlitePersistence.layerMemory.pipe(Layer.build);
+      const a = yield* makeLaptop(database, offers);
+      yield* linkTo(a.links, b, "full-access");
+      yield* a.settings.updateSettings({ roleModels: { implementation: modelSelection } });
+      yield* seedParent(a);
+
+      const result = yield* a.call("delegate_task", {
+        task: "Run the suite on the box.",
+        role: "implementation",
+        target: {
+          environmentId: box.environmentId,
+          providerInstanceId: instanceId,
+          driverKind: driver,
+          model: "not-advertised",
+          options: { reasoningEffort: "low" },
+        },
+      });
+      expect(result.isError, JSON.stringify(result.content)).toBe(false);
+      expect((yield* Ref.get(thread.launchedWith))?.modelSelection).toEqual({
+        ...model,
+        options: [effort],
+      });
+      expect(result.structuredContent).toMatchObject({
+        providerInstanceId: model.instanceId,
+        model: model.model,
+      });
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),
 );

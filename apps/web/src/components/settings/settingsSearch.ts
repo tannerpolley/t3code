@@ -1153,6 +1153,13 @@ export const SETTINGS_SEARCH_ITEMS = [
     providerSettingsOnly: true,
   },
   {
+    id: "role-models",
+    title: msg("Role models"),
+    to: "/settings/providers",
+    searchTerms: [msg("delegation subagent provider model reasoning effort")],
+    providerSettingsOnly: true,
+  },
+  {
     id: "text-generators",
     title: msg("Text generators"),
     to: "/settings/providers",

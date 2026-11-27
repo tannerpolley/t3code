@@ -105,6 +105,7 @@ import { IntervalSecondsField } from "./IntervalSecondsField";
 import { ProviderInstanceCard } from "./ProviderInstanceCard";
 import { useSecretSources } from "./SecretSourceInput";
 import { TextGeneratorsSettings } from "./TextGeneratorsSettings";
+import { RoleModelsPopover } from "./RoleModelsPopover";
 import { UsageProviderSettings } from "./UsageProviderSettings";
 import { ProviderSetupSection, readAntigravityAuthMethod } from "./ProviderSetupSection";
 import { ProviderAuthenticationSection } from "./ProviderAuthenticationSection";
@@ -1150,6 +1151,24 @@ export function EnvironmentProviderSettings({
           </div>
         </SettingsGroup>
       </SettingsSection>
+
+      <SettingsRow
+        {...searchableSetting("role-models")}
+        description={gt(
+          "Choose the provider, model, and effort used for delegated roles on this environment.",
+        )}
+        control={
+          <RoleModelsPopover
+            environmentId={environmentId}
+            readOnly={readOnly}
+            trigger={
+              <Button size="sm" variant="outline">
+                {gt("Configure")}
+              </Button>
+            }
+          />
+        }
+      />
 
       {rows.some((row) => row.driver === "codex") ? (
         <SettingsSection title="Codex">

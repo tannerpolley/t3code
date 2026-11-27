@@ -74,6 +74,7 @@ import { buildUnavailableProviderSnapshot } from "../provider/unavailableProvide
 import * as ProjectService from "../project/ProjectService.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
 import * as ServerSettings from "../serverSettings.ts";
+import { derive } from "@t3tools/provider-core/server/IdAllocator";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as RemoteDelegation from "../peer/RemoteDelegation.ts";
 import type { McpInvocationScope } from "./McpInvocationContext.ts";
@@ -4915,6 +4916,34 @@ describe("OrchestratorMcpService provider resolution", () => {
             expected: { instanceId: peerId, model: inherited.model, options: override },
           },
           {
+            name: "the owner pick replaces the delegate provider, model, and effort",
+            role: "review",
+            roleModels: {
+              review: {
+                instanceId: antigravityId,
+                model: "gemini-4-neon",
+                effort: { id: "thought_level", value: "medium" },
+              },
+            },
+            target: {
+              providerInstanceId: peerId,
+              driverKind: driver,
+              model: "not-advertised",
+              options: { reasoningEffort: "max" },
+            },
+            expected: {
+              instanceId: antigravityId,
+              model: "gemini-4-neon",
+              options: [{ id: "thought_level", value: "medium" }],
+            },
+          },
+          {
+            name: "a named role without a pick still follows the delegate target",
+            role: "implementation",
+            target: { model: "other-model" },
+            expected: { instanceId: codexInstanceId, model: "other-model" },
+          },
+          {
             name: "Antigravity model with a thinking suffix",
             target: { providerInstanceId: antigravityId, model: "gemini-4-neon-high" },
             expected: {
@@ -4970,7 +4999,7 @@ describe("OrchestratorMcpService provider resolution", () => {
             NodeServices.layer,
             NodeCrypto.layer,
             Layer.mock(ThreadManagementService.ThreadManagementService)({
-              hasReceipt: () => Effect.succeed(false),
+              hasReceipt: () => Effect.succeed(commands.length > 0),
               assertProviderInstanceEnabled: () => Effect.void,
               getThreadRecords: (threadId) =>
                 Effect.succeed(
@@ -4984,13 +5013,19 @@ describe("OrchestratorMcpService provider resolution", () => {
               dispatch: (command) =>
                 Effect.sync(() => {
                   commands.push(command);
+                  if ("roleModels" in testCase) {
+                    task.id = derive.delegatedTaskNode({ commandId: command.commandId });
+                  }
                   return {
                     sequence: 1,
                     storedEvents: [{ event: { type: "subagent.updated", payload: task } }],
                   } as never;
                 }),
             }),
-            ServerSettings.layerTest({ codexDefaultSpeed: "normal" }),
+            ServerSettings.layerTest({
+              codexDefaultSpeed: "normal",
+              ...("roleModels" in testCase ? { roleModels: testCase.roleModels } : {}),
+            }),
             providerRegistryLayer([
               {
                 ...providerSnapshot({
@@ -5098,18 +5133,30 @@ describe("OrchestratorMcpService provider resolution", () => {
               })
               .pipe(Effect.flip);
             assert.include(rejected.message, "serviceTier must be one of");
-            yield* service.delegateTask(scope, {
+            const request = {
               task: "Review the change.",
+              ...("role" in testCase ? { role: testCase.role } : {}),
               target: yield* decodeTarget(testCase.target),
               mode: "async",
               clientRequestId: testCase.name,
-            });
+            } as const;
+            const result = yield* service.delegateTask(scope, request);
             assert.deepEqual(
               (commands[0] as { modelSelection: unknown }).modelSelection,
               testCase.expected,
               testCase.name,
             );
-          }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provide(dependencies))));
+            if ("roleModels" in testCase) {
+              assert.deepEqual(capabilities.roleModels, testCase.roleModels);
+              assert.equal(result.model, testCase.expected.model);
+              const settings = yield* ServerSettings.ServerSettingsService;
+              yield* settings.updateSettings({ roleModels: { review: null } });
+              const retried = yield* service.delegateTask(scope, request);
+              assert.equal(retried.taskId, result.taskId);
+              assert.equal(retried.model, result.model);
+              assert.lengthOf(commands, 1);
+            }
+          }).pipe(Effect.provide(layerOrchestratorService.pipe(Layer.provideMerge(dependencies))));
         }
       }),
   );
