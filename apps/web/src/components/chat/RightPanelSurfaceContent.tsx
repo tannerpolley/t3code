@@ -23,6 +23,7 @@ import {
   type PersistentThreadTerminalPanelProps,
 } from "../PersistentThreadTerminals";
 import { IssueDetailPanel } from "../issue/IssueDetailPanel";
+import { RepoIssuesPanel } from "../issue/RepoIssueBoard";
 import { pullRequestPanelContext } from "../pullRequest/pullRequestDetail.logic";
 import { PullRequestDetailPanel } from "../pullRequest/PullRequestDetailPanel";
 import { PullRequestDetailGhost } from "../pullRequest/PullRequestGhosts";
@@ -35,6 +36,11 @@ const PreviewPanel = lazy(() =>
 const DiffPanel = lazy(() => import("../DiffPanel"));
 const DevicePanel = lazy(() =>
   import("../device/DevicePanel").then((module) => ({ default: module.DevicePanel })),
+);
+const ProjectArtifactsPanel = lazy(() =>
+  import("../files/ProjectArtifactsPanel").then((module) => ({
+    default: module.ProjectArtifactsPanel,
+  })),
 );
 const FilePreviewPanel = lazy(() => import("../files/FilePreviewPanel"));
 
@@ -231,13 +237,9 @@ export function RightPanelSurfaceContent(props: {
         />
       );
     case "pull-requests":
-      return (
-        <ThreadPullRequestsPanel
-          threadRef={threadRef}
-          projectId={props.pullRequest.projectId}
-          showRepoBoard={surface.showRepoBoard === true}
-        />
-      );
+      return <ThreadPullRequestsPanel threadRef={threadRef} />;
+    case "issues":
+      return <RepoIssuesPanel threadRef={threadRef} projectId={props.pullRequest.projectId} />;
     case "thread":
       // Not lazy: revealing a suspended tiptap editor tears down its view and crashes the composer.
       return (
@@ -271,6 +273,17 @@ export function RightPanelSurfaceContent(props: {
               props.onCloseSurface(surface);
               useRightPanelStore.getState().show(threadRef);
             }}
+          />
+        </Suspense>
+      );
+    case "artifacts":
+      return props.files.projectId === undefined ? null : (
+        <Suspense fallback={null}>
+          <ProjectArtifactsPanel
+            key={`${props.environmentId}:${props.files.projectId}`}
+            projectId={props.files.projectId}
+            environmentId={props.environmentId}
+            onOpenFile={props.files.onOpenFile}
           />
         </Suspense>
       );

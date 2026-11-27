@@ -1793,7 +1793,7 @@ function OpenCommandPaletteDialog(props: {
       searchTerms: ["repo", "repository", "issues", "board"],
       title: gt("Open repository issue board"),
       icon: <IssueGlyph.issue className={ITEM_ICON_CLASS} />,
-      run: async () => useRightPanelStore.getState().openLinkedItems(panelThreadRef, true),
+      run: async () => useRightPanelStore.getState().open(panelThreadRef, "issues"),
     });
   }
 

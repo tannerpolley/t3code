@@ -123,3 +123,30 @@ it("asks for a new URL only once when the new URL fails too", async () => {
     registry.dispose();
   }
 });
+
+it("shows a plain folder for a project with no chosen icon and no favicon", async () => {
+  setup();
+  const registry = AtomRegistry.make();
+  const project: ProjectFaviconProject = {
+    environmentId: EnvironmentId.make("test"),
+    workspaceRoot: "/project",
+    title: "Project",
+    faviconPath: null,
+    projectIcon: null,
+  };
+  const view = (projectIcon: ProjectFaviconProject["projectIcon"]) => (
+    <RegistryContext value={registry}>
+      <ProjectFavicon project={{ ...project, projectIcon }} />
+    </RegistryContext>
+  );
+  try {
+    await using screen = await render(view(null));
+    expect(screen.container.querySelector(".lucide-folder")).not.toBeNull();
+    expect(screen.container.textContent).toBe("");
+    await screen.rerender(view({ kind: "monogram", text: "PR", color: "blue" }));
+    expect(screen.container.querySelector(".lucide-folder")).toBeNull();
+    expect(screen.container.textContent).toBe("PR");
+  } finally {
+    registry.dispose();
+  }
+});

@@ -12,6 +12,7 @@ import { useUiStateStore } from "../../uiStateStore";
 import { resolveSidebarFolderDot, resolveThreadLastVisitedAt } from "../Sidebar.logic";
 import { ProjectFavicon } from "../ProjectFavicon";
 import { Button } from "../ui/button";
+import { useSidebarAgentStateSummary } from "./SidebarProjectSections";
 import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 const FOLDER_DOT_CLASS_NAME = {
@@ -44,6 +45,8 @@ export const SidebarProjectFolderHeader = memo(function SidebarProjectFolderHead
   parent?: string | undefined;
   depth?: number | undefined;
   hiddenThreads: readonly EnvironmentThreadShell[];
+  // A closed folder's child agents; they count toward its dot and summary.
+  hiddenAgents: readonly EnvironmentThreadShell[];
   onToggle: (group: SidebarProjectSnapshot) => void;
   onNewThread: (group: SidebarProjectSnapshot) => void;
   onContextMenu: (
@@ -54,12 +57,15 @@ export const SidebarProjectFolderHeader = memo(function SidebarProjectFolderHead
 }) {
   const gt = useGT();
   const m = useMessages();
-  const { group, collapsed, hiddenThreads } = props;
+  const { group, collapsed, hiddenThreads, hiddenAgents } = props;
+  const hiddenWork =
+    hiddenAgents.length === 0 ? hiddenThreads : [...hiddenThreads, ...hiddenAgents];
+  const summary = useSidebarAgentStateSummary(collapsed ? hiddenWork : [], true);
   const rowId = sidebarFolderRowId(group.projectKey);
   const localLastVisitedAtById = useUiStateStore((state) => state.threadLastVisitedAtById);
   const dot = collapsed
     ? resolveSidebarFolderDot(
-        hiddenThreads.map((thread) => ({
+        hiddenWork.map((thread) => ({
           ...thread,
           lastVisitedAt: resolveThreadLastVisitedAt(
             thread.lastVisitedAt,
@@ -107,9 +113,9 @@ export const SidebarProjectFolderHeader = memo(function SidebarProjectFolderHead
             <span className="sr-only">{m(FOLDER_DOT_LABEL[dot])}</span>
           </span>
         ) : null}
-        {collapsed && hiddenThreads.length > 0 ? (
-          <span className="shrink-0 text-xs tabular-nums text-sidebar-muted-foreground group-hover/project-folder:invisible group-has-[[data-sidebar-action-for]:focus]/project-folder:invisible pointer-coarse:invisible">
-            {hiddenThreads.length}
+        {collapsed && (summary !== "" || hiddenThreads.length > 0) ? (
+          <span className="min-w-0 shrink truncate text-xs tabular-nums text-sidebar-muted-foreground group-hover/project-folder:invisible group-has-[[data-sidebar-action-for]:focus]/project-folder:invisible pointer-coarse:invisible">
+            {summary !== "" ? summary : hiddenThreads.length}
           </span>
         ) : null}
         <ChevronDownIcon

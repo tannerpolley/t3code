@@ -557,6 +557,10 @@ type SidebarThreadRowProps = {
   childCount: number;
   familyExpanded: boolean;
   onToggleFamily: (threadKey: string, expanded: boolean) => void;
+  // Child agents listed in role sections instead of under this row.
+  agentCount: number;
+  // Set in a role section, which already names the role.
+  titleIsThreadTitle: boolean;
   variantAction: SidebarSweepAction;
   settlementSupported: boolean;
   snoozeSupported: boolean;
@@ -702,7 +706,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   };
   const role = thread.delegatedRole;
   const rowTitle =
-    role === undefined || role === "general" ? thread.title : messages(sidebarRoleLabels[role]);
+    props.titleIsThreadTitle || role === undefined || role === "general"
+      ? thread.title
+      : messages(sidebarRoleLabels[role]);
   const isRegeneratingTitle = thread.titleRegeneration != null;
   const localLastVisitedAt = useUiStateStore((state) => state.threadLastVisitedAtById[threadKey]);
   const lastVisitedAt = resolveThreadLastVisitedAt(thread.lastVisitedAt, localLastVisitedAt);
@@ -767,6 +773,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     isWoke,
     isActive: props.isActive,
     isSelected,
+    isSubagent: thread.lineage.relationshipToParent === "subagent",
   });
   const topStatus =
     status === "preparing" || status === "working"
@@ -1026,9 +1033,6 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
           : shouldRecede
             ? "text-sidebar-muted-foreground/75 hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
             : "bg-transparent text-sidebar-foreground hover:bg-sidebar-row-hover",
-    shouldRecede &&
-      (status === "preparing" || status === "working") &&
-      "opacity-70 transition-opacity hover:opacity-100 focus-within:opacity-100 motion-reduce:transition-none",
     isFileDragOver && "ring-1 ring-inset ring-primary/70",
     isFileDragOver && !props.isActive && !isSelected && "bg-sidebar-row-hover",
     props.sortable?.isDragging &&
@@ -1223,7 +1227,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
 
   const inFolder = variant === "folder";
   const familyIndent = Math.min(props.familyDepth, 4) * 12;
-  const folderIndent = inFolder ? 36 + Math.min(props.folderDepth ?? 0, 3) * 10 : 10;
+  const folderIndent = inFolder ? 16 + Math.min(props.folderDepth ?? 0, 3) * 10 : 10;
   const driverKind =
     providerEntry?.driverKind ?? (isProviderDriverKind(modelInstanceId) ? modelInstanceId : null);
   const startedAt =
@@ -1394,6 +1398,13 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
           {draftIndicator}
           {title}
           {pinIndicator}
+          {props.agentCount > 0 ? (
+            <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
+              {gt("{count, plural, one {{count} agent} other {{count} agents}}", {
+                count: props.agentCount,
+              })}
+            </span>
+          ) : null}
         </span>
         {isRegeneratingTitle ? (
           <span role="status" className="sr-only">

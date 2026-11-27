@@ -303,7 +303,7 @@ export function ThreadDetailsPanel(props: ThreadDetailsPanelProps) {
                         size="xs"
                         variant="ghost"
                         onClick={() =>
-                          useRightPanelStore.getState().openLinkedItems(activeThreadRef, true)
+                          useRightPanelStore.getState().open(activeThreadRef, "issues")
                         }
                       >
                         <IssueGlyph.issue aria-hidden className={THREAD_DETAILS_PANEL_ICON_CLASS} />

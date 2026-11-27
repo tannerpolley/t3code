@@ -41,30 +41,29 @@ async function reloadRightPanelStore() {
 }
 
 describe("rightPanelStore", () => {
-  it("keeps the repository board inside the thread's existing Linked items tab", async () => {
+  it("opens the repository issue board as its own tab beside Linked items", async () => {
     const store = useRightPanelStore.getState();
     store.open(refA, "pull-requests");
-    store.openLinkedItems(refA, true);
-    store.open(refB, "pull-requests");
+    store.open(refA, "issues");
+    store.open(refA, "issues");
 
     const tabs = (ref: typeof refA) =>
       selectThreadRightPanelState(useRightPanelStore.getState().byThreadKey, ref).surfaces;
     expect(tabs(refA)).toEqual([
-      { id: "pull-requests", kind: "pull-requests", showRepoBoard: true },
+      { id: "pull-requests", kind: "pull-requests" },
+      { id: "issues", kind: "issues" },
     ]);
-    expect(tabs(refB)).toEqual([{ id: "pull-requests", kind: "pull-requests" }]);
 
     await reloadRightPanelStore();
-    store.closeSurface(refA, "pull-requests");
+    expect(tabs(refA).map((surface) => surface.id)).toEqual(["pull-requests", "issues"]);
+    store.closeSurface(refA, "issues");
     await reopenClosedView(useClosedViewStore.getState().entries[0]!, {
       workspaceAvailable: true,
       openPreview: () => {
-        throw new Error("Linked items must not create a browser session");
+        throw new Error("Issues must not create a browser session");
       },
     });
-    expect(tabs(refA)[0]).toMatchObject({ showRepoBoard: true });
-    store.openLinkedItems(refA, false);
-    expect(tabs(refA)).toEqual([{ id: "pull-requests", kind: "pull-requests" }]);
+    expect(tabs(refA).map((surface) => surface.id)).toEqual(["pull-requests", "issues"]);
   });
 
   it("opens a hosted side chat's panel actions in its parent's panel until unhosted", () => {

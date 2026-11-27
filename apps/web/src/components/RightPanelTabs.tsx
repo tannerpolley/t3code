@@ -41,6 +41,7 @@ import { restrictToFirstScrollableAncestor, restrictToHorizontalAxis } from "@dn
 import { horizontalListSortingStrategy, SortableContext, useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import {
+  Bookmark,
   Bot,
   CircleDotIcon,
   Smartphone,
@@ -72,7 +73,7 @@ import type { DesktopPreviewOverlay } from "~/previewStateStore";
 import { linkedThreadTitle } from "~/linkedThreadSurface";
 import type { RightPanelSurface } from "~/rightPanelStore";
 import { cn } from "~/lib/utils";
-import { issueStatePresentation } from "~/components/issue/issuePresentation";
+import { IssueGlyph, issueStatePresentation } from "~/components/issue/issuePresentation";
 import { issueEnvironment } from "~/state/issues";
 import { resolveShortcutCommand, type ShortcutMatchContext } from "~/keybindings";
 import { readLocalApi } from "~/localApi";
@@ -155,8 +156,11 @@ export interface RightPanelTabsProps {
   onAddTerminal: () => void;
   onAddDiff: () => void;
   onAddFiles: () => void;
+  onAddArtifacts?: (() => void) | undefined;
   onAddPullRequest: () => void;
   onAddPullRequests: () => void;
+  /** Absent where the project has no repository issue board. */
+  onAddIssues?: (() => void) | undefined;
   onAddDevice: () => void;
   /** Absent where side chats are not offered. */
   onAddSideChat?: (() => void) | undefined;
@@ -336,8 +340,11 @@ function RightPanelEmptyState(props: {
   onAddTerminal: () => void;
   onAddDiff: () => void;
   onAddFiles: () => void;
+  onAddArtifacts?: (() => void) | undefined;
   onAddPullRequest: () => void;
   onAddPullRequests: () => void;
+  /** Absent where the project has no repository issue board. */
+  onAddIssues?: (() => void) | undefined;
   onAddDevice: () => void;
   /** Absent where side chats are not offered. */
   onAddSideChat?: (() => void) | undefined;
@@ -380,6 +387,18 @@ function RightPanelEmptyState(props: {
       disabledReason: messages(SURFACE_UNAVAILABLE_HINTS.files),
       onClick: props.onAddFiles,
     },
+    ...(props.onAddArtifacts
+      ? [
+          {
+            label: msg("Artifacts"),
+            icon: Bookmark,
+            shortcut: "A",
+            available: true,
+            disabledReason: messages(SURFACE_UNAVAILABLE_HINTS.files),
+            onClick: props.onAddArtifacts,
+          },
+        ]
+      : []),
     {
       label: msg("Diff"),
       icon: FileDiff,
@@ -404,6 +423,18 @@ function RightPanelEmptyState(props: {
       disabledReason: messages(SURFACE_UNAVAILABLE_HINTS.pullRequests),
       onClick: props.onAddPullRequests,
     },
+    ...(props.onAddIssues
+      ? [
+          {
+            label: msg("Issues"),
+            icon: IssueGlyph.issue,
+            shortcut: "I",
+            available: true,
+            disabledReason: "",
+            onClick: props.onAddIssues,
+          },
+        ]
+      : []),
     {
       label: msg("Device"),
       description: msg("Watch an iOS Simulator or Android Emulator."),
@@ -600,6 +631,8 @@ function surfaceTitle(
       return resolve(msg("Diff"));
     case "files":
       return resolve(msg("Files"));
+    case "artifacts":
+      return resolve(msg("Artifacts"));
     case "file":
       return surface.relativePath.slice(
         Math.max(surface.relativePath.lastIndexOf("/"), surface.relativePath.lastIndexOf("\\")) + 1,
@@ -613,6 +646,8 @@ function surfaceTitle(
       return `#${surface.number}`;
     case "pull-requests":
       return resolve(msg("Linked items"));
+    case "issues":
+      return resolve(msg("Issues"));
     case "issue":
       // A git host numbers its issues; a tracker with keys of its own, such as Linear, names them.
       return /^\d+$/.test(surface.key) ? `#${surface.key}` : surface.key;
@@ -693,6 +728,8 @@ function SurfaceIcon({
       return <FileDiff className="size-3 shrink-0" />;
     case "files":
       return <Files className="size-3 shrink-0" />;
+    case "artifacts":
+      return <Bookmark className="size-3 shrink-0" />;
     case "file":
       return (
         <PierreEntryIcon
@@ -714,6 +751,8 @@ function SurfaceIcon({
       );
     case "pull-requests":
       return <PullRequestGlyph.link className="size-3 shrink-0" />;
+    case "issues":
+      return <IssueGlyph.issue className="size-3 shrink-0" />;
     case "issue":
       return <IssueSurfaceIcon surface={surface} environmentId={environmentId} />;
     case "thread":
@@ -1181,6 +1220,18 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       disabledReason: messages(SURFACE_DISABLED_REASONS.files),
       onClick: props.onAddFiles,
     },
+    ...(props.onAddArtifacts
+      ? [
+          {
+            label: msg("Artifacts"),
+            icon: Bookmark,
+            shortcut: "A",
+            available: true,
+            disabledReason: messages(SURFACE_DISABLED_REASONS.files),
+            onClick: props.onAddArtifacts,
+          },
+        ]
+      : []),
     {
       label: msg("Diff"),
       icon: FileDiff,
@@ -1205,6 +1256,18 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       disabledReason: messages(SURFACE_DISABLED_REASONS.pullRequests),
       onClick: props.onAddPullRequests,
     },
+    ...(props.onAddIssues
+      ? [
+          {
+            label: msg("Issues"),
+            icon: IssueGlyph.issue,
+            shortcut: "I",
+            available: true,
+            disabledReason: "",
+            onClick: props.onAddIssues,
+          },
+        ]
+      : []),
     {
       label: msg("Device"),
       icon: Smartphone,
@@ -1684,8 +1747,10 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             onAddTerminal={props.onAddTerminal}
             onAddDiff={props.onAddDiff}
             onAddFiles={props.onAddFiles}
+            onAddArtifacts={props.onAddArtifacts}
             onAddPullRequest={props.onAddPullRequest}
             onAddPullRequests={props.onAddPullRequests}
+            onAddIssues={props.onAddIssues}
             onAddDevice={props.onAddDevice}
             onAddSideChat={props.onAddSideChat}
             browserAvailable={props.browserAvailable}

@@ -16,8 +16,10 @@ import {
 import { T, useGT, useMessages } from "gt-react";
 import { useState } from "react";
 
+import { scopeProjectRef } from "@t3tools/client-runtime/environment";
 import { useRightPanelStore } from "~/rightPanelStore";
-import { issueEnvironment, type repoIssueBoardBinding, useIssueList } from "~/state/issues";
+import { useProject, useServerConfigs } from "~/state/entities";
+import { issueEnvironment, repoIssueBoardBinding, useIssueList } from "~/state/issues";
 import { useAtomCommand } from "~/state/use-atom-command";
 import { PullRequestListGhost } from "../pullRequest/PullRequestGhosts";
 import { PullRequestsUnavailableState } from "../pullRequest/PullRequestsUnavailableState";
@@ -25,7 +27,41 @@ import { Button } from "../ui/button";
 import { IssueBoard } from "./IssueBoard";
 import { IssueRow, type IssueRowTarget } from "./IssueRow";
 
-export function RepoIssueBoard({
+export function RepoIssuesPanel({
+  threadRef,
+  projectId,
+}: {
+  threadRef: ScopedThreadRef;
+  projectId: ProjectId | null;
+}) {
+  const gt = useGT();
+  const config = useServerConfigs().get(threadRef.environmentId);
+  const project = useProject(
+    projectId === null ? null : scopeProjectRef(threadRef.environmentId, projectId),
+  );
+  const binding =
+    config?.environment.capabilities.issues === true
+      ? repoIssueBoardBinding(project?.repositoryIdentity)
+      : undefined;
+  if (binding === undefined || projectId === null) {
+    return (
+      <PullRequestsUnavailableState
+        title={gt("Issues unavailable")}
+        error={gt("This thread's project has no repository issue tracker.")}
+      />
+    );
+  }
+  return (
+    <RepoIssueBoard
+      key={JSON.stringify([threadRef.environmentId, projectId, binding.host, binding.scope])}
+      threadRef={threadRef}
+      projectId={projectId}
+      binding={binding}
+    />
+  );
+}
+
+function RepoIssueBoard({
   threadRef,
   projectId,
   binding,
@@ -84,7 +120,7 @@ export function RepoIssueBoard({
   const error = list.error ?? page?.moreFailure ?? trackerError;
 
   return (
-    <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-auto border-t py-2">
+    <div className="flex min-h-0 min-w-0 flex-1 flex-col overflow-auto py-2">
       {page === undefined && list.isPending ? <PullRequestListGhost rows={3} /> : null}
       {error !== null ? (
         <PullRequestsUnavailableState

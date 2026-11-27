@@ -4,13 +4,23 @@ import {
   type OrchestratorMcpDelegateTaskInput,
   type OrchestratorMcpInteractionMode,
   type OrchestratorMcpRuntimeMode,
+  type OrchestratorMcpTarget,
   type ProviderInteractionMode,
   type ProviderOptionDescriptor,
   type ProviderOptionSelection,
+  type RoleModel,
   type RuntimeMode,
 } from "@t3tools/contracts";
 import { ACP_SESSION_MODE_OPTION_ID } from "@t3tools/provider-acp/server/sessionConfig";
 import * as Effect from "effect/Effect";
+
+export function roleModelTarget(pick: RoleModel): OrchestratorMcpTarget {
+  return {
+    providerInstanceId: pick.instanceId,
+    model: pick.model,
+    options: pick.effort === undefined ? [] : [pick.effort],
+  };
+}
 
 /** How much a runtime mode allows, narrowest first. */
 export function runtimeModeRank(mode: RuntimeMode): number {

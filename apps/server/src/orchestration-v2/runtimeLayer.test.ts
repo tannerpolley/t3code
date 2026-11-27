@@ -107,6 +107,7 @@ import * as ResourceCleanupService from "./ResourceCleanupService.ts";
 import * as ThreadLaunchService from "./ThreadLaunchService.ts";
 import * as ThreadCommandExecutor from "./ThreadCommandExecutor.ts";
 import * as DelegatedTaskQuestionReactor from "./DelegatedTaskQuestionReactor.ts";
+import * as DelegatedRoleRestore from "./DelegatedRoleRestore.ts";
 import type * as ProviderAdapter from "@t3tools/provider-core/server/ProviderAdapter";
 
 const layerPlatformTest = Layer.mergeAll(
@@ -3643,6 +3644,149 @@ const writeHtmlRenderRun = Effect.fn("test.writeHtmlRenderRun")(function* (input
 });
 
 it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
+  it.effect("restores a missing archived child's role through the event log", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const sink = yield* EventSink.EventSinkV2;
+      const fileSystem = yield* FileSystem.FileSystem;
+      const replay = yield* ProjectionReplay.ProjectionReplay;
+      const parentId = ThreadId.make("restore-role-parent");
+      const childId = ThreadId.make("restore-role-child");
+      const existingId = ThreadId.make("restore-role-existing");
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("restore-role-parent-create"),
+        createdBy: "user",
+        creationSource: "web",
+        threadId: parentId,
+        projectId: ProjectId.make("restore-role-project"),
+        title: "Parent title",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+      });
+      const { thread: parent } = yield* orchestrator.getThreadProjection(parentId);
+      yield* sink.write({
+        events: [childId, existingId].map((threadId) => ({
+          type: "thread.created" as const,
+          id: EventId.make(`create:${threadId}`),
+          threadId,
+          occurredAt: parent.createdAt,
+          payload: {
+            ...parent,
+            id: threadId,
+            title: "Child title",
+            archivedAt: parent.createdAt,
+            lineage: {
+              rootThreadId: parentId,
+              parentThreadId: parentId,
+              relationshipToParent: "subagent" as const,
+            },
+            ...(threadId === existingId ? { delegatedRole: "implementation" as const } : {}),
+          },
+        })),
+      });
+      const file = yield* fileSystem.makeTempFileScoped();
+      yield* fileSystem.writeFileString(
+        file,
+        JSON.stringify({
+          [childId]: "review",
+          [existingId]: "review",
+          [parentId]: "test",
+          absent: "writer",
+        }),
+      );
+      assert.deepEqual(yield* DelegatedRoleRestore.restoreFromFile(file), {
+        restored: 1,
+        alreadyPresent: 1,
+        missing: 1,
+        notDelegated: 1,
+        failed: 0,
+      });
+      assert.deepEqual(yield* DelegatedRoleRestore.restoreFromFile(file), {
+        restored: 0,
+        alreadyPresent: 2,
+        missing: 1,
+        notDelegated: 1,
+        failed: 0,
+      });
+      assert.isTrue((yield* replay.rebuild).valid);
+      const child = yield* orchestrator.getThreadShell(childId);
+      assert.equal(child?.delegatedRole, "review");
+      assert.equal(child?.title, "Child title");
+      assert.deepEqual(child?.archivedAt, parent.createdAt);
+      assert.equal(
+        (yield* orchestrator.getThreadShell(existingId))?.delegatedRole,
+        "implementation",
+      );
+      assert.isUndefined((yield* orchestrator.getThreadShell(parentId))?.delegatedRole);
+    }).pipe(Effect.provide(NodeServices.layer)),
+  );
+
+  it.effect("archives a settled child once and keeps it visible after unarchive and replay", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const sink = yield* EventSink.EventSinkV2;
+      const replay = yield* ProjectionReplay.ProjectionReplay;
+      const parentId = ThreadId.make("auto-archive-parent");
+      const childId = ThreadId.make("auto-archive-child");
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("auto-archive-parent-create"),
+        createdBy: "user",
+        creationSource: "web",
+        threadId: parentId,
+        projectId: ProjectId.make("auto-archive-project"),
+        title: "Parent title",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+      });
+      const { thread: parent } = yield* orchestrator.getThreadProjection(parentId);
+      yield* sink.write({
+        events: [
+          {
+            type: "thread.created",
+            id: EventId.make("auto-archive-child-create"),
+            threadId: childId,
+            occurredAt: parent.createdAt,
+            payload: {
+              ...parent,
+              id: childId,
+              lineage: {
+                rootThreadId: parentId,
+                parentThreadId: parentId,
+                relationshipToParent: "subagent",
+              },
+              settledOverride: "settled",
+              settledAt: parent.createdAt,
+            },
+          },
+        ],
+      });
+      yield* orchestrator.autoArchiveSettledChild(
+        childId,
+        CommandId.make("auto-archive-child-first"),
+      );
+      assert.isNotNull((yield* orchestrator.getThreadProjection(childId)).thread.archivedAt);
+      yield* orchestrator.dispatch({
+        type: "thread.unarchive",
+        commandId: CommandId.make("auto-archive-child-unarchive"),
+        threadId: childId,
+      });
+      assert.isTrue((yield* replay.rebuild).valid);
+      yield* orchestrator.autoArchiveSettledChild(
+        childId,
+        CommandId.make("auto-archive-child-next-sweep"),
+      );
+      assert.isNull((yield* orchestrator.getThreadProjection(childId)).thread.archivedAt);
+    }),
+  );
+
   it.effect("applies lifecycle commands idempotently and emits archive/removal shell deltas", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;

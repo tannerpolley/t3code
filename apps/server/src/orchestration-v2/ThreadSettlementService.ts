@@ -361,7 +361,27 @@ export const make = Effect.gen(function* () {
   const projectScripts = yield* ProjectSetupScriptRunner.ProjectSetupScriptRunner;
   // Repeated thread.settled retains settledAt; run the action only once per settlement.
   const settleActionRunAt = new Map<ThreadId, number>();
+  const settlingChildren = new Set<ThreadId>();
   const noPullRequestRechecks = makeNoPullRequestRechecks();
+
+  const archiveSettledChild = Effect.fn("ThreadSettlementServiceV2.archiveSettledChild")(
+    function* (threadId: ThreadId) {
+      if (settlingChildren.has(threadId)) return;
+      if (yield* terminals.hasActiveSubprocess({ threadId })) return;
+      const uuid = yield* random.uuidV4();
+      if (settlingChildren.has(threadId)) return;
+      yield* orchestrator.autoArchiveSettledChild(
+        threadId,
+        CommandId.make(`server:auto-archive:${threadId}:${uuid}`),
+      );
+    },
+    (effect, threadId) =>
+      effect.pipe(
+        Effect.catch((cause) =>
+          Effect.logWarning("automatic child archive failed", { threadId, cause }),
+        ),
+      ),
+  );
 
   const sweep = Effect.fn("ThreadSettlementServiceV2.sweep")(function* (
     mergedPullRequest: PullRequestService.PullRequestMergeEvent | null,
@@ -371,8 +391,19 @@ export const make = Effect.gen(function* () {
     if (mergedPullRequest !== null) yield* pauseQuietReads();
     const settings = yield* settingsService.getSettings;
     const automaticSettlementEnabled = autoSettlementConfigured(settings);
-    const threads = yield* projections.getSettlementCandidates(threadId);
+    const threads = yield* projections.getSettlementCandidates(threadId, {
+      includeSettledChildren: true,
+    });
     if (threads.length === 0) return;
+    yield* Effect.forEach(
+      threads.filter(
+        (thread) =>
+          thread.settledOverride === "settled" &&
+          thread.lineage.relationshipToParent === "subagent",
+      ),
+      (thread) => archiveSettledChild(thread.id),
+      { concurrency: 8, discard: true },
+    );
     const projectShells = yield* projectStore.listShells();
     const nowMs = DateTime.toEpochMillis(yield* DateTime.now);
     const projects = new Map(projectShells.map((project) => [project.id, project]));
@@ -839,9 +870,7 @@ export const make = Effect.gen(function* () {
         observeCompletion: {},
       });
       settleActionRunAt.set(threadId, settledAtMs);
-      if (run.status === "started" && run.completion) {
-        yield* run.completion.pipe(Effect.forkDetach);
-      }
+      return run.status === "started" ? run.completion : undefined;
     },
     (effect, threadId) =>
       effect.pipe(
@@ -856,10 +885,32 @@ export const make = Effect.gen(function* () {
       ),
   );
 
+  const finishSettlement = Effect.fn("ThreadSettlementServiceV2.finishSettlement")(function* (
+    threadId: ThreadId,
+    child: boolean,
+  ) {
+    if (settlingChildren.has(threadId)) return;
+    if (child) settlingChildren.add(threadId);
+    const completion = yield* cleanUpSettledThread(threadId);
+    if (completion === undefined) {
+      settlingChildren.delete(threadId);
+    } else {
+      yield* completion.pipe(
+        Effect.ensuring(Effect.sync(() => settlingChildren.delete(threadId))),
+        Effect.tap(() => (child ? enqueueThread(threadId) : Effect.void)),
+        Effect.forkDetach,
+      );
+    }
+    yield* enqueueFullSweep();
+  });
+
   const processEvent = (event: OrchestrationV2DomainEvent) => {
     switch (event.type) {
       case "thread.settled":
-        return cleanUpSettledThread(event.threadId).pipe(Effect.andThen(enqueueFullSweep()));
+        return finishSettlement(
+          event.threadId,
+          event.payload.lineage.relationshipToParent === "subagent",
+        );
       case "thread.archived":
       case "thread.deleted":
         return enqueueFullSweep();

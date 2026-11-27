@@ -24,7 +24,7 @@ import {
 } from "@t3tools/contracts";
 import { isMacPlatform } from "@t3tools/shared/keybindings";
 import { describe, expect, it, vi } from "vite-plus/test";
-import { page, userEvent } from "vite-plus/test/browser";
+import { userEvent } from "vite-plus/test/browser";
 
 import { act, fakeTimers, render } from "../../test/render";
 import { openCommandPalette } from "../commandPaletteBus";
@@ -46,7 +46,6 @@ import type { Project } from "../types";
 import Sidebar from "./Sidebar";
 import { THREAD_JUMP_HINT_SHOW_DELAY_MS } from "./Sidebar.logic";
 import { SortableThreadRow } from "./sidebar/SidebarThreadRow";
-import { sidebarFamilyExpansion } from "./sidebar/sidebarFamilies";
 import { Sidebar as SidebarSurface, SidebarProvider } from "./ui/sidebar";
 
 vi.mock(import("../state/olderSettledShelf"), async (original) => {
@@ -344,7 +343,7 @@ it("keeps a placed project row in keyboard order after sending, settling and rem
   await checkPlacement(reloaded);
 });
 
-it("orders sidebar row details and keeps a running family collapsed across a remount", async () => {
+it("lists child agents in role sections under their project and keeps a closed section closed", async () => {
   using stack = new DisposableStack();
   const style = document.createElement("style");
   style.textContent = appCss;
@@ -357,8 +356,9 @@ it("orders sidebar row details and keeps a running family collapsed across a rem
     boringSidebarEnabled: true,
     sidebarAgentTextSize: 18,
   });
-  const previousExpansion = sidebarFamilyExpansion.getState();
-  stack.defer(() => sidebarFamilyExpansion.setState(previousExpansion, true));
+  const ROLE_SECTIONS_KEY = "t3code:sidebar:role-sections-collapsed";
+  localStorage.removeItem(ROLE_SECTIONS_KEY);
+  stack.defer(() => localStorage.removeItem(ROLE_SECTIONS_KEY));
 
   const { environmentId, id: projectId, ...rest } = project("T3 Code");
   const parent = threadShell(projectId, 1);
@@ -509,34 +509,58 @@ it("orders sidebar row details and keeps a running family collapsed across a rem
   vi.mocked(useQuietThreadShells).mockReturnValue([child, reviewer, root, owner, archived]);
   await using screen = await render(tree(), { container });
   const parentRow = screen.getByRole("button", { name: /^Compact sidebar threads,/ });
-  const implementor = screen.getByRole("button", { name: /^Implementor, Working,/ });
-  const doneReviewer = screen.getByRole("button", { name: /^Reviewer, Done,/ });
+  const implementor = screen.getByRole("button", {
+    name: /^Implement nested sidebar rows, Working,/,
+  });
+  const doneReviewer = screen.getByRole("button", { name: /^Review compact sidebar, Done,/ });
+  const implementors = screen.getByRole("button", { name: /^Implementors/ });
+  const reviewers = screen.getByRole("button", { name: /^Reviewers/ });
   await expect.element(screen.getByText("In progress", { exact: true })).toBeVisible();
   await expect.element(screen.getByText("Release checklist", { exact: true })).toBeVisible();
   await expect.element(implementor).toBeVisible();
   await expect.element(doneReviewer).toBeVisible();
-  await expect.element(screen.getByText("Designer", { exact: true })).not.toBeInTheDocument();
+  await expect.element(implementors).toHaveTextContent("Implementors11 working");
+  await expect.element(reviewers).toHaveTextContent("Reviewers1");
+  // Archived children and empty roles stay out.
+  await expect.element(screen.getByText("Designers", { exact: true })).not.toBeInTheDocument();
+  // Children sit in their role section only, above the project's own threads.
+  const item = (locator: { element: () => Element }) => locator.element().closest("li");
+  expect(item(implementors)?.nextElementSibling).toBe(item(implementor));
+  expect(item(implementor)?.nextElementSibling).toBe(item(reviewers));
+  expect(item(reviewers)?.nextElementSibling).toBe(item(doneReviewer));
+  expect(
+    item(doneReviewer)!.compareDocumentPosition(item(parentRow)!) &
+      Node.DOCUMENT_POSITION_FOLLOWING,
+  ).toBeTruthy();
   expect(implementor.element().getAttribute("data-sidebar-parent")).toBe(
-    parentRow.element().getAttribute("data-sidebar-row"),
+    implementors.element().getAttribute("data-sidebar-row"),
   );
-  expect(implementor.element().closest("li")?.nextElementSibling).toBe(
-    doneReviewer.element().closest("li"),
-  );
-  const count = parentRow.getByRole("button", { name: "2 child agents" });
-  await expect.element(count).toHaveAttribute("aria-expanded", "true");
-  await count.click();
+  await expect.element(parentRow.getByText("2 agents", { exact: true })).toBeVisible();
+  await expect
+    .element(parentRow.getByRole("button", { name: "2 child agents" }))
+    .not.toBeInTheDocument();
+
+  await implementors.click();
+  await expect.element(implementors).toHaveAttribute("aria-expanded", "false");
   await expect.element(implementor).not.toBeInTheDocument();
   await screen.rerender(tree("remount"));
-  await expect.element(count).toHaveAttribute("aria-expanded", "false");
+  await expect.element(implementors).toHaveAttribute("aria-expanded", "false");
   await expect.element(implementor).not.toBeInTheDocument();
   {
     using _timers = fakeTimers({ now: new Date(time) });
-    await act(() => (count.element() as HTMLButtonElement).click());
+    await act(() => (implementors.element() as HTMLButtonElement).click());
     expect(implementor.getByText("0s", { exact: true }).element()).toBeVisible();
     vi.advanceTimersByTime(1000);
     expect(implementor.getByText("1s", { exact: true }).element()).toBeVisible();
   }
-  const titleLabel = implementor.getByText("Implementor", { exact: true }).element();
+  const contentLeft = (element: Element) =>
+    element.getBoundingClientRect().left +
+    Number.parseFloat(getComputedStyle(element).paddingInlineStart);
+  const projectTitle = screen.getByText("T3 Code", { exact: true }).element();
+  // Rows start left of the project title, and a child agent sits deeper than its parent.
+  expect(contentLeft(parentRow.element())).toBeLessThan(projectTitle.getBoundingClientRect().left);
+  expect(contentLeft(implementor.element())).toBeGreaterThan(contentLeft(parentRow.element()));
+  const titleLabel = implementor.getByText(child.title, { exact: true }).element();
   const row = implementor.element();
   const spinner = row.querySelector(".lucide-loader-circle")!;
   const model = implementor.getByText("Sol", { exact: true }).element();
@@ -553,26 +577,27 @@ it("orders sidebar row details and keeps a running family collapsed across a rem
   }
   expect(getComputedStyle(spinner).animationTimingFunction).toBe("steps(8)");
   await vi.waitFor(() => expect(getComputedStyle(spinner).animationPlayState).toBe("running"));
-  const item = row.closest("li")!;
-  item.style.marginBlockStart = "200vh";
+  const rowItem = row.closest("li")!;
+  rowItem.style.marginBlockStart = "200vh";
   await vi.waitFor(() => expect(getComputedStyle(spinner).animationPlayState).toBe("paused"));
-  item.style.removeProperty("margin-block-start");
+  rowItem.style.removeProperty("margin-block-start");
   await expect.element(implementor.getByText("718", { exact: true })).not.toBeInTheDocument();
   expect(doneReviewer.element().querySelector(".bg-success")).toBeVisible();
+
+  // A closed section still shows the open thread.
+  await reviewers.click();
+  await expect.element(doneReviewer).not.toBeInTheDocument();
   vi.mocked(useThreadRouteTarget).mockReturnValue({
     kind: "server",
     threadRef: scopeThreadRef(environmentId, reviewer.id),
   });
   await screen.rerender(tree("remount"));
-  const openedReviewer = screen.getByRole("button", { name: /^Reviewer,/ });
+  const openedReviewer = screen.getByRole("button", { name: /^Review compact sidebar,/ });
   await expect.element(openedReviewer).toHaveAttribute("aria-current", "page");
   expect(openedReviewer.element().querySelector(".bg-success")).toBeNull();
   vi.mocked(useThreadRouteTarget).mockReturnValue({ kind: "server", threadRef: rootRef });
   await screen.rerender(tree("remount"));
-  await expect.element(screen.getByText(child.title, { exact: true })).not.toBeInTheDocument();
-  await implementor.getByText("Implementor", { exact: true }).hover();
-  await expect.element(page.getByText(child.title, { exact: true })).toBeVisible();
-  await userEvent.unhover(implementor);
+  await expect.element(openedReviewer).not.toBeInTheDocument();
 
   const finished = { ...child, runtime: null, latestRun: run };
   vi.mocked(useQuietThreadShells).mockReturnValue([
@@ -583,19 +608,39 @@ it("orders sidebar row details and keeps a running family collapsed across a rem
     archived,
   ]);
   await screen.rerender(tree("remount"));
-  await expect.element(screen.getByRole("button", { name: /^Implementor, Input,/ })).toBeVisible();
+  await expect
+    .element(screen.getByRole("button", { name: /^Implement nested sidebar rows, Input,/ }))
+    .toBeVisible();
+  await expect.element(implementors).toHaveTextContent("Implementors11 waiting on you");
 
-  vi.mocked(useQuietThreadShells).mockReturnValue([finished, reviewer, root, owner, archived]);
+  // A closed project sums up its threads and agents on one line.
+  _layout.mockReturnValue({
+    byEnvironment: new Map([
+      [
+        environmentId,
+        {
+          environmentId,
+          writable: true,
+          record: {
+            revision: 2,
+            layout: {
+              ...EMPTY_SIDEBAR_LAYOUT,
+              projectExpandedById: { [projectId]: false },
+              sidebarProjectSections: [
+                { id: "work", name: "In progress", projectKeys: [projectId], collapsed: false },
+              ],
+            },
+          },
+        },
+      ],
+    ]),
+    change: vi.fn(),
+  });
   await screen.rerender(tree("remount"));
-  await expect.element(count).toHaveAttribute("aria-expanded", "true");
-  await count.click();
-  await expect.element(count).toHaveAttribute("aria-expanded", "false");
-  await expect.element(doneReviewer).not.toBeInTheDocument();
-  await count.click();
-  await expect.element(count).toHaveAttribute("aria-expanded", "true");
-  await expect.element(doneReviewer).toBeVisible();
-  await count.click();
-  await expect.element(doneReviewer).not.toBeInTheDocument();
+  await expect.element(implementors).not.toBeInTheDocument();
+  const folder = screen.getByRole("button", { name: /^T3 Code/ });
+  await expect.element(folder).toHaveAttribute("aria-expanded", "false");
+  await expect.element(folder.getByText("1 waiting", { exact: true })).toBeVisible();
 });
 
 // regression: #38623 unsent drafts are listed above threads but mod+1..9 skipped them

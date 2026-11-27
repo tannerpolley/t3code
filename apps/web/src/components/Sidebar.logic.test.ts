@@ -38,6 +38,8 @@ import {
   resolveSidebarDropVerb,
   groupSidebarThreadsByProject,
   resolveSidebarFolderDot,
+  formatSidebarAgentStates,
+  resolveSidebarAgentState,
   sidebarFolderExpansionKeys,
   withoutRemovedCheckout,
 } from "./Sidebar.logic";
@@ -287,6 +289,7 @@ describe("resolveSidebarThreadStatus", () => {
         isWoke: false,
         isActive: false,
         isSelected: false,
+        isSubagent: false,
       }),
     ).toBe(false);
   });
@@ -1028,21 +1031,21 @@ describe("unseen completion with background work", () => {
       roster: "dev server",
       task: { kind: "command" },
       status: "ready",
-      receded: false,
+      working: false,
       pill: "Completed",
     },
     {
       roster: "dev server watchdog",
       task: { kind: "monitor" },
       status: "ready",
-      receded: false,
+      working: false,
       pill: "Completed",
     },
     {
       roster: "awaited command",
       task: { kind: "command", awaited: true },
       status: "waiting",
-      receded: true,
+      working: true,
       pill: "Waiting",
     },
   ] as const)("presents a completed thread with a $roster roster", (expected) => {
@@ -1066,9 +1069,10 @@ describe("unseen completion with background work", () => {
         isWoke: false,
         isActive: false,
         isSelected: false,
+        isSubagent: false,
       }),
-    ).toBe(expected.receded);
-    expect(isSidebarThreadWorking(thread)).toBe(expected.receded);
+    ).toBe(false);
+    expect(isSidebarThreadWorking(thread)).toBe(expected.working);
     expect(resolveThreadStatusPill({ thread })).toMatchObject({ label: expected.pill });
   });
 });
@@ -1765,6 +1769,48 @@ describe("resolveSidebarFolderDot", () => {
   });
 });
 
+describe("resolveSidebarAgentState", () => {
+  it("counts a turn blocked on a child as working and an idle session as nothing", () => {
+    const runtime = {
+      status: "running" as const,
+      activeRunId: null,
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      providerName: "Codex",
+      lastError: null,
+      updatedAt: "2026-03-09T10:00:00.000Z",
+    };
+    const thread = {
+      hasActionableProposedPlan: false,
+      hasPendingApprovals: false,
+      hasPendingUserInput: false,
+      interactionMode: "default" as const,
+      latestRun: null,
+      lastVisitedAt: null,
+      runtime,
+    };
+    expect(resolveSidebarAgentState({ ...thread, blockedOnThreadWait: true })).toBe("working");
+    expect(resolveSidebarAgentState({ ...thread, runtime: { ...runtime, status: "idle" } })).toBe(
+      null,
+    );
+    expect(resolveSidebarAgentState({ ...thread, hasPendingApprovals: true })).toBe("attention");
+    expect(resolveSidebarAgentState({ ...thread, runtime: { ...runtime, status: "failed" } })).toBe(
+      "failed",
+    );
+  });
+});
+
+describe("formatSidebarAgentStates", () => {
+  it("joins the non-zero states in a fixed order", () => {
+    expect(formatSidebarAgentStates({ working: 2, attention: 1, failed: 1 })).toBe(
+      "2 working · 1 waiting on you · 1 failed",
+    );
+    expect(formatSidebarAgentStates({ working: 3, attention: 1, failed: 0 }, undefined, true)).toBe(
+      "3 working · 1 waiting",
+    );
+    expect(formatSidebarAgentStates({ working: 0, attention: 0, failed: 0 })).toBe("");
+  });
+});
+
 describe("shouldCreateNewThreadInCurrentProject", () => {
   it("opens the picker when several projects are open, or only archived ones exist", () => {
     expect(shouldCreateNewThreadInCurrentProject(false, 2, 3)).toBe(false);
@@ -1854,5 +1900,34 @@ describe("filterSidebarProjectScopeItems", () => {
 
     expect(filter("")).toEqual([ADD_PROJECT_SCOPE_ITEM_VALUE, "all", "p1"]);
     expect(filter("project")).toEqual(["p1"]);
+  });
+});
+
+describe("shouldRecedeSidebarThread", () => {
+  const base = {
+    isUnread: false,
+    isWoke: false,
+    isActive: false,
+    isSelected: false,
+    isSubagent: false,
+  };
+
+  it("keeps working rows bright", () => {
+    for (const status of ["preparing", "working", "waiting"] as const) {
+      expect(shouldRecedeSidebarThread({ ...base, status })).toBe(false);
+      expect(shouldRecedeSidebarThread({ ...base, status, isSubagent: true })).toBe(false);
+    }
+  });
+
+  it("recedes a finished subagent even unread, and a finished main thread only once seen", () => {
+    expect(
+      shouldRecedeSidebarThread({ ...base, status: "ready", isSubagent: true, isUnread: true }),
+    ).toBe(true);
+    expect(shouldRecedeSidebarThread({ ...base, status: "ready", isUnread: true })).toBe(false);
+    expect(shouldRecedeSidebarThread({ ...base, status: "ready" })).toBe(true);
+  });
+
+  it("keeps a failed subagent bright", () => {
+    expect(shouldRecedeSidebarThread({ ...base, status: "failed", isSubagent: true })).toBe(false);
   });
 });

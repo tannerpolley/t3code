@@ -35,6 +35,7 @@ import {
   ProviderOptionSelections,
 } from "./model.ts";
 import { ModelSelection } from "./modelSelection.ts";
+import { DelegationModelRole, RoleModel, RoleModels } from "./delegatedRole.ts";
 import { ProjectScript, type ProjectMutation } from "./project.ts";
 import { DEFAULT_RUNTIME_MODE, RuntimeMode } from "./providerPolicy.ts";
 import { BrowserProfile, BrowserProfileId, DEFAULT_BROWSER_PROFILE_ID } from "./browserProfile.ts";
@@ -1428,6 +1429,7 @@ export const CodexDefaultSpeed = Schema.Literals(["normal", "fast", "ultrafast"]
 export type CodexDefaultSpeed = typeof CodexDefaultSpeed.Type;
 
 export const ServerSettings = Schema.Struct({
+  roleModels: RoleModels.pipe(Schema.withDecodingDefault(Effect.succeed({}))),
   codexDefaultSpeed: Schema.NullOr(CodexDefaultSpeed).pipe(
     Schema.withDecodingDefault(Effect.succeed(null)),
   ),
@@ -1888,6 +1890,9 @@ const ModelSelectionPatch = Schema.Struct({
 });
 
 export const ServerSettingsPatch = Schema.Struct({
+  roleModels: Schema.optionalKey(
+    Schema.Record(DelegationModelRole, Schema.optionalKey(Schema.NullOr(RoleModel))),
+  ),
   codexDefaultSpeed: Schema.optionalKey(Schema.NullOr(CodexDefaultSpeed)),
   setModelFavorites: Schema.optionalKey(
     Schema.Array(Schema.Struct({ ...ModelFavorite.fields, favorite: Schema.Boolean })),

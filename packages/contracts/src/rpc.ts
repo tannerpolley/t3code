@@ -488,11 +488,23 @@ import {
 } from "./sourceControl.ts";
 import { VcsError } from "./vcs.ts";
 import { Project, ProjectMutation, ProjectMutationError } from "./project.ts";
+import {
+  ProjectArtifact,
+  ProjectArtifactAddInput,
+  ProjectArtifactError,
+  ProjectArtifactRemoveInput,
+  ProjectArtifactUpdateInput,
+  ProjectArtifactsScope,
+} from "./projectArtifacts.ts";
 
 export const WS_METHODS = {
   projectsListEntries: "projects.listEntries",
   projectsListIgnoredFiles: "projects.listIgnoredFiles",
   projectsReadFile: "projects.readFile",
+  projectArtifactsSubscribe: "projectArtifacts.subscribe",
+  projectArtifactsAdd: "projectArtifacts.add",
+  projectArtifactsUpdate: "projectArtifacts.update",
+  projectArtifactsRemove: "projectArtifacts.remove",
   projectsSearchContents: "projects.searchContents",
   projectsSearchEntries: "projects.searchEntries",
   projectsWriteFile: "projects.writeFile",
@@ -1664,6 +1676,29 @@ const WsProjectsReadFileRpc = Rpc.make(WS_METHODS.projectsReadFile, {
   error: Schema.Union([ProjectReadFileError, EnvironmentAuthorizationError]),
 });
 
+const artifactRpcError = Schema.Union([ProjectArtifactError, EnvironmentAuthorizationError]);
+const WsProjectArtifactsSubscribeRpc = Rpc.make(WS_METHODS.projectArtifactsSubscribe, {
+  payload: ProjectArtifactsScope,
+  success: Schema.Array(ProjectArtifact),
+  error: artifactRpcError,
+  stream: true,
+});
+const WsProjectArtifactsAddRpc = Rpc.make(WS_METHODS.projectArtifactsAdd, {
+  payload: ProjectArtifactAddInput,
+  success: ProjectArtifact,
+  error: artifactRpcError,
+});
+const WsProjectArtifactsUpdateRpc = Rpc.make(WS_METHODS.projectArtifactsUpdate, {
+  payload: ProjectArtifactUpdateInput,
+  success: Schema.Void,
+  error: artifactRpcError,
+});
+const WsProjectArtifactsRemoveRpc = Rpc.make(WS_METHODS.projectArtifactsRemove, {
+  payload: ProjectArtifactRemoveInput,
+  success: Schema.Void,
+  error: artifactRpcError,
+});
+
 const WsProjectsWriteFileRpc = Rpc.make(WS_METHODS.projectsWriteFile, {
   payload: ProjectWriteFileInput,
   success: ProjectWriteFileResult,
@@ -2656,6 +2691,10 @@ export const WsRpcGroup = RpcGroup.make(
   WsProjectsListEntriesRpc,
   WsProjectsListIgnoredFilesRpc,
   WsProjectsReadFileRpc,
+  WsProjectArtifactsSubscribeRpc,
+  WsProjectArtifactsAddRpc,
+  WsProjectArtifactsUpdateRpc,
+  WsProjectArtifactsRemoveRpc,
   WsProjectsSearchContentsRpc,
   WsProjectsSearchEntriesRpc,
   WsProjectsEnsureScratchRpc,

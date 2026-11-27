@@ -23,12 +23,14 @@ import type { ChatFileAttachment } from "./types";
 const RIGHT_PANEL_KINDS = [
   "diff",
   "files",
+  "artifacts",
   "file",
   "preview",
   "device",
   "terminal",
   "pull-request",
   "pull-requests",
+  "issues",
   "issue",
   "thread",
   "linked-thread",
@@ -57,6 +59,7 @@ export type RightPanelSurface =
       splitDirection?: "horizontal" | "vertical";
     }
   | { id: "diff"; kind: "diff" }
+  | { id: "artifacts"; kind: "artifacts" }
   | {
       id: "files";
       kind: "files";
@@ -87,7 +90,9 @@ export type RightPanelSurface =
       revealUrl?: string;
       detailTab?: PullRequestDetailTab;
     }
-  | { id: "pull-requests"; kind: "pull-requests"; showRepoBoard?: true }
+  | { id: "pull-requests"; kind: "pull-requests" }
+  /** The thread project's repository issue board. */
+  | { id: "issues"; kind: "issues" }
   /**
    * An issue opened in the issues list's shared panel, or beside a thread. Like `pull-request`,
    * the reference lives in the id so several issues can stay open as peer tabs.
@@ -223,7 +228,6 @@ interface RightPanelStoreState {
     },
   ) => void;
   openIssue: (ref: ScopedThreadRef, target: IssueSurfaceTarget) => void;
-  openLinkedItems: (ref: ScopedThreadRef, showRepoBoard: boolean) => void;
   setPullRequestDetailTab: (
     ref: ScopedThreadRef,
     surfaceId: string,
@@ -296,8 +300,12 @@ const singletonSurface = (
       return { id: "diff", kind };
     case "files":
       return { id: "files", kind };
+    case "artifacts":
+      return { id: "artifacts", kind };
     case "pull-requests":
       return { id: "pull-requests", kind };
+    case "issues":
+      return { id: "issues", kind };
     case "device":
       return { id: "device", kind };
   }
@@ -971,21 +979,6 @@ export const useRightPanelStore = create<RightPanelStoreState>()(
                   ),
                 }
               : next;
-          }),
-        ),
-      openLinkedItems: (ref, showRepoBoard) =>
-        set((state) =>
-          userAction(state, scopedThreadKey(ref), (current) => {
-            const surface = {
-              id: "pull-requests",
-              kind: "pull-requests",
-              ...(showRepoBoard ? { showRepoBoard: true as const } : {}),
-            } as const;
-            const next = upsertSurface(current, surface);
-            return {
-              ...next,
-              surfaces: next.surfaces.map((entry) => (entry.id === surface.id ? surface : entry)),
-            };
           }),
         ),
       setPullRequestDetailTab: (ref, surfaceId, detailTab) =>

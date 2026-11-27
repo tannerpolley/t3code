@@ -289,10 +289,11 @@ T3 Code detect an icon again.
 
 Choose **Monogram** in the icon picker to set one or two letters or numbers and a color.
 
-When no image is found, web and desktop show a two-character monogram with a color
-from the icon palette, derived from the saved project name. For example, `Nebula` becomes `NA`,
-`Silver Orchard` becomes `SO`, and `M7 Forge` becomes `M7`. A name that starts with a Chinese,
-Japanese, or Korean character uses only that character, so `健康顾问` becomes `健`.
+When no icon is chosen and no image is found, the project shows a plain gray folder.
+
+The monogram picker starts with two characters from the project name. For example, `Nebula`
+becomes `NA`, `Silver Orchard` becomes `SO`, and `M7 Forge` becomes `M7`. A name that starts with a
+Chinese, Japanese, or Korean character uses only that character, so `健康顾问` becomes `健`.
 
 ## Keep the default branch current
 

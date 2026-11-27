@@ -28,6 +28,7 @@ import {
   CommandId,
   type GuestMessageId,
   isCompactionCommandMessage,
+  isDelegatedAppThread,
   isDeliveredProviderTurn,
   isOrchestrationV2WorkActive,
   isProviderNativeSubagentThread,
@@ -65,6 +66,7 @@ import {
   type OrchestrationV2Subagent,
   type OrchestrationV2ThreadProjection,
   type OrchestrationV2TurnItem,
+  type OrchestratorMcpTaskRole,
   latestProviderTurnForAttempt,
   repositoryRewindCheckpoint,
   parseGoalCommand,
@@ -437,6 +439,17 @@ export interface OrchestratorV2Shape {
   readonly dispatch: (
     command: OrchestrationV2ServerCommand,
   ) => Effect.Effect<OrchestratorV2DispatchResult, OrchestratorV2Error>;
+  readonly autoArchiveSettledChild: (
+    threadId: ThreadId,
+    commandId: CommandId,
+  ) => Effect.Effect<void, OrchestratorV2Error>;
+  readonly restoreDelegatedRole: (
+    threadId: ThreadId,
+    role: OrchestratorMcpTaskRole,
+  ) => Effect.Effect<
+    "restored" | "alreadyPresent" | "missing" | "notDelegated",
+    OrchestratorV2Error
+  >;
   readonly autoArmLimitRecovery: (input: {
     readonly commandId: CommandId;
     readonly threadId: ThreadId;
@@ -5072,7 +5085,14 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
             updatedAt: now,
           };
         case "thread.unarchive":
-          return { ...thread, archivedAt: null, updatedAt: now };
+          return {
+            ...thread,
+            archivedAt: null,
+            ...(thread.lineage.relationshipToParent === "subagent"
+              ? { autoArchiveDisabled: true }
+              : {}),
+            updatedAt: now,
+          };
         case "thread.settle": {
           const wasPinned = thread.pinnedAt != null;
           const alreadySettled =
@@ -17439,6 +17459,65 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       return effectOutbox.awaitSettled(`effect:restart-continuation:${run.id}`).pipe(Effect.ignore);
     }),
     dispatch: dispatchWithReceipt,
+    autoArchiveSettledChild: Effect.fn("OrchestratorV2.autoArchiveSettledChild")(
+      function (threadId, commandId) {
+        const command = { type: "thread.archive", threadId, commandId } as const;
+        return threadDispatch.withLock(
+          threadId,
+          Effect.gen(function* () {
+            const [candidate] = yield* projectionStore
+              .getSettlementCandidates(threadId, { includeSettledChildren: true })
+              .pipe(mapDispatchError(command));
+            if (
+              candidate?.settledOverride !== "settled" ||
+              (candidate.pendingGuestMessageCount ?? 0) > 0 ||
+              (candidate.pendingBackgroundTasks?.length ?? 0) > 0
+            )
+              return;
+            const { runs, subagents } = yield* projectionStore
+              .getThreadRecords(threadId, ["runs", "subagents"])
+              .pipe(mapDispatchError(command));
+            if (
+              threadHasUnfinishedWork({ runs, runtimeRequests: [] }) ||
+              hasRunningDelegatedTasks(subagents)
+            )
+              return;
+            const latest = latestExecutedRun(runs);
+            if (
+              latest !== null &&
+              ((yield* awaitsCheckpointCapture(latest)) ||
+                (yield* awaitsRestartContinuation(latest).pipe(mapDispatchError(command))))
+            )
+              return;
+            yield* dispatchWithReceiptEffect(command);
+          }),
+        );
+      },
+    ),
+    restoreDelegatedRole: Effect.fn("OrchestratorV2.restoreDelegatedRole")(
+      function (threadId, role) {
+        return threadDispatch.withLock(
+          threadId,
+          Effect.gen(function* () {
+            const thread = yield* findThread(threadId);
+            if (thread === null || thread.deletedAt !== null) return "missing" as const;
+            if (!isDelegatedAppThread(thread)) return "notDelegated" as const;
+            if (thread.delegatedRole !== undefined) return "alreadyPresent" as const;
+            yield* writeSystemEvents([
+              {
+                type: "thread.metadata-updated",
+                threadId,
+                occurredAt: yield* DateTime.now,
+                payload: { ...thread, delegatedRole: role },
+              },
+            ]).pipe(
+              Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause })),
+            );
+            return "restored" as const;
+          }),
+        );
+      },
+    ),
     autoArmLimitRecovery: Effect.fn("OrchestratorV2.autoArmLimitRecovery")(function (input) {
       return threadDispatch.withLock(
         input.threadId,

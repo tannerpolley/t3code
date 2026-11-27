@@ -174,6 +174,7 @@ export const actsAsCaller = <P, A, E, R>(handle: (params: P) => Effect.Effect<A,
 export const writes = <P, A, E, R>(
   handle: (params: P) => Effect.Effect<A, E, R>,
   options?: {
+    readonly what?: string;
     /** Whether a linked caller may make it, as for uploads its own sends need. */
     readonly linkedCallers?: "allowed";
   },
@@ -184,7 +185,7 @@ export const writes = <P, A, E, R>(
         Effect.tap((caller) =>
           options?.linkedCallers === "allowed"
             ? Effect.void
-            : assertNotLinked(caller, "change this environment's scheduled tasks"),
+            : assertNotLinked(caller, options?.what ?? "change this environment's scheduled tasks"),
         ),
         Effect.flatMap(() => handle(params)),
       ),

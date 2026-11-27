@@ -117,7 +117,9 @@ export async function reopenClosedView(
   const surface = view.surface;
   if (
     !options.workspaceAvailable &&
-    (surface.kind === "files" || (surface.kind === "file" && !surface.attachment))
+    (surface.kind === "files" ||
+      surface.kind === "artifacts" ||
+      (surface.kind === "file" && !surface.attachment))
   )
     return false;
   switch (surface.kind) {
@@ -156,9 +158,6 @@ export async function reopenClosedView(
       break;
     case "issue":
       panels.openIssue(ref, surface);
-      break;
-    case "pull-requests":
-      panels.openLinkedItems(ref, surface.showRepoBoard === true);
       break;
     case "thread":
       panels.openThread(ref, surface.threadId);
