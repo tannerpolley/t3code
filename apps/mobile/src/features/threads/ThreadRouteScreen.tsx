@@ -1058,6 +1058,18 @@ function ThreadRouteContent(
               hasThreadCwd={selectedThreadCwd !== null}
               inspectorMode={inspectorMode}
               onOpenFilesInspector={handleOpenFilesInspector}
+              onOpenArtifacts={
+                selectedThreadProject === null
+                  ? undefined
+                  : () =>
+                      navigation.dispatch(
+                        StackActions.push("ProjectArtifacts", {
+                          environmentId: selectedThread.environmentId,
+                          projectId: selectedThreadProject.id,
+                          threadId: selectedThread.id,
+                        }),
+                      )
+              }
               onReturnToThread={props.onReturnToThread}
             />
           )

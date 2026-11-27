@@ -5721,5 +5721,17 @@
   "1accce409be44f6b": "Back",
   "735fa8731e0670ae": "Submit",
   "7f8cb8174c6d288f": "Next",
-  "538a08613f07568c": "{count, plural, one {{count} child agent} other {{count} child agents}}"
+  "bc964a581a444a14": "Implementors",
+  "9b3ae5edeae058a1": "Reviewers",
+  "cf0e8ad75963ca8e": "Designers",
+  "545747b2c3f2ecc3": "Writers",
+  "a3c50c07709d4e5a": "Researchers",
+  "a8b242104520f980": "Testers",
+  "9b91ea2c9ea018b4": "Other agents",
+  "53b6a1bb66a65417": "{count} waiting",
+  "7604475334656aa6": "{count} waiting on you",
+  "817047065121ef0c": "Artifacts",
+  "653ccb5d1de8645c": "File access is required.",
+  "4854d01a02b30f3b": "No saved artifacts.",
+  "ddbb7b9406af92ed": "Remove artifact {name}"
 }

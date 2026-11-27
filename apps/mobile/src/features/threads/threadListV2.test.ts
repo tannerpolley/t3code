@@ -37,6 +37,7 @@ import {
   buildThreadListV2Items,
   buildThreadListV2ListItems,
   getThreadListV2OrderedSection,
+  indexThreadListAgentSections,
   layoutThreadListV2RowMenuActions,
   resolveThreadListV2SnoozeMenuSelection,
   resolveThreadListV2SwipeActions,
@@ -1338,11 +1339,17 @@ describe("cross-section thread drops", () => {
   });
 });
 
-it("nests live subagents under their parent without putting them in navigation ordering", () => {
+it("groups agents by project and role, including agents of archived parents", () => {
   const root = makeThread({ id: ThreadId.make("root"), title: "Root" });
-  const child = makeThread({
-    id: ThreadId.make("child"),
-    title: "Child",
+  const archived = makeThread({
+    id: ThreadId.make("archived"),
+    title: "Archived",
+    archivedAt: NOW,
+  });
+  const working = makeThread({
+    id: ThreadId.make("working"),
+    title: "Working agent",
+    delegatedRole: "implementation",
     runtime: {
       status: "running",
       activeRunId: null,
@@ -1353,57 +1360,85 @@ it("nests live subagents under their parent without putting them in navigation o
     },
     lineage: { parentThreadId: root.id, rootThreadId: root.id, relationshipToParent: "subagent" },
   });
-  const fork = makeThread({
-    id: ThreadId.make("fork"),
-    title: "Fork",
-    lineage: { parentThreadId: root.id, rootThreadId: root.id, relationshipToParent: "fork" },
+  const waiting = makeThread({
+    id: ThreadId.make("waiting"),
+    title: "Review agent",
+    delegatedRole: "review",
+    hasPendingUserInput: true,
+    lineage: {
+      parentThreadId: archived.id,
+      rootThreadId: archived.id,
+      relationshipToParent: "subagent",
+    },
   });
-  const threads = [root, child, fork];
+  const threads = [root, archived, working, waiting];
+  const children = indexSidebarChildren(threads);
+  const projects = [
+    {
+      key: "project",
+      title: "Project",
+      projectRefs: [{ environmentId, projectId: root.projectId }],
+    },
+  ];
   const { items } = buildThreadListV2Items({
     threads,
     environmentId: null,
     searchQuery: "",
     now: NOW,
   });
-  expect(items.map((item) => item.thread.id)).toEqual([fork.id, root.id]);
-  const parentKey = `${environmentId}:${root.id}`;
-  const listRows = (expansion: ReadonlyMap<string, boolean>) =>
+  const rows = (collapsed: readonly string[] = [], routeKey: string | null = null) =>
     buildThreadListV2ListItems({
       items,
       pendingTasks: [],
-      families: {
-        children: indexSidebarChildren(threads, new Set()),
-        expansion,
-        routeKey: null,
+      agents: {
+        children,
+        projects,
+        sections: indexThreadListAgentSections(children, projects),
+        collapsed: new Set(collapsed),
+        routeKey,
         now: NOW,
       },
     });
-  const expanded = listRows(new Map());
-  const collapsed = listRows(new Map([[parentKey, false]]));
-  expect(expanded.map((item) => item.type === "v2-thread" && item.item.thread.id)).toEqual([
-    fork.id,
-    root.id,
-    child.id,
+
+  const expanded = rows();
+  expect(expanded.map((item) => item.key)).toEqual([
+    `v2-thread:${environmentId}:root`,
+    "v2-agent-project:project",
+    "v2-agent-role:project:implementation",
+    `v2-thread:${environmentId}:working`,
+    "v2-agent-role:project:review",
+    `v2-thread:${environmentId}:waiting`,
   ]);
-  expect(collapsed.map((item) => item.type === "v2-thread" && item.item.thread.id)).toEqual([
-    fork.id,
-    root.id,
-  ]);
-  const expandedParent = expanded.find(
-    (item) => item.type === "v2-thread" && item.item.thread.id === root.id,
-  )!;
-  const collapsedParent = collapsed.find(
-    (item) => item.type === "v2-thread" && item.item.thread.id === root.id,
-  )!;
-  expect(threadListV2ListItemsAreEqual(expandedParent, collapsedParent)).toBe(false);
+  expect(expanded[0]).toMatchObject({ agentCount: 1, agentRow: false });
+  expect(expanded[2]).toMatchObject({
+    role: "implementation",
+    counts: { working: 1, attention: 0, failed: 0 },
+  });
+  expect(expanded[4]).toMatchObject({
+    role: "review",
+    counts: { working: 0, attention: 1, failed: 0 },
+  });
+
+  const collapsed = rows(["v2-agent-project:project"]);
+  expect(collapsed).toHaveLength(2);
+  expect(collapsed[1]).toMatchObject({
+    expanded: false,
+    counts: { working: 1, attention: 1, failed: 0 },
+  });
+  expect(threadListV2ListItemsAreEqual(expanded[1]!, collapsed[1]!)).toBe(false);
   expect(
-    buildThreadListV2Items({ threads, environmentId: null, searchQuery: "Child", now: NOW }).items,
-  ).toEqual([]);
+    rows(["v2-agent-role:project:review"]).some(
+      (item) => item.key === `v2-thread:${environmentId}:waiting`,
+    ),
+  ).toBe(false);
+  expect(rows(["v2-agent-role:project:review"], `${environmentId}:waiting`).at(-1)?.key).toBe(
+    `v2-thread:${environmentId}:waiting`,
+  );
   expect(
     getThreadListV2OrderedSection({ threads, section: "active", now: NOW }).map(
       (thread) => thread.id,
     ),
-  ).toEqual([fork.id, root.id]);
+  ).toEqual([root.id]);
 });
 
 const BASE_MS = Date.parse(NOW);

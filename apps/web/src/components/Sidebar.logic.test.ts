@@ -1,3 +1,5 @@
+import { shouldRecedeSidebarThread } from "@t3tools/client-runtime/sidebar-row-model";
+import { formatSidebarAgentStates } from "@t3tools/client-runtime/state/sidebar-families";
 import { presentThreadShell } from "@t3tools/client-runtime/state/models";
 import { threadKey } from "@t3tools/client-runtime/state/entities";
 import { isThreadWorking as isSidebarThreadWorking } from "@t3tools/client-runtime/state/thread-inbox";
@@ -23,7 +25,6 @@ import {
   resolveWindowTitleThreadStatus,
   resolveWorkingStartedAt,
   searchSidebarThreads,
-  shouldRecedeSidebarThread,
   sortInboxThreadsByReturn,
   resolveSidebarDropTarget,
   planSidebarThreadDrop,
@@ -38,7 +39,6 @@ import {
   resolveSidebarDropVerb,
   groupSidebarThreadsByProject,
   resolveSidebarFolderDot,
-  formatSidebarAgentStates,
   resolveSidebarAgentState,
   sidebarFolderExpansionKeys,
   withoutRemovedCheckout,

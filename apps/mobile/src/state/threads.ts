@@ -65,7 +65,13 @@ export const steadyThreadShells = createEnvironmentThreadShellAtoms({
   snapshotAtom: steadyShells.snapshotAtom,
   hiddenThreadTagsAtom: serverEnvironment.hiddenThreadTagsAtom,
 });
-export const steadyNavigationThreadShellsAtom = steadyThreadShells.navigationThreadShellsAtom;
+export const steadyNavigationThreadShellsAtom = Atom.make((get) => {
+  // Keep linked delegations in project role sections when their parent leaves navigation.
+  const threads = get(steadyThreadShells.navigationThreadShellsAtom);
+  return threads.some((thread) => thread.delegatedFrom != null)
+    ? threads.filter((thread) => thread.delegatedFrom == null)
+    : threads;
+}).pipe(Atom.withLabel("mobile-navigation-thread-shells"));
 export const childThreadApprovalsAtom = createChildThreadApprovalsAtom({
   childThreadInputsAtom: environmentThreadShells.childThreadInputsAtom,
   pendingRequestsAtom: environmentThreadDetails.pendingRequestsAtom,

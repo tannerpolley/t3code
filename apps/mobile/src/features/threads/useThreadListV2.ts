@@ -13,9 +13,11 @@ import {
   buildThreadListV2Items,
   buildThreadListV2ListItems,
   getThreadListV2OrderedSection,
+  indexThreadListAgentSections,
   threadListInboxReturns,
   threadListV2LayoutTime,
 } from "./threadListV2";
+import type { HomeProjectScope } from "../home/homeThreadList";
 import { computeThreadMoveAvailability } from "./threadOrder";
 
 /**
@@ -30,7 +32,9 @@ function useKeySet(newlineSeparatedKeys: string): ReadonlySet<string> {
   );
 }
 
-const familyExpansionAtom = Atom.make<ReadonlyMap<string, boolean>>(new Map()).pipe(Atom.keepAlive);
+const collapsedAgentSectionsAtom = Atom.make<ReadonlySet<string>>(new Set<string>()).pipe(
+  Atom.keepAlive,
+);
 
 type LayoutInput = Parameters<typeof buildThreadListV2Items>[0];
 
@@ -51,8 +55,8 @@ function observeInbox(
  */
 export function useThreadListV2(input: {
   readonly threads: LayoutInput["threads"];
-  readonly familyThreads: LayoutInput["threads"];
-  readonly delegatedUnderParent: ReadonlySet<string>;
+  readonly agentThreads: LayoutInput["threads"];
+  readonly projects: readonly HomeProjectScope[];
   readonly openThreadKey: string | null;
   readonly pendingTasks: ReadonlyArray<PendingNewTask>;
   readonly environmentId: EnvironmentId | null;
@@ -76,22 +80,28 @@ export function useThreadListV2(input: {
   readonly selectedThreadKey: string | null;
 }) {
   const { threads, workingShelfEnabled } = input;
-  const [expansion, setExpansion] = useAtom(familyExpansionAtom);
-  const children = useMemo(
-    () => indexSidebarChildren(input.familyThreads, input.delegatedUnderParent),
-    [input.familyThreads, input.delegatedUnderParent],
-  );
-  const families = useMemo(
-    () =>
-      input.searchQuery.trim() || children.size === 0
-        ? undefined
-        : {
-            children,
-            expansion,
-            routeKey: input.openThreadKey,
-            now: input.now,
-          },
-    [children, expansion, input.openThreadKey, input.now, input.searchQuery],
+  const [collapsed, setCollapsed] = useAtom(collapsedAgentSectionsAtom);
+  const children = useMemo(() => indexSidebarChildren(input.agentThreads), [input.agentThreads]);
+  const projects = useMemo(() => {
+    const projectKeys =
+      input.projectRefs == null
+        ? null
+        : new Set(
+            input.projectRefs.map(({ environmentId, projectId }) =>
+              scopedProjectKey(environmentId, projectId),
+            ),
+          );
+    return input.projects.filter(
+      (project) =>
+        projectKeys === null ||
+        project.projectRefs.some(({ environmentId, projectId }) =>
+          projectKeys.has(scopedProjectKey(environmentId, projectId)),
+        ),
+    );
+  }, [input.projectRefs, input.projects]);
+  const sections = useMemo(
+    () => indexThreadListAgentSections(children, projects),
+    [children, projects],
   );
   const layoutTime = useMemo(
     () => threadListV2LayoutTime({ threads, now: input.now, searchQuery: input.searchQuery }),
@@ -239,7 +249,14 @@ export function useThreadListV2(input: {
     () =>
       buildThreadListV2ListItems({
         items: layout.items,
-        families,
+        agents: {
+          children,
+          projects: input.searchQuery.trim() ? [] : projects,
+          sections,
+          collapsed,
+          routeKey: input.openThreadKey,
+          now: input.now,
+        },
         pendingTasks,
         workingCount: layout.workingCount,
         workingShelfExpanded: input.workingShelfExpanded,
@@ -259,7 +276,12 @@ export function useThreadListV2(input: {
       }),
     [
       layout,
-      families,
+      children,
+      projects,
+      sections,
+      collapsed,
+      input.openThreadKey,
+      input.searchQuery,
       pendingTasks,
       input.workingShelfExpanded,
       input.snoozedShelfExpanded,
@@ -271,10 +293,14 @@ export function useThreadListV2(input: {
       input.shelfPreferencesLoaded,
     ],
   );
-  const setFamilyExpanded = useCallback(
-    (key: string, expanded: boolean) =>
-      setExpansion((current) => new Map(current).set(key, expanded)),
-    [setExpansion],
+  const toggleAgentSection = useCallback(
+    (key: string) =>
+      setCollapsed((current) => {
+        const next = new Set(current);
+        if (!next.delete(key)) next.add(key);
+        return next;
+      }),
+    [setCollapsed],
   );
   const selectedRowKey = items.some((row) => row.key === `v2-thread:${input.openThreadKey}`)
     ? input.openThreadKey
@@ -285,7 +311,7 @@ export function useThreadListV2(input: {
     contentOnlyThreadKeys,
     olderSettledShelf,
     selectedRowKey,
-    setFamilyExpanded,
+    toggleAgentSection,
   };
 }
 

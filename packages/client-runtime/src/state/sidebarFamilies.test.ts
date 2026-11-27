@@ -1,3 +1,4 @@
+import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import type { EnvironmentThreadShell } from "./models.ts";
@@ -70,6 +71,19 @@ describe("sidebarRoleSections", () => {
       ["folder:docs", [["folder:docs:writer", ["writer"]]]],
     ]);
   });
+});
+
+it("can group linked agents when the parent's environment is absent", () => {
+  const linked = {
+    ...thread("linked", { role: "review" }),
+    delegatedFrom: {
+      environmentId: EnvironmentId.make("remote"),
+      threadId: ThreadId.make("parent"),
+      title: "Parent",
+    },
+  };
+  expect(indexSidebarChildren([linked]).get("remote:parent")).toEqual([linked]);
+  expect(indexSidebarChildren([linked], new Set()).size).toBe(0);
 });
 
 describe("countSidebarAgentStates", () => {

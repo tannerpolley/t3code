@@ -1,6 +1,12 @@
+// @effect-diagnostics-next-line nodeBuiltinImport:off - Read the PDF fixture in a Node test.
+import * as NodeFSP from "node:fs/promises";
+import { getDocument } from "pdfjs-dist/legacy/build/pdf.mjs";
 import { describe, expect, it } from "vite-plus/test";
 import {
   currentPdfPage,
+  currentPdfSection,
+  resolvePdfOutline,
+  visiblePdfOutline,
   pdfFindIncludes,
   pdfFindMatchRuns,
   pdfPageOffsets,
@@ -164,5 +170,46 @@ describe("pdfFindMatchRuns", () => {
     expect(pdfFindMatchRuns(["a b", "c"], " ")).toEqual([false, false]);
     expect(pdfFindMatchRuns(["a b", "c"], "")).toEqual([false, false]);
     expect(pdfFindMatchRuns(["a b", "c"], "zzz")).toEqual([false, false]);
+  });
+});
+
+describe("PDF outline", () => {
+  it("resolves nested bookmarks and tracks the current section", async () => {
+    const data = new Uint8Array(
+      await NodeFSP.readFile(new URL("./outline.fixture.pdf", import.meta.url)),
+    );
+    const task = getDocument({ data, useSystemFonts: true });
+    try {
+      const entries = await resolvePdfOutline(await task.promise);
+      expect(entries).toEqual([
+        { id: 0, title: "Chapter", page: 0, depth: 0 },
+        { id: 1, title: "Section", page: 1, depth: 1 },
+      ]);
+      expect(currentPdfSection(entries, 0)).toBe(0);
+      expect(currentPdfSection(entries, 1)).toBe(1);
+    } finally {
+      await task.destroy();
+    }
+  });
+});
+
+describe("visiblePdfOutline", () => {
+  const entries = [
+    { id: 0, title: "Methods", page: 0, depth: 0 },
+    { id: 1, title: "Model", page: 1, depth: 1 },
+    { id: 2, title: "Solver", page: 2, depth: 2 },
+    { id: 3, title: "Results", page: 3, depth: 0 },
+  ];
+  const shown = (expanded: number[], section: number) =>
+    visiblePdfOutline(entries, new Set(expanded), section).map(
+      (row) =>
+        `${row.entry.title}${row.parent ? (row.open ? "-" : "+") : ""}${row.current ? "*" : ""}`,
+    );
+
+  it("hides entries under a collapsed parent and highlights that parent for its current section", () => {
+    expect(shown([], 2)).toEqual(["Methods+*", "Results"]);
+    expect(shown([0], 2)).toEqual(["Methods-", "Model+*", "Results"]);
+    expect(shown([0, 1], 2)).toEqual(["Methods-", "Model-", "Solver*", "Results"]);
+    expect(shown([1], 3)).toEqual(["Methods+", "Results*"]);
   });
 });

@@ -75,6 +75,7 @@ import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 import { useQueuedThreadKeys } from "../../state/use-thread-outbox";
 import {
   ThreadListV2PendingRow,
+  ThreadListV2AgentSectionHeader,
   ThreadListV2Row,
   THREAD_ROW_VIEWABILITY,
   ThreadListV2SettledShelfHeader,
@@ -399,7 +400,8 @@ export function HomeScreen(props: HomeScreenProps) {
     toggleSnoozedShelf,
     toggleWorkingShelf,
   } = useThreadListV2ShelfPreferences();
-  const now = useThreadListNow(props.threads);
+  const agentThreads = useAtomValue(steadyThreadShells.quietThreadShellsAtom);
+  const now = useThreadListNow(agentThreads);
   const listEnvironments = useAtomValue(threadListEnvironmentsAtom);
   const {
     providersByEnvironmentId,
@@ -421,10 +423,10 @@ export function HomeScreen(props: HomeScreenProps) {
     contentOnlyThreadKeys,
     olderSettledShelf,
     selectedRowKey,
-    setFamilyExpanded,
+    toggleAgentSection,
   } = useThreadListV2({
-    familyThreads: useAtomValue(steadyThreadShells.quietThreadShellsAtom),
-    delegatedUnderParent: useAtomValue(steadyThreadShells.delegatedUnderParentAtom),
+    agentThreads,
+    projects: projectScopes,
     openThreadKey: activeNewTask ? null : (primaryColumn?.selectedThreadKey ?? null),
     threads: props.threads,
     pendingTasks: props.pendingTasks,
@@ -534,6 +536,9 @@ export function HomeScreen(props: HomeScreenProps) {
         />
       );
     }
+    if (item.type === "v2-agent-section") {
+      return <ThreadListV2AgentSectionHeader item={item} onToggle={toggleAgentSection} />;
+    }
     const thread = item.item.thread;
     return (
       <ThreadListV2Row
@@ -542,9 +547,9 @@ export function HomeScreen(props: HomeScreenProps) {
         fullSwipeWidth={fullSwipeWidth}
         onNewThreadOnBranch={props.onNewThreadOnBranch}
         thread={thread}
-        family={item.family}
+        agentCount={item.agentCount}
+        agentRow={item.agentRow}
         listVisible={props.visible}
-        onToggleFamily={setFamilyExpanded}
         variant={item.item.variant}
         hasQueuedMessages={item.hasQueuedMessages}
         snoozed={item.item.snoozed}
@@ -588,7 +593,7 @@ export function HomeScreen(props: HomeScreenProps) {
         pinningSupported={pinningEnvironmentIds.has(thread.environmentId)}
         autoSettleOptOutSupported={autoSettleOptOutEnvironmentIds.has(thread.environmentId)}
         reorderSupported={
-          !item.family?.depth &&
+          !item.agentRow &&
           (item.item.pinned
             ? pinReorderEnvironmentIds.has(thread.environmentId)
             : !workingShelfEnabled && activeReorderEnvironmentIds.has(thread.environmentId))

@@ -1,4 +1,8 @@
-import { sidebarRowModel, sidebarRoleLabels } from "@t3tools/client-runtime/sidebar-row-model";
+import {
+  sidebarRowModel,
+  sidebarRoleLabels,
+  shouldRecedeSidebarThread,
+} from "@t3tools/client-runtime/sidebar-row-model";
 import { useAtomMount, useAtomValue } from "@effect/atom-react";
 import { getTriggerDisplayModelName } from "../chat/providerIconUtils";
 import { asLaunchingThread } from "@t3tools/client-runtime/state/thread-inbox";
@@ -99,7 +103,6 @@ import {
   resolveSidebarRowStatus,
   resolveThreadLastVisitedAt,
   resolveWorkingStartedAt,
-  shouldRecedeSidebarThread,
   useRetainedValue,
   withoutRemovedCheckout,
   useSidebarRowSubscriptionLease,

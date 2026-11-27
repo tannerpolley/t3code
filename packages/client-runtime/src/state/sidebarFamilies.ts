@@ -1,10 +1,13 @@
+import { mFallback, msg } from "gt-i18n";
+import type { MFunctionType } from "gt-i18n/types";
+import type { SidebarThreadStatus } from "../sidebarRowModel.ts";
 import { scopeThreadRef, scopedThreadKey } from "../environment/index.ts";
 import { threadRuntimeIsActive } from "./models.ts";
 import type { EnvironmentThreadShell } from "./shell.ts";
 
 export function indexSidebarChildren(
   threads: readonly EnvironmentThreadShell[],
-  delegatedUnderParent: ReadonlySet<string>,
+  delegatedUnderParent?: ReadonlySet<string>,
 ) {
   const children = new Map<string, EnvironmentThreadShell[]>();
   for (const thread of threads) {
@@ -15,9 +18,10 @@ export function indexSidebarChildren(
       thread.lineage.relationshipToParent === "subagent" && localParent !== null
         ? scopeThreadRef(thread.environmentId, localParent)
         : thread.delegatedFrom != null &&
-            delegatedUnderParent.has(
+            (delegatedUnderParent?.has(
               scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id)),
-            )
+            ) ??
+              true)
           ? scopeThreadRef(thread.delegatedFrom.environmentId, thread.delegatedFrom.threadId)
           : null;
     if (parent === null) continue;
@@ -166,4 +170,55 @@ export function countSidebarAgentStates<T>(
     if (state !== null) counts[state] += 1;
   }
   return counts;
+}
+
+export const sidebarRoleSectionLabels: Record<SidebarAgentRole, string> = {
+  implementation: msg("Implementors"),
+  review: msg("Reviewers"),
+  design: msg("Designers"),
+  writer: msg("Writers"),
+  research: msg("Researchers"),
+  test: msg("Testers"),
+  other: msg("Other agents"),
+};
+
+export function sidebarAgentState(
+  status: SidebarThreadStatus,
+  running: boolean,
+): SidebarAgentState | null {
+  switch (status) {
+    case "approval":
+    case "input":
+    case "request":
+    case "limited":
+      return "attention";
+    case "failed":
+      return "failed";
+    case "preparing":
+    case "working":
+      return "working";
+    case "waiting":
+      // Blocked on a child is still a running turn; an idle session is not.
+      return running ? "working" : null;
+    default:
+      return null;
+  }
+}
+
+/** "2 working · 1 waiting on you · 1 failed", leaving out zeros; `short` says "waiting". */
+export function formatSidebarAgentStates(
+  counts: Readonly<Record<SidebarAgentState, number>>,
+  resolve: MFunctionType = mFallback,
+  short = false,
+): string {
+  const parts = [
+    counts.working > 0 ? resolve(msg("{count} working", { count: counts.working })) : null,
+    counts.attention > 0
+      ? short
+        ? resolve(msg("{count} waiting", { count: counts.attention }))
+        : resolve(msg("{count} waiting on you", { count: counts.attention }))
+      : null,
+    counts.failed > 0 ? resolve(msg("{count} failed", { count: counts.failed })) : null,
+  ];
+  return parts.filter((part) => part !== null).join(" · ");
 }
