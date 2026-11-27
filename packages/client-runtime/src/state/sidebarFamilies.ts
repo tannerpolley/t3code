@@ -1,4 +1,9 @@
-import type { EnvironmentId, ScopedProjectRef, SidebarProjectSection } from "@t3tools/contracts";
+import {
+  isDelegationModelRole,
+  type EnvironmentId,
+  type ScopedProjectRef,
+  type SidebarProjectSection,
+} from "@t3tools/contracts";
 import { mFallback, msg } from "gt-i18n";
 import type { MFunctionType } from "gt-i18n/types";
 import type { SidebarThreadStatus } from "../sidebarRowModel.ts";
@@ -109,7 +114,7 @@ export type SidebarAgentRole = (typeof SIDEBAR_AGENT_ROLES)[number];
 
 function sidebarAgentRole(thread: Pick<EnvironmentThreadShell, "delegatedRole">) {
   const role = thread.delegatedRole;
-  return role === undefined || role === "general" ? "other" : role;
+  return isDelegationModelRole(role) ? role : "other";
 }
 
 export interface SidebarRoleSection {

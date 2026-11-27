@@ -46,6 +46,8 @@ import {
   type ServerProviderCompatibilityAdvisory,
   type ServerProviderModel,
   isDelegatedAppThread,
+  delegatedLeafSkill,
+  type OrchestratorMcpTaskRole,
   ThreadId,
   type TurnItemId,
 } from "@t3tools/contracts";
@@ -939,6 +941,7 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
     readonly runtimePolicy: ProviderAdapter.ProviderAdapterV2RuntimePolicy;
     readonly modelSelection: ModelSelection;
     readonly hasT3Mcp?: boolean;
+    readonly delegatedRole?: OrchestratorMcpTaskRole | undefined;
     readonly agentFeedback?: AgentFeedbackMode;
     readonly browserToolsAvailable?: boolean;
     readonly deviceToolsAvailable?: boolean;
@@ -1006,6 +1009,7 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
               browser: input.browserToolsAvailable ?? true,
               device: input.deviceToolsAvailable ?? false,
             },
+            input.delegatedRole,
           )
         : undefined;
     // Its own entry, so the folder list reaches the model without T3 Code's MCP tools too.
@@ -1728,7 +1732,16 @@ function codexStdioMcpServerNames(mcpServers: unknown): ReadonlyArray<string> {
     .map(([name]) => name);
 }
 
+const CODEX_LEAF_CONFIG = {
+  "features.apps": false,
+  "features.multi_agent": false,
+  "agents.enabled": false,
+  "memories.use_memories": false,
+  "skills.include_instructions": false,
+} as const;
+
 function codexThreadRuntimeParams(input: {
+  readonly delegatedRole?: OrchestratorMcpTaskRole | undefined;
   readonly threadId: ThreadId | null;
   readonly mcpSession: McpProviderSession.McpProviderSessionConfig | undefined;
   readonly stdioMcpServers?: ReadonlyArray<string>;
@@ -1740,6 +1753,8 @@ function codexThreadRuntimeParams(input: {
   readonly config: Readonly<Record<string, Schema.Json>>;
 } {
   const { mcpSession } = input;
+  const leafWorker =
+    delegatedLeafSkill(input.delegatedRole) !== undefined || mcpSession?.leafWorker === true;
   const t3Server =
     mcpSession === undefined
       ? undefined
@@ -1753,6 +1768,7 @@ function codexThreadRuntimeParams(input: {
     ...(input.modelSelection === undefined ? {} : { model: input.modelSelection.model }),
     config: {
       ...CODEX_THREAD_CONFIG,
+      ...(leafWorker ? CODEX_LEAF_CONFIG : {}),
       // One app-server serves many threads, so the id goes in per-thread shell config, not its env.
       ...(input.threadId === null
         ? {}
@@ -1776,11 +1792,13 @@ function codexThreadRuntimeParams(input: {
             },
             // Code Mode runs a blocking wait or delegate wait as a nested call, and the model
             // keeps polling it. A second, direct-only registration makes it a plain tool call.
-            [`mcp_servers.${CODEX_T3_DIRECT_MCP_SERVER}`]: {
-              ...t3Server,
-              enabled_tools: CODEX_DIRECT_ONLY_T3_TOOLS,
-              omit_tools_from: ["code_mode", "deferred"],
-            },
+            [`mcp_servers.${CODEX_T3_DIRECT_MCP_SERVER}`]: leafWorker
+              ? { ...t3Server, enabled: false }
+              : {
+                  ...t3Server,
+                  enabled_tools: CODEX_DIRECT_ONLY_T3_TOOLS,
+                  omit_tools_from: ["code_mode", "deferred"],
+                },
           }),
     },
   };
@@ -8187,6 +8205,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               runtimePolicy: turnInput.runtimePolicy,
               modelSelection: turnInput.modelSelection,
               hasT3Mcp: mcpSession !== undefined,
+              delegatedRole: turnInput.appThread.delegatedRole,
               agentFeedback: turnInput.agentFeedback ?? "off",
               browserToolsAvailable: mcpSession?.browserToolsAvailable ?? true,
               deviceToolsAvailable: mcpSession?.capabilities?.has("device") ?? false,
@@ -8633,6 +8652,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 client.request("thread/start", {
                   ...codexThreadRuntimeParams({
                     threadId: threadInput.threadId,
+                    delegatedRole: threadInput.delegatedRole,
                     mcpSession,
                     stdioMcpServers,
                     modelSelection: threadInput.modelSelection,
@@ -8678,6 +8698,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                 excludeTurns: true,
                 ...codexThreadRuntimeParams({
                   threadId: appThreadId,
+                  delegatedRole: threadInput.delegatedRole,
                   mcpSession: yield* readMcpSession(appThreadId),
                   stdioMcpServers: yield* readStdioMcpServers(threadInput.runtimePolicy?.cwd),
                   ...(threadInput.modelSelection === undefined

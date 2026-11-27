@@ -10,7 +10,7 @@ import {
   sidebarRowModel,
   shouldRecedeSidebarThread,
 } from "@t3tools/client-runtime/sidebar-row-model";
-import { isProviderDriverKind } from "@t3tools/contracts";
+import { isDelegationModelRole, isProviderDriverKind } from "@t3tools/contracts";
 import { ThreadRowSpinner } from "./ThreadRowSpinner";
 import { useAppActive } from "../../lib/appState";
 import { useIsFocused } from "@react-navigation/native";
@@ -875,9 +875,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   );
   const role = thread.delegatedRole;
   const rowTitle =
-    props.agentRow || role === undefined || role === "general"
-      ? thread.title
-      : m(sidebarRoleLabels[role]);
+    props.agentRow || !isDelegationModelRole(role) ? thread.title : m(sidebarRoleLabels[role]);
   const [visible, setVisible] = useState(false);
   useViewability(useCallback((token) => setVisible(token.isViewable), []));
   const appActive = useAppActive();

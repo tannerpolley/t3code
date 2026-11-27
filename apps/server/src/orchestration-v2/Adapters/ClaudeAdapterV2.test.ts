@@ -939,6 +939,47 @@ describe("ClaudeAdapterV2 native protocol logging", () => {
   });
 });
 
+it("limits native tools and T3 instructions only for delegated leaf roles", () => {
+  const base = {
+    modelSelection: CLAUDE_TEST_MODEL_SELECTION,
+    nativeThreadId: "delegated-worker",
+    cwd: "/workspace",
+    mcpServers: { "t3-code": { type: "http" as const, url: "http://127.0.0.1/mcp" } },
+    sdkSettings: { env: { CUSTOM_SETTING: "preserved" } },
+  };
+  for (const resume of [false, true]) {
+    const leaf = ClaudeAdapterV2.makeClaudeQueryOptions({
+      ...base,
+      resume,
+      delegatedRole: "review",
+    });
+    const orchestrator = ClaudeAdapterV2.makeClaudeQueryOptions({
+      ...base,
+      resume,
+      delegatedRole: "orchestrator",
+    });
+    assert.includeMembers(leaf.disallowedTools ?? [], [
+      "Agent",
+      "ListAgents",
+      "Workflow",
+      "ScheduleWakeup",
+      "Skill",
+    ]);
+    assert.isUndefined(orchestrator.disallowedTools);
+    assert.deepEqual(leaf.mcpServers, base.mcpServers);
+    assert.include(JSON.stringify(leaf.settings), "CUSTOM_SETTING");
+    assert.include(JSON.stringify(leaf.settings), '"autoMemoryEnabled":false');
+    assert.include(JSON.stringify(leaf.settings), '"disableClaudeAiConnectors":true');
+    const leafPrompt = JSON.stringify(leaf.systemPrompt);
+    assert.include(leafPrompt, "role-reviewer");
+    assert.include(leafPrompt, "request_secret");
+    assert.include(leafPrompt, "link_pull_request");
+    assert.notInclude(leafPrompt, "delegate_task");
+    assert.notInclude(leafPrompt, "t3_background_wait");
+    assert.include(JSON.stringify(orchestrator.systemPrompt), "delegate_task");
+  }
+});
+
 describe("ClaudeAdapterV2 T3 tool instructions", () => {
   const options = (input: {
     readonly mcp: boolean;

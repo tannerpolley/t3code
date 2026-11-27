@@ -10,10 +10,25 @@ export const AGENT_FEEDBACK_INSTRUCTIONS = {
 } satisfies Record<AgentFeedbackMode, string>;
 
 /** Session-invariant; harnesses with a native system-prompt append can carry it once per session. */
-export const PULL_REQUEST_LINKING_INSTRUCTIONS = `<pull_request_linking>
-Link each PR you create, take over, or push to: link_pull_request, or link_pull_requests for several, full URL, every stack layer, as your next call. Host tools don't link for you. If linking fails, say so. Skip PRs you only read or review and PRs named only as background. Call watch_pull_request when asked to monitor or babysit, or when work you were asked to do, such as a merge, still waits on checks or reviews, even after an earlier unwatch. Finish any needed branch update and push first, then watch and end your turn. Otherwise act now or hand back. Delegated children never watch, even if the brief says babysit. After PR work, a child's last line is: PR <full URL>, head <SHA>, checks and reviews <state>. Links and watches persist across pushes. For PR waits, no sleep, loops, gh --watch, Monitor or ScheduleWakeup. Before handback, call unwatch_pull_request on any PR you watch. When pull_request_* tools are listed, use them, not gh or cafe, to read, list, open, edit, review, reply on, close, or merge PRs, and ci_logs and ci_rerun for their checks. pull_request_create links for you.
+const LINK_PULL_REQUESTS = `Link each PR you create, take over, or push to: link_pull_request, or link_pull_requests for several, full URL, every stack layer, as your next call. Host tools don't link for you. If linking fails, say so. Skip PRs you only read or review and PRs named only as background.`;
+const WATCH_PULL_REQUESTS = `Call watch_pull_request when asked to monitor or babysit, or when work you were asked to do, such as a merge, still waits on checks or reviews, even after an earlier unwatch. Finish any needed branch update and push first, then watch and end your turn. Otherwise act now or hand back. Delegated children never watch, even if the brief says babysit.`;
+const REPORT_PULL_REQUESTS = `After PR work, a child's last line is: PR <full URL>, head <SHA>, checks and reviews <state>. Links and watches persist across pushes.`;
+const STOP_WATCHING_PULL_REQUESTS = `For PR waits, no sleep, loops, gh --watch, Monitor or ScheduleWakeup. Before handback, call unwatch_pull_request on any PR you watch.`;
+const USE_FORGE_TOOLS = `When pull_request_* tools are listed, use them, not gh or cafe, to read, list, open, edit, review, reply on, close, or merge PRs, and ci_logs and ci_rerun for their checks. pull_request_create links for you.
 If available, call link_issue for each issue you take on or file, even via CLI; skip issues you only read.
+`;
+
+const pullRequestLinkingInstructions = (leafWorker: boolean) => `<pull_request_linking>
+${[
+  LINK_PULL_REQUESTS,
+  ...(leafWorker ? [] : [WATCH_PULL_REQUESTS]),
+  REPORT_PULL_REQUESTS,
+  ...(leafWorker ? [] : [STOP_WATCHING_PULL_REQUESTS]),
+  USE_FORGE_TOOLS.trimEnd(),
+].join(" ")}
 </pull_request_linking>`;
+
+export const PULL_REQUEST_LINKING_INSTRUCTIONS = pullRequestLinkingInstructions(false);
 
 /** Omit model and effort when the harness manages them dynamically. */
 export function buildRuntimeInstructions(runtime: {
@@ -24,6 +39,7 @@ export function buildRuntimeInstructions(runtime: {
   readonly reasoningEffort?: string | undefined;
   /** False when the session's system prompt already carries the linking instructions. */
   readonly pullRequestLinking?: boolean;
+  readonly leafWorker?: boolean;
   /** Adds the folder list of a multi-folder thread. */
   readonly runtimePolicy?: Pick<ProviderAdapterV2RuntimePolicy, "cwd" | "workspace"> | undefined;
 }): string {
@@ -43,7 +59,7 @@ export function buildRuntimeInstructions(runtime: {
   const linked =
     runtime.pullRequestLinking === false
       ? runtimeInfo
-      : `${runtimeInfo}\n\n${PULL_REQUEST_LINKING_INSTRUCTIONS}`;
+      : `${runtimeInfo}\n\n${pullRequestLinkingInstructions(runtime.leafWorker === true)}`;
   return [linked + feedback, ...(workspace === "" ? [] : [workspace])].join("\n\n");
 }
 

@@ -28,12 +28,36 @@ const ALL_MCP_CAPABILITIES = [
 ] as const;
 export type McpCapability = (typeof ALL_MCP_CAPABILITIES)[number];
 
+const orchestrationTools = new Set([
+  "orchestrator_capabilities",
+  "delegate_task",
+  "task_status",
+  "task_cancel",
+  "t3_workflow",
+  "t3_workflow_stop",
+  "t3_background_wait",
+  "schedule_task",
+  "list_scheduled_tasks",
+  "delete_scheduled_task",
+  "run_scheduled_task_now",
+  "create_threads",
+  "t3_thread_launch",
+  "t3_thread_list",
+  "t3_thread_wait",
+  "watch_pull_request",
+  "unwatch_pull_request",
+]);
+
+export const visibleToDelegatedRole = (tool: string, leafWorker: boolean | undefined) =>
+  leafWorker !== true || !orchestrationTools.has(tool);
+
 export interface McpThreadCaller {
   readonly threadId: ThreadId;
   readonly providerSessionId: string;
   readonly providerInstanceId: ProviderInstanceId;
   /** A delegated child task; its parent owns the work it hands back. */
   readonly subagent?: boolean;
+  readonly leafWorker?: boolean;
 }
 
 export interface McpClientCaller {

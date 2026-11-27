@@ -2,6 +2,7 @@ import { AgentScope } from "@t3tools/shared/AgentScope";
 import * as KeyedLock from "@t3tools/shared/KeyedLock";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
 import {
+  delegatedLeafSkill,
   CommandId,
   isOrchestrationV2WorkActive,
   ModelSelection,
@@ -631,18 +632,29 @@ export const layerWithOptions = (
                 >(["orchestration", "worktree", "pull-requests", "issues"]);
                 if (browserToolsAvailable) capabilities.add("preview");
                 if (deviceToolsAvailable) capabilities.add("device");
-                const backgroundWait = yield* registry.get(providerInstanceId).pipe(
-                  Effect.flatMap((adapter) => adapter.getCapabilities()),
-                  Effect.map((adapter) => adapter.tools.supportsBackgroundWait === true),
-                  Effect.option,
-                );
+                const adapter = yield* registry.get(providerInstanceId).pipe(Effect.option);
+                const thread = yield* projectionStore.getThread(threadId).pipe(Effect.option);
+                const driver = Option.getOrUndefined(adapter)?.driver;
+                const appThread = Option.getOrUndefined(thread);
+                const leafWorker =
+                  (driver === "claudeAgent" || driver === "codex") &&
+                  delegatedLeafSkill(appThread?.delegatedRole) !== undefined;
+                const backgroundWait = leafWorker
+                  ? Option.some(false)
+                  : yield* Option.match(adapter, {
+                      onNone: () => Effect.succeed(Option.none<boolean>()),
+                      onSome: (adapter) =>
+                        adapter.getCapabilities().pipe(
+                          Effect.map(
+                            (capabilities) => capabilities.tools.supportsBackgroundWait === true,
+                          ),
+                          Effect.option,
+                        ),
+                    });
                 if (Option.getOrElse(backgroundWait, () => false)) {
                   capabilities.add("background-wait");
                 }
-                const subagent = yield* projectionStore.getThread(threadId).pipe(
-                  Effect.map((thread) => thread.lineage.relationshipToParent === "subagent"),
-                  Effect.orElseSucceed(() => false),
-                );
+                const subagent = appThread?.lineage.relationshipToParent === "subagent";
                 const existing = yield* mcpSessions.read(threadId);
                 if (existing !== undefined) {
                   // Reserve before async validation so release cannot revoke between validation and reservation.
@@ -668,7 +680,8 @@ export const layerWithOptions = (
                     (Option.isNone(backgroundWait) ||
                       resolved.capabilities.has("background-wait") === backgroundWait.value) &&
                     // A credential issued while the lineage read failed is replaced once it works.
-                    (resolved.thread.subagent === true) === subagent
+                    (resolved.thread.subagent === true) === subagent &&
+                    (resolved.thread.leafWorker === true) === leafWorker
                   ) {
                     return { mcpCredentialId: existing.providerSessionId, issued: false };
                   }
@@ -681,6 +694,7 @@ export const layerWithOptions = (
                   browserToolsAvailable,
                   capabilities,
                   subagent,
+                  leafWorker,
                 });
                 yield* mcpSessions.set({
                   ...credential.config,

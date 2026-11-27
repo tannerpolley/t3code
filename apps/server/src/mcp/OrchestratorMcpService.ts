@@ -2,6 +2,7 @@ import {
   DelegationComplexity,
   DelegationModelRole,
   CommandId,
+  isDelegationModelRole,
   type RunId,
   idleCompactionOf,
   isProviderAvailable,
@@ -3045,7 +3046,7 @@ const make = Effect.gen(function* () {
         operation: "delegate-task",
       });
       const isRetryOfAcceptedDelegation = yield* threadManagement.hasReceipt(commandId);
-      const role = input.role === "general" ? undefined : input.role;
+      const role = isDelegationModelRole(input.role) ? input.role : undefined;
       // An accepted task keeps its model even if its role pick changes before a retry.
       if (role !== undefined && isRetryOfAcceptedDelegation) {
         const taskId = derive.delegatedTaskNode({ commandId });

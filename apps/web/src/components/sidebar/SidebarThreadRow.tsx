@@ -33,6 +33,7 @@ import {
   type EnvironmentId,
   type EnvironmentMachineKind,
   type ScopedThreadRef,
+  isDelegationModelRole,
 } from "@t3tools/contracts";
 
 import type { TimestampFormat } from "@t3tools/contracts/settings";
@@ -709,7 +710,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   };
   const role = thread.delegatedRole;
   const rowTitle =
-    props.titleIsThreadTitle || role === undefined || role === "general"
+    props.titleIsThreadTitle || !isDelegationModelRole(role)
       ? thread.title
       : messages(sidebarRoleLabels[role]);
   const isRegeneratingTitle = thread.titleRegeneration != null;
