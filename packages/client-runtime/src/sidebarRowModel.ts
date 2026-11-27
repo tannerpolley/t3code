@@ -95,3 +95,29 @@ export function sidebarRowModel(
     : null;
   return { modelLabel, modelParts: sidebarModelParts(modelLabel), effort };
 }
+
+export type SidebarThreadStatus =
+  | "approval"
+  | "input"
+  | "request"
+  | "preparing"
+  | "working"
+  | "waiting"
+  | "failed"
+  | "limited"
+  | "ready";
+
+export function shouldRecedeSidebarThread(input: {
+  status: SidebarThreadStatus;
+  isUnread: boolean;
+  isWoke: boolean;
+  isActive: boolean;
+  isSelected: boolean;
+  isSubagent: boolean;
+}): boolean {
+  if (input.isActive || input.isSelected) return false;
+  if (input.status === "ready" || input.status === "approval") {
+    return input.isSubagent || (!input.isUnread && !input.isWoke);
+  }
+  return false;
+}

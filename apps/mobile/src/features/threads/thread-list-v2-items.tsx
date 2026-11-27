@@ -1,8 +1,13 @@
+import {
+  formatSidebarAgentStates,
+  sidebarRoleSectionLabels,
+} from "@t3tools/client-runtime/state/sidebar-families";
 import { useViewability } from "@legendapp/list/react-native";
 import {
   effortBarHeights,
   sidebarRoleLabels,
   sidebarRowModel,
+  shouldRecedeSidebarThread,
 } from "@t3tools/client-runtime/sidebar-row-model";
 import { isProviderDriverKind } from "@t3tools/contracts";
 import { ThreadRowSpinner } from "./ThreadRowSpinner";
@@ -94,10 +99,9 @@ import {
   layoutThreadListV2RowMenuActions,
   threadListV2RowAccessibilityLabel,
   type ThreadListV2Status,
-  type ThreadListV2ThreadListItem,
+  type ThreadListV2AgentSectionItem,
 } from "./threadListV2";
 import { QueuedMessageIcon } from "./queued-message-icon";
-import { shouldRecedeThreadRow } from "./thread-row-emphasis";
 import { ThreadSearchMatchExcerpt } from "./thread-search-match";
 import { useScaledTextRole } from "../settings/appearance/useScaledTextRole";
 import { PullRequestGlyph } from "../pull-requests/pullRequestGlyphs";
@@ -747,11 +751,48 @@ export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props
   );
 });
 
+export function ThreadListV2AgentSectionHeader({
+  item,
+  onToggle,
+}: {
+  readonly item: ThreadListV2AgentSectionItem;
+  readonly onToggle: (key: string) => void;
+}) {
+  const gt = useGT();
+  const m = useMessages();
+  const project = item.role === null;
+  const title = item.role === null ? item.title : m(sidebarRoleSectionLabels[item.role]);
+  const summary = project && item.expanded ? "" : formatSidebarAgentStates(item.counts, m, project);
+  const count = project
+    ? gt("{count, plural, one {{count} agent} other {{count} agents}}", { count: item.total })
+    : item.total;
+
+  return (
+    <RowPressable
+      accessibilityRole="button"
+      accessibilityState={{ expanded: item.expanded }}
+      onPress={() => onToggle(item.key)}
+      className={cn("min-h-11 flex-row items-center gap-2 px-3", project ? "mt-2" : "ps-6")}
+    >
+      <SymbolView
+        name={item.expanded ? "chevron.down" : "chevron.right"}
+        size={12}
+        tintColorClassName="foreground-muted"
+      />
+      <Text className="min-w-0 shrink text-sm font-t3-medium" numberOfLines={1}>
+        {title}
+      </Text>
+      {!project || !summary ? <Text className="text-xs text-foreground-muted">{count}</Text> : null}
+      {summary ? <Text className="shrink text-xs text-foreground-muted">{summary}</Text> : null}
+    </RowPressable>
+  );
+}
+
 export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   readonly thread: EnvironmentThreadShell;
-  readonly family: ThreadListV2ThreadListItem["family"];
+  readonly agentCount: number;
+  readonly agentRow: boolean;
   readonly listVisible: boolean;
-  readonly onToggleFamily: (key: string, expanded: boolean) => void;
   readonly variant: "card" | "slim";
   readonly hasQueuedMessages?: boolean;
   readonly snoozed?: boolean;
@@ -846,7 +887,9 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   );
   const role = thread.delegatedRole;
   const rowTitle =
-    role === undefined || role === "general" ? thread.title : m(sidebarRoleLabels[role]);
+    props.agentRow || role === undefined || role === "general"
+      ? thread.title
+      : m(sidebarRoleLabels[role]);
   const [visible, setVisible] = useState(false);
   useViewability(useCallback((token) => setVisible(token.isViewable), []));
   const appActive = useAppActive();
@@ -886,7 +929,20 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     ...statusEntry,
     label: statusEntry.label === null ? null : m(statusEntry.label),
   };
-  const recede = shouldRecedeThreadRow({ status, selected });
+  const recede = shouldRecedeSidebarThread({
+    status,
+    isActive: selected,
+    isSelected: selected,
+    isUnread: threadHasUnseenCompletion(thread),
+    isWoke: props.wokeAt !== null,
+    isSubagent: props.agentRow || thread.lineage.relationshipToParent === "subagent",
+  });
+  const agentCountLabel =
+    props.agentCount > 0
+      ? gt("{count, plural, one {{count} agent} other {{count} agents}}", {
+          count: props.agentCount,
+        })
+      : null;
   const pendingSync = useAtomValue(
     threadEnvironment.pendingSyncAtom(thread.environmentId),
     (threads) => threads.has(thread.id),
@@ -1379,16 +1435,6 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       ? primaryAction.swipeHint
       : primaryAction.swipeSnoozeHint;
 
-  const family = props.family;
-  const familyLabel =
-    family && family.descendantCount > 0
-      ? gt("{count, plural, one {{count} child agent} other {{count} child agents}}", {
-          count: family.descendantCount,
-        })
-      : null;
-  const toggleFamily = () => {
-    if (family) props.onToggleFamily(`${thread.environmentId}:${thread.id}`, !family.expanded);
-  };
   const rowVisible = visible && props.listVisible && appActive && (focused || sidebarPane);
   const live = status === "working" || status === "waiting";
   const completedAt = live ? null : (thread.latestRun?.completedAt ?? null);
@@ -1413,18 +1459,17 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       interactionOpacity={rowAppearance.interactionOpacity}
       className={rowAppearance.className}
       accessibilityHint={swipeAccessibilityHint}
-      accessibilityLabel={rowAccessibilityLabel}
-      accessibilityRole="button"
-      accessibilityState={{ selected, expanded: familyLabel ? family?.expanded : undefined }}
-      accessibilityActions={
-        familyLabel
-          ? [...rowAccessibilityActions, { name: "toggleFamily", label: familyLabel }]
-          : rowAccessibilityActions
+      accessibilityLabel={
+        agentCountLabel === null
+          ? rowAccessibilityLabel
+          : `${rowAccessibilityLabel}, ${agentCountLabel}`
       }
+      accessibilityRole="button"
+      accessibilityState={{ selected }}
+      accessibilityActions={rowAccessibilityActions}
       onAccessibilityAction={(event) => {
         if (event.nativeEvent.actionName === "openPullRequests") handleOpenPullRequests();
         if (event.nativeEvent.actionName === "dismissWoke") handleAcknowledgeWoke();
-        if (event.nativeEvent.actionName === "toggleFamily") toggleFamily();
       }}
       onPress={() => {
         close();
@@ -1436,24 +1481,10 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         <View
           className="min-h-11 flex-row items-center gap-1"
           style={{
-            marginStart: Math.min(family?.depth ?? 0, 4) * 8,
+            marginStart: props.agentRow ? 16 : 0,
             opacity: recede ? 0.65 : 1,
           }}
         >
-          {familyLabel ? (
-            <Pressable
-              className="h-11 w-6 shrink-0 items-center justify-center"
-              accessibilityRole="button"
-              accessibilityLabel={familyLabel}
-              onPress={toggleFamily}
-            >
-              <SymbolView
-                name={family?.expanded ? "chevron.down" : "chevron.right"}
-                size={12}
-                tintColorClassName={rowAppearance.mutedIconTintClassName}
-              />
-            </Pressable>
-          ) : null}
           {props.project ? (
             <ProjectFavicon
               environmentId={thread.environmentId}
@@ -1523,6 +1554,9 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
               />
             ) : null}
           </View>
+          {agentCountLabel ? (
+            <Text className={cn("shrink-0 text-2xs", muted)}>{agentCountLabel}</Text>
+          ) : null}
           {props.hasQueuedMessages ? <QueuedMessageIcon selected={selected} /> : null}
           {issue ? (
             <View className="shrink-0 flex-row items-center gap-0.5">

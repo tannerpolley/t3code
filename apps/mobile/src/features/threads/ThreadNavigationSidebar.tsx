@@ -64,6 +64,7 @@ import { WorkspaceListHeader } from "../layout/workspace/WorkspaceListHeader";
 import { WorkspaceSidebarColumn } from "../layout/workspace/WorkspaceSidebarColumn";
 import {
   ThreadListV2PendingRow,
+  ThreadListV2AgentSectionHeader,
   ThreadListV2Row,
   THREAD_ROW_VIEWABILITY,
   ThreadListV2SettledShelfHeader,
@@ -257,7 +258,8 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
     toggleSnoozedShelf,
     toggleWorkingShelf,
   } = useThreadListV2ShelfPreferences();
-  const now = useThreadListNow(threads);
+  const agentThreads = useAtomValue(steadyThreadShells.quietThreadShellsAtom);
+  const now = useThreadListNow(agentThreads);
   const listEnvironments = useAtomValue(threadListEnvironmentsAtom);
   const {
     providersByEnvironmentId,
@@ -279,10 +281,10 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
     contentOnlyThreadKeys,
     olderSettledShelf,
     selectedRowKey,
-    setFamilyExpanded,
+    toggleAgentSection,
   } = useThreadListV2({
-    familyThreads: useAtomValue(steadyThreadShells.quietThreadShellsAtom),
-    delegatedUnderParent: useAtomValue(steadyThreadShells.delegatedUnderParentAtom),
+    agentThreads,
+    projects: projectScopes,
     openThreadKey: activeNewTask ? null : props.selectedThreadKey,
     threads: launchingThreads,
     pendingTasks,
@@ -421,6 +423,8 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
           />
         );
       }
+      case "v2-agent-section":
+        return <ThreadListV2AgentSectionHeader item={item} onToggle={toggleAgentSection} />;
       case "v2-thread": {
         const thread = item.item.thread;
         const scopeKey = scopedProjectKey(thread.environmentId, thread.projectId);
@@ -428,9 +432,9 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
           <ThreadListV2Row
             onNewThreadOnBranch={props.onNewThreadOnBranch}
             thread={thread}
-            family={item.family}
+            agentCount={item.agentCount}
+            agentRow={item.agentRow}
             listVisible={props.visible}
-            onToggleFamily={setFamilyExpanded}
             variant={item.item.variant}
             hasQueuedMessages={item.hasQueuedMessages}
             snoozed={item.item.snoozed}
@@ -481,7 +485,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
             pinningSupported={pinningEnvironmentIds.has(thread.environmentId)}
             autoSettleOptOutSupported={autoSettleOptOutEnvironmentIds.has(thread.environmentId)}
             reorderSupported={
-              !item.family?.depth &&
+              !item.agentRow &&
               (item.item.pinned
                 ? pinReorderEnvironmentIds.has(thread.environmentId)
                 : !workingShelfEnabled && activeReorderEnvironmentIds.has(thread.environmentId))

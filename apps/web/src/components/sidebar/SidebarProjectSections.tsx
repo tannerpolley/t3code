@@ -2,21 +2,19 @@ import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environ
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
 import {
   countSidebarAgentStates,
+  formatSidebarAgentStates,
+  sidebarRoleSectionLabels,
   type SidebarAgentRole,
 } from "@t3tools/client-runtime/state/sidebar-families";
 import type { ContextMenuSource } from "@t3tools/contracts";
 import { ChevronDownIcon, FolderIcon } from "lucide-react";
-import { msg, T, useGT, useMessages } from "gt-react";
+import { T, useGT, useMessages } from "gt-react";
 import { memo, useRef, useState } from "react";
 
 import { cn } from "../../lib/utils";
 import { contextMenuSourceOf } from "../../contextMenuSource";
 import { useUiStateStore } from "../../uiStateStore";
-import {
-  formatSidebarAgentStates,
-  resolveSidebarAgentState,
-  resolveThreadLastVisitedAt,
-} from "../Sidebar.logic";
+import { resolveSidebarAgentState, resolveThreadLastVisitedAt } from "../Sidebar.logic";
 import { Button } from "../ui/button";
 import {
   Dialog,
@@ -71,16 +69,6 @@ export function SidebarProjectSectionHeader(props: {
   );
 }
 
-const ROLE_SECTION_LABELS: Record<SidebarAgentRole, string> = {
-  implementation: msg("Implementors"),
-  review: msg("Reviewers"),
-  design: msg("Designers"),
-  writer: msg("Writers"),
-  research: msg("Researchers"),
-  test: msg("Testers"),
-  other: msg("Other agents"),
-};
-
 /** Counts the given threads by state, reading the same visit times as their rows. */
 export function useSidebarAgentStateSummary(
   threads: readonly EnvironmentThreadShell[],
@@ -131,7 +119,9 @@ export const SidebarRoleSectionHeader = memo(function SidebarRoleSectionHeader(p
           aria-hidden
           className={cn("size-3 shrink-0", props.collapsed && "-rotate-90")}
         />
-        <span className="shrink-0 font-medium">{messages(ROLE_SECTION_LABELS[props.role])}</span>
+        <span className="shrink-0 font-medium">
+          {messages(sidebarRoleSectionLabels[props.role])}
+        </span>
         <span className="tabular-nums">{props.threads.length}</span>
         <span className="min-w-0 flex-1 truncate text-end tabular-nums">{summary}</span>
       </button>

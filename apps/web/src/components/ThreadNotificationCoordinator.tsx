@@ -34,7 +34,8 @@ import {
   unlockNotificationAudio,
 } from "../threadNotifications";
 import { resolveBackgroundThreadRequest } from "./backgroundThreadAnnouncement";
-import { resolveSidebarThreadStatus, type SidebarThreadStatus } from "./Sidebar.logic";
+import type { SidebarThreadStatus } from "@t3tools/client-runtime/sidebar-row-model";
+import { resolveSidebarThreadStatus } from "./Sidebar.logic";
 import {
   createThreadNotificationGate,
   isSnoozedForNotification,

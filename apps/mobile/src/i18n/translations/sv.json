@@ -5719,5 +5719,17 @@
   "1accce409be44f6b": "Tillbaka",
   "735fa8731e0670ae": "Skicka",
   "7f8cb8174c6d288f": "Nästa",
-  "538a08613f07568c": "{count, plural, one {{count} underagent} other {{count} underagenter}}"
+  "bc964a581a444a14": "Implementerare",
+  "9b3ae5edeae058a1": "Granskare",
+  "cf0e8ad75963ca8e": "Designer",
+  "545747b2c3f2ecc3": "Skribenter",
+  "a3c50c07709d4e5a": "Utredare",
+  "a8b242104520f980": "Testare",
+  "9b91ea2c9ea018b4": "Andra agenter",
+  "53b6a1bb66a65417": "{count} väntar",
+  "7604475334656aa6": "{count} väntar på dig",
+  "817047065121ef0c": "Artefakter",
+  "653ccb5d1de8645c": "Filåtkomst krävs.",
+  "4854d01a02b30f3b": "Inga sparade artefakter.",
+  "ddbb7b9406af92ed": "Ta bort artefakten {name}"
 }

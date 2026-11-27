@@ -5713,5 +5713,17 @@
   "1accce409be44f6b": "Précédent",
   "735fa8731e0670ae": "Envoyer",
   "7f8cb8174c6d288f": "Suivant",
-  "538a08613f07568c": "{count, plural, one {{count} agent enfant} other {{count} agents enfants}}"
+  "bc964a581a444a14": "Développeurs",
+  "9b3ae5edeae058a1": "Relecteurs",
+  "cf0e8ad75963ca8e": "Concepteurs",
+  "545747b2c3f2ecc3": "Rédacteurs",
+  "a3c50c07709d4e5a": "Chercheurs",
+  "a8b242104520f980": "Testeurs",
+  "9b91ea2c9ea018b4": "Autres agents",
+  "53b6a1bb66a65417": "{count} en attente",
+  "7604475334656aa6": "{count} vous attendent",
+  "817047065121ef0c": "Artefacts",
+  "653ccb5d1de8645c": "L’accès aux fichiers est requis.",
+  "4854d01a02b30f3b": "Aucun artefact enregistré.",
+  "ddbb7b9406af92ed": "Retirer l’artefact {name}"
 }

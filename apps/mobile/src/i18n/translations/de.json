@@ -5719,5 +5719,17 @@
   "1accce409be44f6b": "Zurück",
   "735fa8731e0670ae": "Senden",
   "7f8cb8174c6d288f": "Weiter",
-  "538a08613f07568c": "{count, plural, one {{count} Kind-Agent} other {{count} Kind-Agenten}}"
+  "bc964a581a444a14": "Implementierer",
+  "9b3ae5edeae058a1": "Reviewer",
+  "cf0e8ad75963ca8e": "Designer",
+  "545747b2c3f2ecc3": "Autoren",
+  "a3c50c07709d4e5a": "Rechercheure",
+  "a8b242104520f980": "Tester",
+  "9b91ea2c9ea018b4": "Andere Agenten",
+  "53b6a1bb66a65417": "{count} warten",
+  "7604475334656aa6": "{count} warten auf dich",
+  "817047065121ef0c": "Artefakte",
+  "653ccb5d1de8645c": "Dateizugriff ist erforderlich.",
+  "4854d01a02b30f3b": "Keine gespeicherten Artefakte.",
+  "ddbb7b9406af92ed": "Artefakt {name} entfernen"
 }

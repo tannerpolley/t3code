@@ -1,6 +1,10 @@
+import type { SidebarThreadStatus } from "@t3tools/client-runtime/sidebar-row-model";
 import {
-  sidebarFamilyRows,
-  type SidebarFamilyRow,
+  countSidebarAgentStates,
+  sidebarAgentState,
+  sidebarRoleSections,
+  type SidebarAgentRole,
+  type SidebarAgentState,
 } from "@t3tools/client-runtime/state/sidebar-families";
 import { msg } from "gt-react-native";
 import {
@@ -44,6 +48,7 @@ import type { MenuAction } from "@react-native-menu/menu";
 import type { ThreadListProvider } from "../../state/thread-list-environments";
 import type { ThreadMoveAvailability } from "./threadOrder";
 
+import type { HomeProjectScope } from "../home/homeThreadList";
 import { relativeTime } from "../../lib/time";
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
 import { m, type MessageResolver } from "../../i18n/messages";
@@ -72,15 +77,7 @@ export function resolveThreadListV2ProviderDrivers(
   return currentDriver === undefined ? [] : drivers;
 }
 
-export type ThreadListV2Status =
-  | "approval"
-  | "input"
-  | "request"
-  | "working"
-  | "waiting"
-  | "failed"
-  | "limited"
-  | "ready";
+export type ThreadListV2Status = Exclude<SidebarThreadStatus, "preparing">;
 export type ThreadListV2SwipeAction = "archive" | "settle" | "unsettle" | "snooze" | "unsnooze";
 
 /**
@@ -448,7 +445,8 @@ export interface ThreadListV2ThreadListItem {
   readonly showTrailingDivider: boolean;
   /** Include queued state in item equality; outbox writes do not update thread shells. */
   readonly hasQueuedMessages: boolean;
-  readonly family?: Pick<SidebarFamilyRow, "depth" | "descendantCount" | "expanded">;
+  readonly agentCount: number;
+  readonly agentRow: boolean;
   readonly canMoveUp: boolean;
   readonly canMoveDown: boolean;
 }
@@ -486,7 +484,18 @@ export interface ThreadListV2SettledShelfListItem {
   readonly disabled: boolean;
 }
 
+export interface ThreadListV2AgentSectionItem {
+  readonly type: "v2-agent-section";
+  readonly key: string;
+  readonly title: string;
+  readonly role: SidebarAgentRole | null;
+  readonly total: number;
+  readonly counts: Readonly<Record<SidebarAgentState, number>>;
+  readonly expanded: boolean;
+}
+
 export type ThreadListV2ListItem =
+  | ThreadListV2AgentSectionItem
   | ThreadListV2ThreadListItem
   | ThreadListV2PendingListItem
   | ThreadListV2WorkingShelfListItem
@@ -498,6 +507,7 @@ export function isThreadListV2ListItem(value: {
 }): value is ThreadListV2ListItem {
   return (
     value.type === "v2-thread" ||
+    value.type === "v2-agent-section" ||
     value.type === "v2-pending" ||
     value.type === "v2-working-shelf" ||
     value.type === "v2-snoozed-shelf" ||
@@ -525,11 +535,22 @@ export function threadListV2ListItemsAreEqual(
         previous.snoozePresetMinute === item.snoozePresetMinute &&
         previous.showTrailingDivider === item.showTrailingDivider &&
         previous.hasQueuedMessages === item.hasQueuedMessages &&
-        previous.family?.depth === item.family?.depth &&
-        previous.family?.descendantCount === item.family?.descendantCount &&
-        previous.family?.expanded === item.family?.expanded &&
+        previous.agentCount === item.agentCount &&
+        previous.agentRow === item.agentRow &&
         previous.canMoveUp === item.canMoveUp &&
         previous.canMoveDown === item.canMoveDown
+      );
+    case "v2-agent-section":
+      return (
+        previous.type === "v2-agent-section" &&
+        previous.key === item.key &&
+        previous.title === item.title &&
+        previous.role === item.role &&
+        previous.total === item.total &&
+        previous.expanded === item.expanded &&
+        previous.counts.working === item.counts.working &&
+        previous.counts.attention === item.counts.attention &&
+        previous.counts.failed === item.counts.failed
       );
     case "v2-pending":
       return (
@@ -586,12 +607,30 @@ function resolveThreadListV2ItemTimeLabel(
   );
 }
 
+export function indexThreadListAgentSections(
+  children: ReadonlyMap<string, readonly EnvironmentThreadShell[]>,
+  projects: readonly Pick<HomeProjectScope, "key" | "title" | "projectRefs">[],
+) {
+  const projectKeyByRef = new Map(
+    projects.flatMap(({ key, projectRefs }) =>
+      projectRefs.map(
+        ({ environmentId, projectId }) => [`${environmentId}:${projectId}`, key] as const,
+      ),
+    ),
+  );
+  return sidebarRoleSections(children, (child) =>
+    projectKeyByRef.get(`${child.environmentId}:${child.projectId}`),
+  );
+}
+
 export function buildThreadListV2ListItems(input: {
   readonly items: ReadonlyArray<ThreadListV2Item>;
   readonly pendingTasks: ReadonlyArray<PendingNewTask>;
-  readonly families?: {
+  readonly agents?: {
     readonly children: ReadonlyMap<string, readonly EnvironmentThreadShell[]>;
-    readonly expansion: ReadonlyMap<string, boolean>;
+    readonly projects: readonly Pick<HomeProjectScope, "key" | "title" | "projectRefs">[];
+    readonly sections: ReturnType<typeof indexThreadListAgentSections>;
+    readonly collapsed: ReadonlySet<string>;
     readonly routeKey: string | null;
     readonly now: string;
   };
@@ -613,7 +652,10 @@ export function buildThreadListV2ListItems(input: {
 }): ThreadListV2ListItem[] {
   const resolve = input.resolve ?? m;
   const queuedThreadKeys = input.queuedThreadKeys?.size ? input.queuedThreadKeys : undefined;
-  const buildThreadItem = (item: ThreadListV2Item): ThreadListV2ThreadListItem => {
+  const buildThreadItem = (
+    item: ThreadListV2Item,
+    agentRow = false,
+  ): ThreadListV2ThreadListItem => {
     const snoozeWakeLabelText =
       item.snoozed && item.thread.snoozedUntil != null && input.snoozeLabelNow !== undefined
         ? snoozeWakeLabel(item.thread.snoozedUntil, { now: input.snoozeLabelNow }, resolve)
@@ -640,11 +682,14 @@ export function buildThreadListV2ListItems(input: {
       showTrailingDivider: false,
       hasQueuedMessages:
         queuedThreadKeys?.has(`${item.thread.environmentId}:${item.thread.id}`) === true,
+      agentCount:
+        input.agents?.children.get(`${item.thread.environmentId}:${item.thread.id}`)?.length ?? 0,
+      agentRow,
       canMoveUp: move?.canMoveUp === true,
       canMoveDown: move?.canMoveDown === true,
     };
   };
-  const threadItems = input.items.map(buildThreadItem);
+  const threadItems = input.items.map((item) => buildThreadItem(item));
   const pendingItems = input.pendingTasks.map((pendingTask, index): ThreadListV2ListItem => ({
     type: "v2-pending",
     key: `v2-${pendingTask.key}`,
@@ -673,6 +718,65 @@ export function buildThreadListV2ListItems(input: {
     });
     result.push(...threadItems.slice(workingShelfHeaderIndex, workingEnd));
   }
+  const agents = input.agents;
+  if (agents) {
+    const countStates = (threads: readonly EnvironmentThreadShell[]) =>
+      countSidebarAgentStates(threads, (thread) =>
+        sidebarAgentState(
+          resolveThreadListV2RowStatus(thread),
+          thread.runtime?.status === "running",
+        ),
+      );
+    for (const project of agents.projects) {
+      const sections = agents.sections.get(project.key);
+      if (!sections) continue;
+      const projectKey = `v2-agent-project:${project.key}`;
+      const projectExpanded = !agents.collapsed.has(projectKey);
+      const threads = sections.flatMap((section) => section.threads);
+      result.push({
+        type: "v2-agent-section",
+        key: projectKey,
+        title: project.title,
+        role: null,
+        total: threads.length,
+        counts: countStates(threads),
+        expanded: projectExpanded,
+      });
+      if (!projectExpanded) continue;
+      for (const section of sections) {
+        const key = `v2-agent-role:${section.key}`;
+        const expanded = !agents.collapsed.has(key);
+        result.push({
+          type: "v2-agent-section",
+          key,
+          title: project.title,
+          role: section.role,
+          total: section.threads.length,
+          counts: countStates(section.threads),
+          expanded,
+        });
+        for (const thread of section.threads) {
+          if (!expanded && agents.routeKey !== `${thread.environmentId}:${thread.id}`) continue;
+          const snoozed =
+            (input.snoozeEnvironmentIds?.has(thread.environmentId) ?? true) &&
+            effectiveSnoozed(thread, { now: agents.now });
+          result.push(
+            buildThreadItem(
+              {
+                thread,
+                variant: snoozed || thread.settledOverride === "settled" ? "slim" : "card",
+                pinned: thread.pinnedAt != null,
+                snoozed,
+                wokeAt: resolveThreadListV2WokeAt(thread, { now: agents.now }),
+                isLast: false,
+              },
+              true,
+            ),
+          );
+        }
+      }
+    }
+  }
   if (snoozedShelfHeaderIndex !== null && snoozedCount > 0) {
     result.push({
       type: "v2-snoozed-shelf",
@@ -693,41 +797,9 @@ export function buildThreadListV2ListItems(input: {
     });
     result.push(...threadItems.slice(settledShelfHeaderIndex));
   }
-  const families = input.families;
-  const familyRows =
-    families &&
-    sidebarFamilyRows(
-      input.items.map(({ thread }) => thread),
-      families.children,
-      families.expansion,
-      families.routeKey,
-    );
-  const rows =
-    familyRows && families
-      ? result.flatMap((entry): ThreadListV2ListItem[] => {
-          if (entry.type !== "v2-thread") return [entry];
-          const { thread } = entry.item;
-          const family = familyRows.get(`${thread.environmentId}:${thread.id}`);
-          if (!family || family[0]?.descendantCount === 0) return [entry];
-          return family.map(({ thread, depth, descendantCount, expanded }) => {
-            const row =
-              depth === 0
-                ? entry
-                : buildThreadItem({
-                    thread,
-                    variant: entry.item.variant,
-                    pinned: thread.pinnedAt != null,
-                    snoozed: false,
-                    wokeAt: resolveThreadListV2WokeAt(thread, { now: families.now }),
-                    isLast: false,
-                  });
-            return { ...row, family: { depth, descendantCount, expanded } };
-          });
-        })
-      : result;
-  return rows.map((entry, index) => {
+  return result.map((entry, index) => {
     if (entry.type !== "v2-thread" && entry.type !== "v2-pending") return entry;
-    const next = rows[index + 1];
+    const next = result[index + 1];
     const showTrailingDivider =
       next?.type === "v2-thread" || (next?.type === "v2-pending" && !next.showPendingDivider);
     return showTrailingDivider === entry.showTrailingDivider
