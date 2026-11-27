@@ -102,6 +102,11 @@ export const SidebarAutoSettleAfterDays = Schema.Number.check(
   }),
 );
 export type SidebarAutoSettleAfterDays = typeof SidebarAutoSettleAfterDays.Type;
+const DEFAULT_THREAD_RETIREMENT_COMPACTIONS = 4;
+export const MAX_THREAD_RETIREMENT_COMPACTIONS = 100;
+const ThreadRetirementCompactions = Schema.Int.check(
+  Schema.isBetween({ minimum: 1, maximum: MAX_THREAD_RETIREMENT_COMPACTIONS }),
+);
 const DEFAULT_SIDEBAR_AUTO_SETTLE_AFTER_DAYS: SidebarAutoSettleAfterDays = 7;
 
 export const MAX_SNOOZE_PRESET_MINUTES = 30 * 24 * 60;
@@ -1533,6 +1538,9 @@ export const ServerSettings = Schema.Struct({
   sidebarAutoSettleAfterDays: Schema.NullOr(SidebarAutoSettleAfterDays).pipe(
     Schema.withDecodingDefault(Effect.succeed(DEFAULT_SIDEBAR_AUTO_SETTLE_AFTER_DAYS)),
   ),
+  threadRetirementCompactions: ThreadRetirementCompactions.pipe(
+    Schema.withDecodingDefault(Effect.succeed(DEFAULT_THREAD_RETIREMENT_COMPACTIONS)),
+  ),
   compactIdleThreads: LegacyCompactIdleThreads.pipe(
     Schema.withDecodingDefault(Effect.succeed(false)),
   ),
@@ -2012,6 +2020,7 @@ export const ServerSettingsPatch = Schema.Struct({
   simlockDeviceHosts: Schema.optionalKey(SimlockDeviceHostConfigs),
   simlockDeviceHostsEnabled: Schema.optionalKey(Schema.Boolean),
   sidebarAutoSettleAfterDays: Schema.optionalKey(Schema.NullOr(SidebarAutoSettleAfterDays)),
+  threadRetirementCompactions: Schema.optionalKey(ThreadRetirementCompactions),
   compactIdleThreads: Schema.optionalKey(LegacyCompactIdleThreads),
   idleCompaction: Schema.optionalKey(IdleCompactionMode),
   sidebarAutoSettleKeepPullRequests: Schema.optionalKey(Schema.Boolean),

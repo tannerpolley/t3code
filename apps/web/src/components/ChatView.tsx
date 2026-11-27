@@ -145,7 +145,7 @@ import {
 } from "react";
 import { BackgroundThreadContext } from "./chat/backgroundThread";
 import { WorkspaceMutationIdContext } from "./chat/ChatMarkdownMedia";
-import { useLocation, useNavigate } from "@tanstack/react-router";
+import { Link, useLocation, useNavigate } from "@tanstack/react-router";
 import {
   assistantCitationFromLocation,
   useSideChatCitationReveal,
@@ -552,6 +552,9 @@ export default function ChatView(props: ChatViewProps) {
           updatedAt: fallbackUpdatedAt,
           lastVisitedAt: fallbackLastVisitedAt,
         });
+  const successorThreadId =
+    serverThread?.source.successorThreadId ??
+    serverProjection?.thread.retirement?.successorThreadId;
   const promptRef = useRef("");
   const localComposerRef = useRef<ChatComposerHandle | null>(null);
   const composerRef = useComposerHandleContext() ?? localComposerRef;
@@ -3862,6 +3865,20 @@ export default function ChatView(props: ChatViewProps) {
                                 }
                               />
                             ) : null}
+                            {successorThreadId === undefined ? null : (
+                              <div className="flex justify-between gap-2 px-3 py-2 text-xs text-muted-foreground">
+                                <span>{gt("New work goes to the successor.")}</span>
+                                <Link
+                                  className="shrink-0 text-foreground underline underline-offset-2"
+                                  to="/$environmentId/$threadId"
+                                  params={buildThreadRouteParams(
+                                    scopeThreadRef(environmentId, successorThreadId),
+                                  )}
+                                >
+                                  {gt("Open successor")}
+                                </Link>
+                              </div>
+                            )}
                             {!composerMounted ? null : (
                               <ChatComposer
                                 canOperateThread={canOperateThread}
@@ -3905,19 +3922,21 @@ export default function ChatView(props: ChatViewProps) {
                                 canResume={canResume}
                                 isRevertingCheckpoint={isRevertingCheckpoint}
                                 sendDisabledReason={
-                                  !canOperateThread
-                                    ? gt("This connection cannot change threads.")
-                                    : isEnvironmentChanging
-                                      ? gt("Preparing machine")
-                                      : isRevertingCheckpoint
-                                        ? gt("Rewinding conversation")
-                                        : feedbackUploading
-                                          ? gt("Sending feedback")
-                                          : threadDetailLoading
-                                            ? gt("Messages loading")
-                                            : worktreeSetupBlocksSend
-                                              ? gt("Preparing worktree")
-                                              : projectCloneSendBlockReason
+                                  successorThreadId !== undefined
+                                    ? gt("New work goes to the successor.")
+                                    : !canOperateThread
+                                      ? gt("This connection cannot change threads.")
+                                      : isEnvironmentChanging
+                                        ? gt("Preparing machine")
+                                        : isRevertingCheckpoint
+                                          ? gt("Rewinding conversation")
+                                          : feedbackUploading
+                                            ? gt("Sending feedback")
+                                            : threadDetailLoading
+                                              ? gt("Messages loading")
+                                              : worktreeSetupBlocksSend
+                                                ? gt("Preparing worktree")
+                                                : projectCloneSendBlockReason
                                 }
                                 isPreparingWorktree={isPreparingWorktree && !sendQueuesBehindSetup}
                                 bannerItems={

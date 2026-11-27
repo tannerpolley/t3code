@@ -151,6 +151,7 @@ function layerProjectionStore(
       findGuestShareThreadId: () => Effect.die("unused findGuestShareThreadId"),
       getThread: () => Effect.die("unused getThread"),
       findThread: () => Effect.die("unused findThread"),
+      listRetiringThreadIds: () => Effect.die("unused listRetiringThreadIds"),
       getSettlementCandidates: () => Effect.die("unused getSettlementCandidates"),
       getThreadsWithPullRequests: () => Effect.die("unused getThreadsWithPullRequests"),
       getThreadWorktreePaths: () => Effect.die("unused getThreadWorktreePaths"),

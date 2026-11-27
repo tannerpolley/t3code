@@ -1,4 +1,8 @@
+import { serverEnvironment } from "../../state/server";
+import { Button } from "../ui/button";
 import {
+  canStartFresh,
+  threadLifeRing,
   sidebarRowModel,
   sidebarRoleLabels,
   shouldRecedeSidebarThread,
@@ -218,6 +222,9 @@ function SidebarThreadTooltip({
   branchMismatch,
   terminalStatus,
   terminalProcessCount,
+  lifeRing,
+  onStartFresh,
+  onOpenSuccessor,
 }: {
   thread: SidebarThreadSummary;
   project: ProjectFaviconProject | null;
@@ -235,6 +242,9 @@ function SidebarThreadTooltip({
   } | null;
   terminalStatus: TerminalStatusIndicator | null;
   terminalProcessCount: number;
+  lifeRing?: ReturnType<typeof threadLifeRing>;
+  onStartFresh?: (() => void) | undefined;
+  onOpenSuccessor?: (() => void) | undefined;
 }) {
   const driverKind = providerEntry?.driverKind ?? null;
   const worktreePath = thread.worktreePath?.trim();
@@ -256,6 +266,30 @@ function SidebarThreadTooltip({
           ) : null
         }
       >
+        {lifeRing ? (
+          <div className="flex flex-col items-start gap-1">
+            <span>
+              {lifeRing.fill === undefined
+                ? gt("Context usage unavailable")
+                : gt("{percent}% of context used", { percent: lifeRing.fill })}
+            </span>
+            <span>
+              {gt("{count, plural, one {{count} compaction} other {{count} compactions}}", {
+                count: lifeRing.count,
+              })}
+            </span>
+            {onStartFresh ? (
+              <Button size="xs" variant="outline" onClick={onStartFresh}>
+                {gt("Start fresh")}
+              </Button>
+            ) : null}
+            {onOpenSuccessor ? (
+              <Button size="xs" variant="outline" onClick={onOpenSuccessor}>
+                {gt("Open successor")}
+              </Button>
+            ) : null}
+          </div>
+        ) : null}
         {projectDisplayName ? (
           <div className="flex min-w-0 items-center gap-2">
             {project ? <ProjectFavicon project={project} className="size-3 shrink-0" /> : null}
@@ -592,6 +626,7 @@ type SidebarThreadRowProps = {
   timestampFormat: TimestampFormat;
   onThreadClick: (event: ReactMouseEvent, threadRef: ScopedThreadRef) => void;
   onThreadActivate: (threadRef: ScopedThreadRef) => void;
+  onStartFresh?: (threadRef: ScopedThreadRef) => void;
   onStartRename: (threadRef: ScopedThreadRef, title: string) => void;
   onRenameTitleChange: (title: string) => void;
   onCommitRename: (threadRef: ScopedThreadRef, title: string) => void;
@@ -880,6 +915,23 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     providerEntry?.driverKind,
   );
 
+  const threshold = useAtomValue(
+    serverEnvironment.threadRetirementThresholdAtom(thread.environmentId),
+  );
+  const lifeRing = threshold === null ? null : threadLifeRing(thread.source, threshold);
+  const successorThreadId = thread.source.successorThreadId;
+  const retiringLabel =
+    thread.source.retiringWorkerCount === undefined
+      ? null
+      : gt(
+          "{count, plural, one {Retiring · {count} agent running} other {Retiring · {count} agents running}}",
+          { count: thread.source.retiringWorkerCount ?? 0 },
+        );
+  const openSuccessor =
+    successorThreadId === undefined
+      ? undefined
+      : () => onThreadActivate(scopeThreadRef(thread.environmentId, successorThreadId));
+  const startFresh = props.onStartFresh;
   const detailsTooltip = (
     <SidebarThreadTooltip
       thread={checkoutThread}
@@ -895,6 +947,13 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
       branchMismatch={branchMismatch}
       terminalStatus={terminalStatus}
       terminalProcessCount={terminalProcessCount}
+      lifeRing={lifeRing}
+      onOpenSuccessor={openSuccessor}
+      onStartFresh={
+        startFresh && canOperateThread && canStartFresh(thread.source) && threshold !== null
+          ? () => startFresh(threadRef)
+          : undefined
+      }
     />
   );
 
@@ -1036,6 +1095,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
           : shouldRecede
             ? "text-sidebar-muted-foreground/75 hover:bg-sidebar-row-hover hover:text-sidebar-foreground"
             : "bg-transparent text-sidebar-foreground hover:bg-sidebar-row-hover",
+    retiringLabel !== null && "opacity-65",
     isFileDragOver && "ring-1 ring-inset ring-primary/70",
     isFileDragOver && !props.isActive && !isSelected && "bg-sidebar-row-hover",
     props.sortable?.isDragging &&
@@ -1075,7 +1135,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
 
   const accessibility = resolveSidebarRowAccessibility({
     title: rowTitle,
-    statusLabel: pendingSync ? gt("Pending") : (topStatus?.label ?? null),
+    statusLabel: retiringLabel ?? (pendingSync ? gt("Pending") : (topStatus?.label ?? null)),
     projectDisplayName: props.projectDisplayName,
     isActive: props.isActive,
   });
@@ -1353,6 +1413,24 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
         {props.familyDepth > 0 ? (
           <span aria-hidden className="absolute inset-y-0 -ms-1.5 border-s border-sidebar-border" />
         ) : null}
+        {lifeRing ? (
+          <span
+            aria-hidden
+            className={cn(
+              "flex shrink-0 items-center gap-0.5 text-2xs tabular-nums",
+              lifeRing.warning ? "text-warning-foreground" : "text-muted-foreground",
+            )}
+          >
+            <span
+              className="size-3 rounded-full"
+              style={{
+                background: `conic-gradient(currentColor ${lifeRing.fill ?? 0}%, color-mix(in srgb, currentColor 25%, transparent) 0)`,
+                maskImage: "radial-gradient(transparent 43%, black 50%)",
+              }}
+            />
+            {lifeRing.count}
+          </span>
+        ) : null}
         <span className="flex w-5 shrink-0 items-center justify-center">
           {props.childCount > 0 ? (
             <button
@@ -1400,6 +1478,19 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
         <span className="flex min-w-0 flex-1 items-center gap-1">
           {draftIndicator}
           {title}
+          {retiringLabel === null ? null : (
+            <button
+              type="button"
+              className="min-w-0 truncate text-2xs text-muted-foreground hover:underline"
+              onPointerDown={(event) => event.stopPropagation()}
+              onClick={(event) => {
+                event.stopPropagation();
+                openSuccessor?.();
+              }}
+            >
+              {retiringLabel}
+            </button>
+          )}
           {pinIndicator}
           {props.agentCount > 0 ? (
             <span className="shrink-0 text-xs text-muted-foreground tabular-nums">

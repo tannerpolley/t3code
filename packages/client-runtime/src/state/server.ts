@@ -1366,6 +1366,14 @@ export function createServerEnvironmentAtoms<R, E>(
       Atom.withLabel(`environment-data:server:settings:${environmentId}`),
     ),
   );
+  const threadRetirementThresholdAtom = Atom.family((environmentId: EnvironmentId) =>
+    Atom.make((get) => {
+      const config = get(configValueAtom(environmentId));
+      return config?.environment.capabilities.threadStartFresh === true
+        ? config.settings.threadRetirementCompactions
+        : null;
+    }).pipe(Atom.withLabel(`environment-data:server:thread-retirement-threshold:${environmentId}`)),
+  );
   const hiddenThreadTagsAtom = Atom.family((environmentId: EnvironmentId) =>
     Atom.make((get) => {
       const settings = get(settingsValueAtom(environmentId));
@@ -1553,6 +1561,7 @@ export function createServerEnvironmentAtoms<R, E>(
     }),
     updateStateAtom,
     settingsValueAtom,
+    threadRetirementThresholdAtom,
     hiddenThreadTagsAtom,
     usageModelFilterAtom,
     providersValueAtom,

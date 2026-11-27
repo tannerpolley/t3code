@@ -1,3 +1,6 @@
+import { canStartFresh } from "@t3tools/client-runtime/sidebar-row-model";
+import { orchestrationEnvironment } from "../state/orchestration";
+import { useAtomCommand } from "../state/use-atom-command";
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { msg, T, useGT, useMessages } from "gt-react";
 import { m } from "../i18n/messages";
@@ -1888,6 +1891,21 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     });
   };
 
+  const startFresh = useAtomCommand(orchestrationEnvironment.startFresh, { reportFailure: false });
+  const handleStartFresh = async (ref: ScopedThreadRef) => {
+    const toastId = toastManager.add({ type: "loading", title: gt("Writing handoff…") });
+    const result = await startFresh({
+      environmentId: ref.environmentId,
+      input: { threadId: ref.threadId },
+    });
+    toastManager.close(toastId);
+    if (result._tag === "Success") {
+      void navigateToThread(scopeThreadRef(ref.environmentId, result.value.successorThreadId));
+    } else if (!isAtomCommandInterrupted(result)) {
+      toastManager.add({ type: "error", title: gt("Could not start fresh") });
+    }
+  };
+
   const handleThreadFileDrop = async (threadRef: ScopedThreadRef, files: File[]) => {
     const dropId = queuePendingFileDrop({ threadRef, files });
     const landedBefore =
@@ -3159,6 +3177,10 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
               ),
               canTurnIntoProject: canTurnThreadIntoProject(threadRef),
               canRename: !fromSearch,
+              canStartFresh:
+                serverConfigs.get(thread.environmentId)?.environment.capabilities
+                  .threadStartFresh === true && canStartFresh(thread.source),
+              hasSuccessor: thread.source.successorThreadId !== undefined,
               supports: {
                 settlement: configLoaded,
                 autoSettleOptOut: supportsAutoSettleOptOut,
@@ -3192,6 +3214,15 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           return;
         }
         switch (clicked.value) {
+          case "start-fresh":
+            await handleStartFresh(threadRef);
+            return;
+          case "open-successor":
+            if (thread.source.successorThreadId !== undefined)
+              void navigateToThread(
+                scopeThreadRef(thread.environmentId, thread.source.successorThreadId),
+              );
+            return;
           case "filter-by-project":
             if (threadProjectGroup) {
               setProjectScopeKeys(
@@ -4028,6 +4059,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                           timestampFormat={timestampFormat}
                           onThreadClick={handleThreadClick}
                           onThreadActivate={navigateToThread}
+                          onStartFresh={handleStartFresh}
                           onStartRename={startThreadRename}
                           onRenameTitleChange={setRenamingTitle}
                           onCommitRename={commitThreadRename}

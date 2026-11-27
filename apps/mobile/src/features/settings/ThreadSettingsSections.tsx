@@ -1,3 +1,5 @@
+import { MAX_THREAD_RETIREMENT_COMPACTIONS } from "@t3tools/contracts";
+import { NumberField } from "../../components/ui/NumberField";
 import { T, useGT, msg, useMessages } from "gt-react-native";
 import { Button } from "../../components/ui/Button";
 import {
@@ -157,6 +159,26 @@ export function AutoSettleSettingsRows(props: {
             disabled={disabledFor("snoozeLimitedThreads")}
             onValueChange={(value) => writeToAll({ snoozeLimitedThreads: value })}
           />
+        </SettingsSection>
+      ) : null}
+      {!projectSelected &&
+      selectedTargets.every(
+        (entry) => entry.serverConfig.environment.capabilities.threadStartFresh === true,
+      ) ? (
+        <SettingsSection title={gt("Thread retirement")}>
+          <View className="flex-row items-center gap-4 px-4 py-4">
+            <Text className="flex-1 text-foreground">
+              <T>Compactions before the ring turns amber</T>
+            </Text>
+            <NumberField
+              label={gt("Compactions before the ring turns amber")}
+              min={1}
+              max={MAX_THREAD_RETIREMENT_COMPACTIONS}
+              value={referenceSettings.threadRetirementCompactions}
+              disabled={disabledFor("threadRetirementCompactions")}
+              onValueChange={(value) => props.write({ threadRetirementCompactions: value })}
+            />
+          </View>
         </SettingsSection>
       ) : null}
       <SettingsSection title={gt("Auto-settle")}>

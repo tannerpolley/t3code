@@ -8887,6 +8887,207 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
+  it.effect(
+    "starts fresh while a worker runs, relays the result once, then archives the source",
+    () =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const sink = yield* EventSink.EventSinkV2;
+        const threadId = ThreadId.make("retire-delegated-parent");
+        const projectId = ProjectId.make("retire-delegated-project");
+        yield* seedProject({
+          projectId,
+          title: "Delegated archive",
+          workspaceRoot: "/workspace/retire-delegated",
+          defaultModelSelection: null,
+          createdAt: "2026-09-07T00:00:00.000Z",
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make("retire-delegated-create"),
+          threadId,
+          projectId,
+          title: "Delegated archive",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+        });
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make("retire-delegated-message"),
+          threadId,
+          messageId: MessageId.make("retire-delegated-message"),
+          text: "Delegate the work, then finish your turn.",
+          attachments: [],
+          modelSelection,
+          dispatchMode: { type: "start_immediately" },
+        });
+        const parentRun = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
+        yield* orchestrator.dispatch({
+          type: "delegated_task.request",
+          createdBy: "agent",
+          creationSource: "mcp",
+          commandId: CommandId.make("retire-delegated-request"),
+          parentThreadId: threadId,
+          parentRunId: parentRun.id,
+          parentNodeId: parentRun.rootNodeId!,
+          task: "Keep working after the parent finishes.",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          completionWake: "always",
+        });
+        const delegatedParentRun = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
+        const now = yield* DateTime.now;
+        yield* sink.write({
+          events: [
+            {
+              id: EventId.make("retire-delegated-parent-completed"),
+              type: "run.updated",
+              threadId,
+              runId: parentRun.id,
+              occurredAt: now,
+              payload: { ...delegatedParentRun, status: "completed", completedAt: now },
+            },
+          ],
+        });
+        const parent = yield* orchestrator.getThreadProjection(threadId);
+        const task = parent.subagents[0]!;
+        assert.equal(parent.runs[0]?.status, "completed");
+        assert.equal(task.origin, "app_owned");
+        assert.equal(task.status, "running");
+        assert.isNotNull(task.childThreadId);
+
+        const management = yield* ThreadManagementService.ThreadManagementService;
+        const handoff = "Continue the migration from the same checkout.";
+        const { successorThreadId } = yield* management.startFresh({ threadId, handoff });
+        const shell = yield* orchestrator.getThreadShell(threadId);
+        assert.equal(shell?.successorThreadId, successorThreadId);
+        assert.equal(shell?.retiringWorkerCount, 1);
+        assert.equal(
+          (yield* management.startFresh({ threadId, handoff })).successorThreadId,
+          successorThreadId,
+        );
+
+        const successor = yield* orchestrator.getThreadProjection(successorThreadId);
+        assert.equal(successor.thread.projectId, projectId);
+        assert.deepEqual(successor.thread.modelSelection, parent.thread.modelSelection);
+        assert.equal(successor.messages[0]?.text, handoff);
+        assert.isEmpty(successor.subagents);
+        assert.equal(
+          (yield* orchestrator.getThreadProjection(task.childThreadId!)).thread.lineage
+            .parentThreadId,
+          threadId,
+        );
+
+        yield* orchestrator.autoArchiveSettledChild(
+          threadId,
+          CommandId.make("retire-while-running"),
+        );
+        assert.isNull((yield* orchestrator.getThreadProjection(threadId)).thread.archivedAt);
+        const refused = yield* orchestrator
+          .dispatch({
+            type: "message.dispatch",
+            createdBy: "user",
+            creationSource: "web",
+            commandId: CommandId.make("retire-delegated-new-work"),
+            threadId,
+            messageId: MessageId.make("retire-delegated-new-work"),
+            text: "New work",
+            attachments: [],
+            dispatchMode: { type: "queue_after_active" },
+          })
+          .pipe(Effect.flip);
+        assert.instanceOf(refused, Orchestrator.OrchestratorDispatchError);
+
+        const childThreadId = task.childThreadId!;
+        const childRun = (yield* orchestrator.getThreadProjection(childThreadId)).runs[0]!;
+        yield* sink.write({
+          events: [
+            {
+              id: EventId.make("retire-delegated-child-answer"),
+              type: "message.updated",
+              threadId: childThreadId,
+              runId: childRun.id,
+              occurredAt: now,
+              payload: {
+                id: MessageId.make("retire-delegated-child-answer"),
+                threadId: childThreadId,
+                runId: childRun.id,
+                nodeId: childRun.rootNodeId,
+                role: "assistant",
+                text: "Done",
+                attachments: [],
+                streaming: false,
+                createdBy: "agent",
+                creationSource: "provider",
+                createdAt: now,
+                updatedAt: now,
+              },
+            },
+            {
+              id: EventId.make("retire-delegated-child-run-completed"),
+              type: "run.updated",
+              threadId: childThreadId,
+              runId: childRun.id,
+              occurredAt: now,
+              payload: { ...childRun, status: "completed", completedAt: now },
+            },
+          ],
+        });
+        yield* orchestrator.recoverDelegatedTask(childThreadId, { sourceRunId: childRun.id });
+        yield* orchestrator.drainRetiringThread(threadId);
+        yield* orchestrator.drainRetiringThread(threadId);
+        const updatedSuccessor = yield* orchestrator.getThreadProjection(successorThreadId);
+        assert.equal(updatedSuccessor.messages.length, 2);
+        assert.match(updatedSuccessor.messages[1]!.text, /Done/);
+        const drainedSource = yield* orchestrator.getThreadProjection(threadId);
+        assert.match(drainedSource.subagents[0]?.result ?? "", /Done/);
+
+        const approval = {
+          id: RuntimeRequestId.make("retire-delegated-approval"),
+          nodeId: parentRun.rootNodeId!,
+          providerTurnId: null,
+          nativeRequestRef: null,
+          kind: "command",
+          status: "pending",
+          responseCapability: { type: "not_resumable", reason: "Test approval" },
+          createdAt: now,
+          resolvedAt: null,
+        } satisfies OrchestrationV2RuntimeRequest;
+        const recordApproval = (payload: OrchestrationV2RuntimeRequest) =>
+          sink.write({
+            events: [
+              {
+                id: EventId.make(`retire-delegated-approval:${payload.status}`),
+                type: "runtime-request.updated",
+                threadId,
+                occurredAt: now,
+                payload,
+              },
+            ],
+          });
+        yield* recordApproval(approval);
+        yield* orchestrator.autoArchiveSettledChild(
+          threadId,
+          CommandId.make("retire-approval-pending"),
+        );
+        assert.isNull((yield* orchestrator.getThreadProjection(threadId)).thread.archivedAt);
+        yield* recordApproval({ ...approval, status: "resolved", resolvedAt: now });
+        yield* orchestrator.autoArchiveSettledChild(
+          threadId,
+          CommandId.make("retire-after-result"),
+        );
+        assert.isNotNull((yield* orchestrator.getThreadProjection(threadId)).thread.archivedAt);
+      }),
+  );
+
   it.effect("cancels preparing work on archive and keeps it cancelled through replay", () =>
     Effect.gen(function* () {
       const orchestrator = yield* Orchestrator.OrchestratorV2;

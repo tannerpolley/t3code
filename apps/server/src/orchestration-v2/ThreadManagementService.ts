@@ -16,6 +16,7 @@ import {
   isListedThreadLineage,
   isOrchestrationV2WorkActive,
   MessageId,
+  OrchestrationV2StartFreshError,
   OrchestrationV2StopWorkflowError,
   type OrchestrationV2StopWorkflowInput,
   OrchestrationV2ForceStopThreadError,
@@ -48,6 +49,7 @@ import { delegatedTaskProgress } from "@t3tools/provider-core/server/subagentPro
 import { derivePendingBackgroundWork } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { threadTranscriptHeader } from "@t3tools/shared/threadTranscript";
 import { AgentScope } from "@t3tools/shared/AgentScope";
+import * as NodeCrypto from "@effect/platform-node/NodeCrypto";
 import * as Clock from "effect/Clock";
 import * as Context from "effect/Context";
 import * as DateTime from "effect/DateTime";
@@ -60,6 +62,7 @@ import * as Ref from "effect/Ref";
 import * as Result from "effect/Result";
 import * as Schema from "effect/Schema";
 import * as Semaphore from "effect/Semaphore";
+import * as SecureRandom from "effect/crypto/SecureRandom";
 import * as Stream from "effect/Stream";
 
 import * as CommandReceiptStore from "./CommandReceiptStore.ts";
@@ -76,6 +79,7 @@ import { contextBoundaryOrdinal } from "./contextBoundary.ts";
 import * as LegacyV1ThreadImporter from "./legacy/LegacyV1ThreadImporter.ts";
 import * as ServerSettings from "../serverSettings.ts";
 import { ThreadWorktreeRestore } from "../workspace/restoreMissingWorktree.ts";
+import { isProviderSignOutPrompt } from "./CommandPolicy.ts";
 import { checkOutput, outputRequestProblem } from "./runOutput.ts";
 
 export type ThreadManagementSendMode = "auto" | "queue" | "steer" | "restart";
@@ -416,6 +420,10 @@ export type ThreadManagementError = typeof ThreadManagementError.Type;
 type ThreadManagementFailure = ThreadManagementError | Orchestrator.OrchestratorV2Error;
 
 export interface ThreadManagementServiceShape {
+  readonly startFresh: (input: {
+    readonly threadId: ThreadId;
+    readonly handoff?: string;
+  }) => Effect.Effect<{ readonly successorThreadId: ThreadId }, OrchestrationV2StartFreshError>;
   readonly searchThreadStream: (
     input: OrchestrationV2SearchThreadInput,
   ) => Stream.Stream<OrchestrationV2SearchThreadResult, Orchestrator.OrchestratorV2Error>;
@@ -1616,6 +1624,110 @@ const make = Effect.gen(function* () {
       ),
   );
 
+  const random = yield* SecureRandom.SecureRandom;
+  const draftingHandoffs = new Set<ThreadId>();
+  const startFresh: ThreadManagementServiceShape["startFresh"] = Effect.fn(
+    "ThreadManagementService.startFresh",
+  )(function* ({ threadId, handoff }) {
+    const { thread, runs } = yield* orchestrator
+      .getThreadRecords(threadId, ["runs"])
+      .pipe(
+        Effect.mapError(
+          (cause) => new OrchestrationV2StartFreshError({ threadId, reason: "unavailable", cause }),
+        ),
+      );
+    if (thread.retirement !== undefined)
+      return { successorThreadId: thread.retirement.successorThreadId };
+    if (
+      thread.lineage.parentThreadId !== null ||
+      thread.delegatedFrom !== undefined ||
+      thread.linkOrigin != null ||
+      thread.workflowRun !== undefined ||
+      thread.archivedAt !== null ||
+      thread.deletedAt !== null ||
+      runs.some((run) => run.status === "queued")
+    ) {
+      return yield* new OrchestrationV2StartFreshError({ threadId, reason: "unavailable" });
+    }
+    const id = yield* random.uuidV4();
+    if (handoff === undefined) {
+      if (draftingHandoffs.has(threadId))
+        return yield* new OrchestrationV2StartFreshError({ threadId, reason: "handoff" });
+      draftingHandoffs.add(threadId);
+      handoff = yield* Effect.gen(function* () {
+        const { run } = yield* sendToThread({
+          projectId: thread.projectId,
+          threadId,
+          commandId: CommandId.make(`start-fresh:draft:${id}`),
+          messageId: MessageId.make(`start-fresh:draft:${id}`),
+          text: "Write a short handoff for the successor T3 thread. Include the goal, decisions, pending work and approvals, and how to verify progress. Identify running workers and explain that their results will arrive separately. Reply with the handoff only, in at most 600 words.",
+          attachments: [],
+          mode: "queue",
+          createdBy: "user",
+          creationSource: "web",
+        });
+        const outcome = yield* waitForThread({
+          projectId: thread.projectId,
+          threadId,
+          runId: run.id,
+          timeoutMs: 300_000,
+        });
+        if (outcome.timedOut || outcome.run?.status !== "completed")
+          return yield* new OrchestrationV2StartFreshError({ threadId, reason: "handoff" });
+        const { messages } = yield* orchestrator.getThreadRecords(threadId, ["messages"], {
+          messageRunIds: [outcome.run.id],
+          messageRoles: ["assistant"],
+        });
+        return messages
+          .filter((message) => !message.streaming)
+          .map((message) => message.text)
+          .join("\n\n")
+          .trim()
+          .slice(0, 8000);
+      }).pipe(
+        Effect.ensuring(
+          Effect.sync(() => {
+            draftingHandoffs.delete(threadId);
+          }),
+        ),
+        Effect.mapError(
+          (cause) => new OrchestrationV2StartFreshError({ threadId, reason: "handoff", cause }),
+        ),
+      );
+    }
+    handoff = handoff.trim();
+    if (
+      handoff.length === 0 ||
+      handoff.length > 8000 ||
+      isProviderSignOutPrompt({ text: handoff, attachments: [] })
+    )
+      return yield* new OrchestrationV2StartFreshError({ threadId, reason: "handoff" });
+    return yield* Effect.gen(function* () {
+      const commandId = CommandId.make(`start-fresh:${id}`);
+      yield* assertProviderInstanceEnabled({
+        projectId: thread.projectId,
+        commandId,
+        instanceId: thread.modelSelection.instanceId,
+      });
+      yield* dispatch({
+        type: "thread.start-fresh",
+        commandId,
+        threadId,
+        successorThreadId: ThreadId.make(id),
+        messageId: MessageId.make(id),
+        handoff,
+      });
+      const { thread: retired } = yield* orchestrator.getThreadRecords(threadId, []);
+      if (retired.retirement === undefined)
+        return yield* new OrchestrationV2StartFreshError({ threadId, reason: "launch" });
+      return { successorThreadId: retired.retirement.successorThreadId };
+    }).pipe(
+      Effect.mapError(
+        (cause) => new OrchestrationV2StartFreshError({ threadId, reason: "launch", cause }),
+      ),
+    );
+  });
+
   const stopWorkflow: ThreadManagementServiceShape["stopWorkflow"] = Effect.fn(
     "ThreadManagementService.stopWorkflow",
   )(
@@ -1910,6 +2022,7 @@ const make = Effect.gen(function* () {
   });
 
   return ThreadManagementService.of({
+    startFresh,
     ensureLegacyTranscript,
     searchThreadStream: (input) =>
       Stream.unwrap(
@@ -2043,6 +2156,10 @@ const layerLegacyV1ThreadImporterNoop = Layer.succeed(
   }),
 );
 
+const layerThreadManagement = Layer.effect(ThreadManagementService, make).pipe(
+  Layer.provide(Layer.merge(ThreadCommandExecutor.layer, NodeCrypto.layer)),
+);
+
 export const layer: Layer.Layer<
   ThreadManagementService,
   never,
@@ -2050,10 +2167,9 @@ export const layer: Layer.Layer<
   | ProviderSessionManager.ProviderSessionManagerV2
   | ServerSettings.ServerSettingsService
   | CommandReceiptStore.CommandReceiptStoreV2
-> = Layer.effect(ThreadManagementService, make).pipe(
+> = layerThreadManagement.pipe(
   Layer.provide(layerLegacyV1ThreadImporterNoop),
   Layer.provide(layerThreadWorktreeRestoreNoop),
-  Layer.provide(ThreadCommandExecutor.layer),
 );
 
 export const layerWithLegacyImporter: Layer.Layer<
@@ -2065,4 +2181,4 @@ export const layerWithLegacyImporter: Layer.Layer<
   | ProviderSessionManager.ProviderSessionManagerV2
   | ServerSettings.ServerSettingsService
   | CommandReceiptStore.CommandReceiptStoreV2
-> = Layer.effect(ThreadManagementService, make).pipe(Layer.provide(ThreadCommandExecutor.layer));
+> = layerThreadManagement;
