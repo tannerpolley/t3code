@@ -9,7 +9,9 @@ const harness = vi.hoisted(() => ({
 
 vi.mock("react-native", () => ({ View: harness.Passthrough }));
 vi.mock("expo-image", () => ({ Image: () => <img alt="" /> }));
-vi.mock("./ui/AppSymbol", () => ({ SymbolView: () => null }));
+vi.mock("./ui/AppSymbol", () => ({
+  SymbolView: ({ name }: { name: string }) => <span>{name}</span>,
+}));
 vi.mock("./ui/AppText", () => ({
   AppText: ({ children }: { children?: ReactNode }) => <span>{children}</span>,
 }));
@@ -45,6 +47,27 @@ it("mounts the favicon image in the first commit", async () => {
     );
     expect(container.querySelector("img")).not.toBeNull();
     expect(commits).toEqual(["mount"]);
+  } finally {
+    await act(async () => root.unmount());
+  }
+});
+
+it("swaps the fallback folder symbol with the open state", async () => {
+  (globalThis as { IS_REACT_ACT_ENVIRONMENT?: boolean }).IS_REACT_ACT_ENVIRONMENT = true;
+  const container = document.createElement("div");
+  const root = createRoot(container);
+  const view = (open: boolean) => (
+    <ProjectFavicon
+      environmentId={EnvironmentId.make("env-1")}
+      projectTitle="Project"
+      open={open}
+    />
+  );
+  try {
+    await act(async () => root.render(view(false)));
+    expect(container.textContent).toBe("folder.fill");
+    await act(async () => root.render(view(true)));
+    expect(container.textContent).toBe("folder.open");
   } finally {
     await act(async () => root.unmount());
   }

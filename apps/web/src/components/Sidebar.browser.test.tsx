@@ -613,6 +613,11 @@ it("lists child agents in role sections under their project and keeps a closed s
     .toBeVisible();
   await expect.element(implementors).toHaveTextContent("Implementors11 waiting on you");
 
+  const section = screen.getByRole("button", { name: "In progress" });
+  const folder = screen.getByRole("button", { name: /^T3 Code/ });
+  expect(section.element().querySelector(".lucide-folder-open")).toBeVisible();
+  expect(folder.element().querySelector(".lucide-folder-open")).toBeVisible();
+
   // A closed project sums up its threads and agents on one line.
   _layout.mockReturnValue({
     byEnvironment: new Map([
@@ -638,8 +643,8 @@ it("lists child agents in role sections under their project and keeps a closed s
   });
   await screen.rerender(tree("remount"));
   await expect.element(implementors).not.toBeInTheDocument();
-  const folder = screen.getByRole("button", { name: /^T3 Code/ });
   await expect.element(folder).toHaveAttribute("aria-expanded", "false");
+  expect(folder.element().querySelector(".lucide-folder")).toBeVisible();
   await expect.element(folder.getByText("1 waiting", { exact: true })).toBeVisible();
 });
 

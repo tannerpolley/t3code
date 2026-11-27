@@ -263,7 +263,6 @@ import { SidebarContent, SidebarGroup, useSidebar } from "./ui/sidebar";
 import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrome";
 import { useSidebarLayout } from "../state/sidebarLayout";
 import {
-  projectSectionRows,
   projectThreadPlacement,
   sectionProjectIds,
   sortProjectThreads,
@@ -293,6 +292,7 @@ import {
   indexSidebarChildren,
   sidebarFamilyRows,
   groupSidebarThreadsByProject,
+  projectSectionRows,
   sidebarProjectContents,
   type SidebarFamilyRow,
 } from "@t3tools/client-runtime/state/sidebar-families";

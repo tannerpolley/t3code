@@ -5711,5 +5711,6 @@
   "817047065121ef0c": "Artefatos",
   "653ccb5d1de8645c": "É necessário ter acesso aos arquivos.",
   "4854d01a02b30f3b": "Nenhum artefato salvo.",
-  "ddbb7b9406af92ed": "Remover o artefato {name}"
+  "ddbb7b9406af92ed": "Remover o artefato {name}",
+  "54d9df5245fa49a7": "Não foi possível salvar o layout da barra lateral. Tente novamente."
 }

@@ -223,6 +223,7 @@ const ANDROID_ICON_BY_SF_SYMBOL = {
   folder: IconFolder,
   "folder.badge.plus": IconFolderPlus,
   "folder.fill": IconFolder,
+  "folder.open": IconFolderOpen,
   gearshape: IconSettings,
   globe: IconWorld,
   hammer: IconHammer,
@@ -308,6 +309,7 @@ const ANDROID_ICON_BY_SF_SYMBOL = {
     | "git.pull-request.draft"
     | "git.commit"
     | "git.issue"
+    | "folder.open"
     | "file.diff"
     | "robot",
     Icon
@@ -320,6 +322,7 @@ const SF_ICON_LOOKUP: Partial<
     | "git.pull-request.draft"
     | "git.commit"
     | "git.issue"
+    | "folder.open"
     | "file.diff"
     | "robot",
     Icon

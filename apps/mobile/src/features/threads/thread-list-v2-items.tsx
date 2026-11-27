@@ -14,7 +14,8 @@ import { isProviderDriverKind } from "@t3tools/contracts";
 import { ThreadRowSpinner } from "./ThreadRowSpinner";
 import { useAppActive } from "../../lib/appState";
 import { useIsFocused } from "@react-navigation/native";
-import { useAtomValue } from "@effect/atom-react";
+import { AsyncResult } from "effect/reactivity";
+import { RegistryContext, useAtomValue } from "@effect/atom-react";
 import * as Dialog from "../../components/ui/Dialog";
 import type { ThreadRowProviderInstance } from "./thread-provider-instance";
 import {
@@ -29,6 +30,7 @@ import { RowPressable } from "../../components/ui/RowPressable";
 import { CustomSnoozeSheet } from "./CustomSnoozeSheet";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { threadArrangementOpenAtom } from "../../state/thread-order";
+import { serverEnvironment } from "../../state/server";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useVisibleSecondClock } from "./use-visible-second-clock";
@@ -54,7 +56,7 @@ import { threadChipCopyTarget } from "@t3tools/client-runtime/thread-reference";
 import type { MenuAction } from "@react-native-menu/menu";
 import { useNavigation } from "@react-navigation/native";
 import { msg, T, useGT, useMessages } from "gt-react-native";
-import { memo, useCallback, useMemo, useState, type ComponentProps } from "react";
+import { memo, useCallback, useContext, useMemo, useState, type ComponentProps } from "react";
 import { Platform, Pressable, Text as RNText, useWindowDimensions, View } from "react-native";
 import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
 
@@ -102,6 +104,7 @@ import {
   type ThreadListV2Status,
   type ThreadListV2AgentSectionItem,
   type ThreadListV2ProjectFolderItem,
+  type ThreadListV2ProjectSectionItem,
 } from "./threadListV2";
 import { QueuedMessageIcon } from "./queued-message-icon";
 import { ThreadSearchMatchExcerpt } from "./thread-search-match";
@@ -619,6 +622,70 @@ export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props
   );
 });
 
+function sectionIndent(depth: number) {
+  return Math.min(depth, 3) * 10;
+}
+
+export function ThreadListV2ProjectSectionHeader({
+  item,
+  onToggle,
+}: {
+  readonly item: ThreadListV2ProjectSectionItem;
+  readonly onToggle: (key: string, expanded: boolean | null) => void;
+}) {
+  const registry = useContext(RegistryContext);
+  const update = useAtomCommand(serverEnvironment.updateSidebarLayout);
+  const gt = useGT();
+  const toggle = async () => {
+    const { environmentId } = item;
+    const record = AsyncResult.getOrElse(
+      registry.get(serverEnvironment.sidebarLayout({ environmentId, input: {} })),
+      () => null,
+    );
+    if (
+      !record ||
+      !registry.get(serverEnvironment.updateSidebarLayout.permissionAtom(environmentId))
+    ) {
+      onToggle(item.key, item.expanded);
+      return;
+    }
+    const result = await update({
+      environmentId,
+      input: {
+        revision: record.revision,
+        mutation: { type: "collapse", sectionId: item.sectionId, collapsed: item.expanded },
+      },
+    });
+    if (result._tag === "Success") onToggle(item.key, null);
+    if (result._tag === "Failure") {
+      Dialog.alert(gt("Could not save sidebar layout. Try again."));
+    }
+  };
+  return (
+    <RowPressable
+      accessibilityRole="button"
+      accessibilityState={{ expanded: item.expanded }}
+      onPress={() => void toggle()}
+      className="mt-2 min-h-11 flex-row items-center gap-2 pe-3"
+      style={{ paddingStart: 12 + sectionIndent(item.depth) }}
+    >
+      <SymbolView
+        name={item.expanded ? "folder.open" : "folder.fill"}
+        size={18}
+        tintColorClassName="foreground-muted"
+      />
+      <Text className="min-w-0 flex-1 text-sm font-t3-medium" numberOfLines={1}>
+        {item.title}
+      </Text>
+      <SymbolView
+        name={item.expanded ? "chevron.down" : "chevron.right"}
+        size={12}
+        tintColorClassName="foreground-muted"
+      />
+    </RowPressable>
+  );
+}
+
 export function ThreadListV2ProjectFolderHeader({
   item,
   onToggle,
@@ -634,7 +701,10 @@ export function ThreadListV2ProjectFolderHeader({
   const { project } = item;
 
   return (
-    <View className="mt-2 flex-row items-center">
+    <View
+      className="mt-2 flex-row items-center"
+      style={{ paddingStart: sectionIndent(item.depth) }}
+    >
       <RowPressable
         accessibilityRole="button"
         accessibilityState={{ expanded: item.expanded }}
@@ -647,6 +717,7 @@ export function ThreadListV2ProjectFolderHeader({
           projectIcon={project.projectIcon}
           projectTitle={item.title}
           workspaceRoot={project.workspaceRoot}
+          open={item.expanded}
           size={18}
         />
         <Text className="min-w-0 flex-1 text-sm font-t3-medium" numberOfLines={1}>
@@ -687,10 +758,11 @@ export function ThreadListV2AgentSectionHeader({
       accessibilityRole="button"
       accessibilityState={{ expanded: item.expanded }}
       onPress={() => onToggle(item.key, item.expanded)}
-      className="min-h-11 flex-row items-center gap-2 pe-3 ps-6"
+      className="min-h-11 flex-row items-center gap-2 pe-3"
+      style={{ paddingStart: 24 + sectionIndent(item.depth) }}
     >
       <SymbolView
-        name={item.expanded ? "chevron.down" : "chevron.right"}
+        name={item.expanded ? "folder.open" : "folder.fill"}
         size={12}
         tintColorClassName="foreground-muted"
       />
@@ -707,6 +779,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   readonly thread: EnvironmentThreadShell;
   readonly agentCount: number;
   readonly agentRow: boolean;
+  readonly depth?: number;
   readonly listVisible: boolean;
   readonly variant: "card" | "slim";
   readonly hasQueuedMessages?: boolean;
@@ -1572,11 +1645,15 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     </RowPressable>
   );
 
+  const inset = sectionIndent(props.depth ?? 0);
+  const indentation = inset > 0 ? { marginStart: inset } : undefined;
   if (!canSwipe)
-    return <View style={rowAppearance.swipeContainerStyle}>{rowContent(() => {})}</View>;
+    return (
+      <View style={[rowAppearance.swipeContainerStyle, indentation]}>{rowContent(() => {})}</View>
+    );
 
   return (
-    <View collapsable={false}>
+    <View collapsable={false} style={indentation}>
       {customSnoozeOpen && (
         <CustomSnoozeSheet onClose={() => setCustomSnoozeOpen(false)} onSnooze={handleSnooze} />
       )}
@@ -1588,7 +1665,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         containerStyle={rowAppearance.swipeContainerStyle}
         enableTrackpadSwipe
         fullSwipeAction="primary"
-        fullSwipeWidth={props.fullSwipeWidth ?? windowWidth - 32}
+        fullSwipeWidth={(props.fullSwipeWidth ?? windowWidth - 32) - inset}
         listAnimatesLayout
         onDelete={handleDelete}
         onSwipeableClose={props.onSwipeableClose}

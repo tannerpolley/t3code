@@ -18,6 +18,7 @@ import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell
 import { canSnooze, resolveSnoozePresets } from "@t3tools/client-runtime/state/thread-settled";
 import {
   CommandId,
+  EMPTY_SIDEBAR_LAYOUT,
   EnvironmentId,
   MessageId,
   OrchestrationV2ThreadShell,
@@ -1341,6 +1342,77 @@ describe("cross-section thread drops", () => {
       unsnooze: false,
     });
   });
+});
+
+it("renders saved section names, nesting, and interleaved project order", () => {
+  const projects = buildHomeProjectScopes({
+    projects: ["loose-first", "inner", "alpha", "beta", "loose-second"].map((title) =>
+      makeProjectFixture({ id: ProjectId.make(title), title, environmentId }),
+    ),
+    environmentId: null,
+    projectGroupingMode: "separate",
+  });
+  const layouts = new Map([
+    [
+      environmentId,
+      {
+        ...EMPTY_SIDEBAR_LAYOUT,
+        projectOrder: ["loose-second", "loose-first"],
+        sidebarProjectSections: [
+          { id: "empty", name: "Later", collapsed: false, projectKeys: [] },
+          {
+            id: "root",
+            name: "Work",
+            collapsed: false,
+            projectKeys: ["alpha", "beta"],
+            childOrder: ["beta", "section:nested", "alpha"],
+          },
+          {
+            id: "nested",
+            name: "In progress",
+            parentId: "root",
+            collapsed: false,
+            projectKeys: ["inner"],
+          },
+        ],
+      },
+    ],
+  ]);
+  const read = (expanded = new Map<string, boolean>()) =>
+    buildThreadListV2ListItems({
+      items: [],
+      pendingTasks: [],
+      folders: {
+        children: new Map(),
+        projects,
+        layouts,
+        expanded,
+        scoped: false,
+        routeKey: null,
+        now: NOW,
+      },
+    }).flatMap((row) =>
+      row.type === "v2-project-section" || row.type === "v2-project-folder"
+        ? [[row.type, row.title, row.depth, row.expanded]]
+        : [],
+    );
+
+  expect(read()).toEqual([
+    ["v2-project-section", "Later", 0, true],
+    ["v2-project-section", "Work", 0, true],
+    ["v2-project-folder", "beta", 1, true],
+    ["v2-project-section", "In progress", 1, true],
+    ["v2-project-folder", "inner", 2, true],
+    ["v2-project-folder", "alpha", 1, true],
+    ["v2-project-folder", "loose-second", 0, true],
+    ["v2-project-folder", "loose-first", 0, true],
+  ]);
+  expect(read(new Map([[`project-section:${environmentId}:root`, false]]))).toEqual([
+    ["v2-project-section", "Later", 0, true],
+    ["v2-project-section", "Work", 0, false],
+    ["v2-project-folder", "loose-second", 0, true],
+    ["v2-project-folder", "loose-first", 0, true],
+  ]);
 });
 
 it("keeps active and settled threads above role sections and summarizes collapsed folders", () => {
