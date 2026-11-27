@@ -624,6 +624,7 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
   const domainEvents = yield* PubSub.unbounded<OrchestrationV2DomainEvent>();
   const observedEvents = yield* Queue.unbounded<EventId>();
   const closedIdle = yield* Queue.unbounded<{ readonly threadId: string }>();
+  const archivedChildren = yield* Queue.unbounded<ThreadId>();
   const scriptRuns =
     yield* Queue.unbounded<ProjectSetupScriptRunner.ProjectSetupScriptRunnerInput>();
 
@@ -710,12 +711,12 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
           ),
         ),
       ...options.projections,
-      getSettlementCandidates: (threadId) =>
+      getSettlementCandidates: (threadId, readOptions) =>
         Ref.update(candidateReads, (reads) => [...reads, threadId]).pipe(
           Effect.andThen(Ref.updateAndGet(snapshotReadCount, (count) => count + 1)),
           Effect.tap((count) => Queue.offer(snapshotReads, count)),
           Effect.andThen(
-            options.projections?.getSettlementCandidates(threadId) ??
+            options.projections?.getSettlementCandidates(threadId, readOptions) ??
               Ref.get(snapshots).pipe(
                 Effect.map((snapshot) =>
                   threadId === undefined
@@ -738,6 +739,8 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
         Stream.tap((event) => Queue.offer(observedEvents, event.id)),
       ),
       dispatch,
+      autoArchiveSettledChild: (threadId) =>
+        Queue.offer(archivedChildren, threadId).pipe(Effect.asVoid),
     }),
     Layer.mock(TerminalManager.TerminalManager)({
       closeOnSettle: (input) =>
@@ -795,6 +798,7 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
     summaryRecovery,
     invalidatedCwds,
     closedIdle,
+    archivedChildren,
     scriptRuns,
     observedEvents,
     publishEvent: (event: OrchestrationV2DomainEvent) => PubSub.publish(domainEvents, event),
@@ -867,6 +871,53 @@ const settledEvent = (thread: OrchestrationV2AppThread): OrchestrationV2DomainEv
 });
 
 describe("ThreadSettlementServiceV2 worker", () => {
+  it.effect("archives children settled at startup and after a settlement event", () =>
+    Effect.gen(function* () {
+      const store = yield* ProjectionStore.ProjectionStoreV2;
+      const parent = appThread("parent", "settled");
+      const child = (id: string, settled: OrchestrationV2AppThread["settledOverride"]) => ({
+        ...appThread(id, settled),
+        lineage: {
+          parentThreadId: parent.id,
+          rootThreadId: parent.id,
+          relationshipToParent: "subagent" as const,
+        },
+      });
+      const alreadySettled = child("already-settled", "settled");
+      const stillActive = child("still-active", "active");
+      for (const thread of [parent, alreadySettled, stillActive]) {
+        yield* store.apply({
+          type: "thread.created",
+          id: EventId.make(`created:${thread.id}`),
+          threadId: thread.id,
+          occurredAt: thread.createdAt,
+          payload: thread,
+        });
+      }
+      const fixture = yield* makeHarness({ snapshot: makeSnapshot([]), projections: store });
+      yield* Effect.gen(function* () {
+        const service = yield* ThreadSettlementService.ThreadSettlementServiceV2;
+        yield* startHarness(service, fixture.activation, fixture.snapshotReads);
+        expect(Option.getOrNull(yield* Queue.poll(fixture.archivedChildren))).toBe(
+          alreadySettled.id,
+        );
+        expect(yield* Queue.size(fixture.archivedChildren)).toBe(0);
+        yield* store.apply({
+          type: "thread.archived",
+          id: EventId.make(`archived:${alreadySettled.id}`),
+          threadId: alreadySettled.id,
+          occurredAt: alreadySettled.updatedAt,
+          payload: { ...alreadySettled, archivedAt: alreadySettled.updatedAt },
+        });
+
+        const event = settledEvent(child(stillActive.id, "settled"));
+        yield* store.apply(event);
+        yield* fixture.publishEvent(event);
+        expect(yield* Queue.take(fixture.archivedChildren)).toBe(stillActive.id);
+      }).pipe(Effect.provide(fixture.layer));
+    }).pipe(Effect.provide(projectionStoreSql)),
+  );
+
   it.effect("skips settings and PR decisions for recent branchless threads", () =>
     Effect.gen(function* () {
       yield* TestClock.setTime(Date.parse(NOW));
