@@ -1524,7 +1524,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             if (issueProject === undefined) return;
             if (isMobile) setOpenMobile(false);
             if (currentIssueProject !== undefined && routeThreadRef !== null) {
-              useRightPanelStore.getState().openLinkedItems(routeThreadRef, true);
+              useRightPanelStore.getState().open(routeThreadRef, "issues");
               return;
             }
             const draft = await handleNewThread(
@@ -1533,7 +1533,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
             if (draft !== null) {
               useRightPanelStore
                 .getState()
-                .openLinkedItems(scopeThreadRef(issueProject.environmentId, draft.threadId), true);
+                .open(scopeThreadRef(issueProject.environmentId, draft.threadId), "issues");
             }
             return;
           }

@@ -16,7 +16,6 @@ import { useAppearancePreferences } from "../features/settings/appearance/Appear
 import { projectFaviconUrlAtom } from "../state/assets";
 import {
   countGlyphs,
-  projectAutoMonogram,
   projectIconColorClassNames,
   resolveProjectIconGlyph,
   type ProjectIconGlyph,
@@ -173,7 +172,6 @@ function ProjectFaviconImage(props: {
   );
 
   const showImage = faviconRequest !== null && status === "loaded";
-  const fallbackGlyph = showImage ? null : projectAutoMonogram(props.projectTitle);
 
   return (
     <View
@@ -184,9 +182,7 @@ function ProjectFaviconImage(props: {
         justifyContent: "center",
       }}
     >
-      {showImage ? null : fallbackGlyph ? (
-        <ProjectIconGlyphView glyph={fallbackGlyph} size={props.size} />
-      ) : (
+      {showImage ? null : (
         <SymbolView
           name={{ ios: "folder.fill", android: props.open ? "folder_open" : "folder" }}
           size={props.size}

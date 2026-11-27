@@ -72,7 +72,7 @@ import type { DesktopPreviewOverlay } from "~/previewStateStore";
 import { linkedThreadTitle } from "~/linkedThreadSurface";
 import type { RightPanelSurface } from "~/rightPanelStore";
 import { cn } from "~/lib/utils";
-import { issueStatePresentation } from "~/components/issue/issuePresentation";
+import { IssueGlyph, issueStatePresentation } from "~/components/issue/issuePresentation";
 import { issueEnvironment } from "~/state/issues";
 import { resolveShortcutCommand, type ShortcutMatchContext } from "~/keybindings";
 import { readLocalApi } from "~/localApi";
@@ -157,6 +157,8 @@ export interface RightPanelTabsProps {
   onAddFiles: () => void;
   onAddPullRequest: () => void;
   onAddPullRequests: () => void;
+  /** Absent where the project has no repository issue board. */
+  onAddIssues?: (() => void) | undefined;
   onAddDevice: () => void;
   /** Absent where side chats are not offered. */
   onAddSideChat?: (() => void) | undefined;
@@ -338,6 +340,8 @@ function RightPanelEmptyState(props: {
   onAddFiles: () => void;
   onAddPullRequest: () => void;
   onAddPullRequests: () => void;
+  /** Absent where the project has no repository issue board. */
+  onAddIssues?: (() => void) | undefined;
   onAddDevice: () => void;
   /** Absent where side chats are not offered. */
   onAddSideChat?: (() => void) | undefined;
@@ -404,6 +408,18 @@ function RightPanelEmptyState(props: {
       disabledReason: messages(SURFACE_UNAVAILABLE_HINTS.pullRequests),
       onClick: props.onAddPullRequests,
     },
+    ...(props.onAddIssues
+      ? [
+          {
+            label: msg("Issues"),
+            icon: IssueGlyph.issue,
+            shortcut: "I",
+            available: true,
+            disabledReason: "",
+            onClick: props.onAddIssues,
+          },
+        ]
+      : []),
     {
       label: msg("Device"),
       description: msg("Watch an iOS Simulator or Android Emulator."),
@@ -613,6 +629,8 @@ function surfaceTitle(
       return `#${surface.number}`;
     case "pull-requests":
       return resolve(msg("Linked items"));
+    case "issues":
+      return resolve(msg("Issues"));
     case "issue":
       // A git host numbers its issues; a tracker with keys of its own, such as Linear, names them.
       return /^\d+$/.test(surface.key) ? `#${surface.key}` : surface.key;
@@ -714,6 +732,8 @@ function SurfaceIcon({
       );
     case "pull-requests":
       return <PullRequestGlyph.link className="size-3 shrink-0" />;
+    case "issues":
+      return <IssueGlyph.issue className="size-3 shrink-0" />;
     case "issue":
       return <IssueSurfaceIcon surface={surface} environmentId={environmentId} />;
     case "thread":
@@ -1205,6 +1225,18 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       disabledReason: messages(SURFACE_DISABLED_REASONS.pullRequests),
       onClick: props.onAddPullRequests,
     },
+    ...(props.onAddIssues
+      ? [
+          {
+            label: msg("Issues"),
+            icon: IssueGlyph.issue,
+            shortcut: "I",
+            available: true,
+            disabledReason: "",
+            onClick: props.onAddIssues,
+          },
+        ]
+      : []),
     {
       label: msg("Device"),
       icon: Smartphone,
@@ -1686,6 +1718,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             onAddFiles={props.onAddFiles}
             onAddPullRequest={props.onAddPullRequest}
             onAddPullRequests={props.onAddPullRequests}
+            onAddIssues={props.onAddIssues}
             onAddDevice={props.onAddDevice}
             onAddSideChat={props.onAddSideChat}
             browserAvailable={props.browserAvailable}

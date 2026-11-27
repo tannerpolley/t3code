@@ -3,12 +3,11 @@ import {
   getProjectFaviconResourceKey,
   isProjectFaviconFallbackUrl,
 } from "@t3tools/shared/projectFavicon";
-import { FolderCodeIcon } from "lucide-react";
+import { FolderCodeIcon, FolderIcon } from "lucide-react";
 import type { ComponentType } from "react";
 import { createElement, lazy, Suspense, useState } from "react";
 import { useAtomValue } from "@effect/atom-react";
 import { projectFaviconUrlAtom, refreshProjectFaviconUrl } from "../state/assets";
-import { deriveProjectIdentity } from "../projectIdentity";
 import { projectIconColorClassName } from "../projectIconColors";
 import { ProjectMonogram } from "./ProjectMonogram";
 import { cn } from "~/lib/utils";
@@ -85,16 +84,10 @@ function AutomaticProjectFavicon(input: Parameters<typeof ProjectFavicon>[0]) {
     faviconPath: project.faviconPath,
   };
   const src = useAtomValue(projectFaviconUrlAtom(target));
-  const FallbackIcon = input.fallbackIcon ?? FolderCodeIcon;
+  const FallbackIcon = input.fallbackIcon ?? FolderIcon;
 
   if (!src || isProjectFaviconFallbackUrl(src)) {
-    return (
-      <ProjectFaviconFallback
-        className={input.className}
-        icon={FallbackIcon}
-        projectName={project.title}
-      />
-    );
+    return <ProjectFaviconFallback className={input.className} icon={FallbackIcon} />;
   }
 
   const cacheKey = getProjectFaviconResourceKey(
@@ -109,7 +102,6 @@ function AutomaticProjectFavicon(input: Parameters<typeof ProjectFavicon>[0]) {
       src={src}
       className={input.className}
       fallbackIcon={FallbackIcon}
-      fallbackProjectName={project.title}
       // An icon too large to cache inline loads from a signed URL that expires.
       onRemoteLoadError={() => refreshProjectFaviconUrl(target)}
     />
@@ -120,20 +112,11 @@ function ProjectFaviconFallback({
   className,
   icon: Icon,
   emoji,
-  projectName,
 }: {
   readonly className?: string | undefined;
   readonly icon: ComponentType<{ className?: string }>;
   readonly emoji?: string | undefined;
-  readonly projectName?: string | undefined;
 }) {
-  if (projectName && projectName.trim().length > 0) {
-    const identity = deriveProjectIdentity(projectName);
-    return (
-      <ProjectMonogram text={identity.monogram} color={identity.color} className={className} />
-    );
-  }
-
   if (emoji) {
     return (
       <span
@@ -155,13 +138,11 @@ function ProjectFaviconImage({
   src,
   className,
   fallbackIcon: FallbackIcon,
-  fallbackProjectName,
   onRemoteLoadError,
 }: {
   readonly src: string;
   readonly className?: string | undefined;
   readonly fallbackIcon: ComponentType<{ className?: string }>;
-  readonly fallbackProjectName?: string | undefined;
   readonly onRemoteLoadError: () => void;
 }) {
   const [displayedSrc, setDisplayedSrc] = useState<string | null>(() =>
@@ -180,11 +161,7 @@ function ProjectFaviconImage({
   return (
     <>
       {displayedSrc === null ? (
-        <ProjectFaviconFallback
-          className={className}
-          icon={FallbackIcon}
-          projectName={fallbackProjectName}
-        />
+        <ProjectFaviconFallback className={className} icon={FallbackIcon} />
       ) : null}
       {displayedSrc ? (
         <img

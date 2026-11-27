@@ -2129,9 +2129,10 @@ export default function ChatView(props: ChatViewProps) {
     isServerThread && supportsThreadPullRequests && visiblePullRequestCount > 0;
   const linkedItemsSurfaceAvailable =
     pullRequestsSurfaceAvailable ||
-    (isServerThread && (activeThreadShell?.issues?.length ?? 0) > 0) ||
-    (serverConfig?.environment.capabilities.issues === true &&
-      repoIssueBoardBinding(activeProject?.repositoryIdentity) !== undefined);
+    (isServerThread && (activeThreadShell?.issues?.length ?? 0) > 0);
+  const issuesSurfaceAvailable =
+    serverConfig?.environment.capabilities.issues === true &&
+    repoIssueBoardBinding(activeProject?.repositoryIdentity) !== undefined;
   const { state: deviceState, loaded: deviceStateLoaded } = useDeviceState(
     activeThreadRef?.environmentId ?? null,
   );
@@ -2541,6 +2542,7 @@ export default function ChatView(props: ChatViewProps) {
     addFilesSurfaceStable,
     addPullRequestSurfaceStable,
     addPullRequestsSurfaceStable,
+    addIssuesSurfaceStable,
     closePreviewPanelStable,
     copyRightPanelFilePathStable,
     createBrowserSurface,
@@ -4277,6 +4279,7 @@ export default function ChatView(props: ChatViewProps) {
           onAddFiles={addFilesSurfaceStable}
           onAddPullRequest={addPullRequestSurfaceStable}
           onAddPullRequests={addPullRequestsSurfaceStable}
+          onAddIssues={issuesSurfaceAvailable ? addIssuesSurfaceStable : undefined}
           onAddDevice={addDeviceSurfaceStable}
           onAddSideChat={sideChatsOffered ? openSideChatStable : undefined}
           browserAvailable={canOperatePreview && browserAvailable}

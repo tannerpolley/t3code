@@ -157,9 +157,6 @@ export async function reopenClosedView(
     case "issue":
       panels.openIssue(ref, surface);
       break;
-    case "pull-requests":
-      panels.openLinkedItems(ref, surface.showRepoBoard === true);
-      break;
     case "thread":
       panels.openThread(ref, surface.threadId);
       break;

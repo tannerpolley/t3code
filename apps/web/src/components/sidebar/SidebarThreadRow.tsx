@@ -1223,7 +1223,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
 
   const inFolder = variant === "folder";
   const familyIndent = Math.min(props.familyDepth, 4) * 12;
-  const folderIndent = inFolder ? 36 + Math.min(props.folderDepth ?? 0, 3) * 10 : 10;
+  const folderIndent = inFolder ? 16 + Math.min(props.folderDepth ?? 0, 3) * 10 : 10;
   const driverKind =
     providerEntry?.driverKind ?? (isProviderDriverKind(modelInstanceId) ? modelInstanceId : null);
   const startedAt =

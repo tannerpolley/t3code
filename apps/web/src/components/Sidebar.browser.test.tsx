@@ -536,6 +536,13 @@ it("orders sidebar row details and keeps a running family collapsed across a rem
     vi.advanceTimersByTime(1000);
     expect(implementor.getByText("1s", { exact: true }).element()).toBeVisible();
   }
+  const contentLeft = (element: Element) =>
+    element.getBoundingClientRect().left +
+    Number.parseFloat(getComputedStyle(element).paddingInlineStart);
+  const projectTitle = screen.getByText("T3 Code", { exact: true }).element();
+  // Rows start left of the project title, and a child agent still sits deeper than its parent.
+  expect(contentLeft(parentRow.element())).toBeLessThan(projectTitle.getBoundingClientRect().left);
+  expect(contentLeft(implementor.element())).toBeGreaterThan(contentLeft(parentRow.element()));
   const titleLabel = implementor.getByText("Implementor", { exact: true }).element();
   const row = implementor.element();
   const spinner = row.querySelector(".lucide-loader-circle")!;

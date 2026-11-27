@@ -23,6 +23,7 @@ import {
   type PersistentThreadTerminalPanelProps,
 } from "../PersistentThreadTerminals";
 import { IssueDetailPanel } from "../issue/IssueDetailPanel";
+import { RepoIssuesPanel } from "../issue/RepoIssueBoard";
 import { pullRequestPanelContext } from "../pullRequest/pullRequestDetail.logic";
 import { PullRequestDetailPanel } from "../pullRequest/PullRequestDetailPanel";
 import { PullRequestDetailGhost } from "../pullRequest/PullRequestGhosts";
@@ -231,13 +232,9 @@ export function RightPanelSurfaceContent(props: {
         />
       );
     case "pull-requests":
-      return (
-        <ThreadPullRequestsPanel
-          threadRef={threadRef}
-          projectId={props.pullRequest.projectId}
-          showRepoBoard={surface.showRepoBoard === true}
-        />
-      );
+      return <ThreadPullRequestsPanel threadRef={threadRef} />;
+    case "issues":
+      return <RepoIssuesPanel threadRef={threadRef} projectId={props.pullRequest.projectId} />;
     case "thread":
       // Not lazy: revealing a suspended tiptap editor tears down its view and crashes the composer.
       return (

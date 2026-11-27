@@ -349,4 +349,34 @@ describe("add surface launcher", () => {
     expect(await pressModT()).toBe(false);
     expect(page.getByRole("menu").query()).toBeNull();
   });
+
+  it("offers Issues on the I key only where the project has an issue board", async () => {
+    const onAddIssues = vi.fn();
+    const tabs = (offered: boolean) => (
+      <RightPanelTabs
+        {...(panel(DIFF_SURFACE).props as RightPanelTabsProps)}
+        surfaces={[]}
+        activeSurfaceId={null}
+        onAddIssues={offered ? onAddIssues : undefined}
+      >
+        {null}
+      </RightPanelTabs>
+    );
+    const pressI = () =>
+      act(() => {
+        document.body.dispatchEvent(
+          new KeyboardEvent("keydown", { key: "i", code: "KeyI", bubbles: true, cancelable: true }),
+        );
+      });
+    await using screen = await render(tabs(false));
+    await expect.element(screen.getByText("Linked items", { exact: true })).toBeVisible();
+    expect(screen.getByText("Issues", { exact: true }).query()).toBeNull();
+    await pressI();
+    expect(onAddIssues).not.toHaveBeenCalled();
+
+    await screen.rerender(tabs(true));
+    await expect.element(screen.getByText("Issues", { exact: true })).toBeVisible();
+    await pressI();
+    expect(onAddIssues).toHaveBeenCalledOnce();
+  });
 });
