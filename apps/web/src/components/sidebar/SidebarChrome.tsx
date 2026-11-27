@@ -1,4 +1,10 @@
-import { ArrowLeftIcon, ArrowRightIcon, ChartNoAxesColumnIcon, SettingsIcon } from "lucide-react";
+import {
+  ArrowLeftIcon,
+  ArrowRightIcon,
+  ChartNoAxesColumnIcon,
+  SettingsIcon,
+  ShuffleIcon,
+} from "lucide-react";
 import type { ReactNode } from "react";
 import { T, useGT } from "gt-react";
 import { memo } from "react";
@@ -6,6 +12,7 @@ import { Link, useLocation, useNavigate } from "@tanstack/react-router";
 
 import { useAtomValue } from "@effect/atom-react";
 import { useEnvironmentIdentificationMode } from "../../hooks/useSettings";
+import { useThreadRouteRef } from "../../hooks/useThreadRouteTarget";
 import { shortcutLabelForCommand } from "../../keybindings";
 import {
   navigateHistory,
@@ -14,7 +21,12 @@ import {
 } from "../../navigationHistory";
 import { primaryServerKeybindingsAtom } from "../../state/server";
 import { cn } from "../../lib/utils";
-import { useIssuesSupported, usePullRequestsSupported } from "../../state/environments";
+import {
+  useConnectedEnvironmentIds,
+  useIssuesSupported,
+  usePrimaryEnvironmentId,
+  usePullRequestsSupported,
+} from "../../state/environments";
 import { T3Wordmark } from "../T3Wordmark";
 import {
   resolveEnvironmentIdentificationPillLabel,
@@ -42,6 +54,7 @@ import { SidebarUpdateArchitectureWarning, SidebarUpdatePill } from "./SidebarUp
 import { PullRequestGlyph } from "~/components/pullRequest/pullRequestIcons";
 import { observeResize } from "~/lib/observeResize";
 import { SharedTooltipTrigger } from "../ui/shared-tooltip";
+import { RoleModelsPopover } from "../settings/RoleModelsPopover";
 
 export const SidebarChromeHeader = memo(function SidebarChromeHeader({
   isElectron,
@@ -224,6 +237,28 @@ function SidebarUtilityItem({
   );
 }
 
+function SidebarRoleModelsItem() {
+  const thread = useThreadRouteRef();
+  const primary = usePrimaryEnvironmentId();
+  const connected = useConnectedEnvironmentIds();
+  const environmentId =
+    thread?.environmentId ?? primary ?? (connected.length === 1 ? connected[0] : undefined);
+  if (environmentId === undefined) return null;
+  return (
+    <SidebarMenuItem className="shrink-0">
+      <RoleModelsPopover
+        environmentId={environmentId}
+        trigger={
+          <SidebarMenuButton size="icon">
+            <ShuffleIcon />
+          </SidebarMenuButton>
+        }
+        tooltip
+      />
+    </SidebarMenuItem>
+  );
+}
+
 const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
   const navigate = useNavigate();
   const navigateToMainApp = useNavigateToMainApp();
@@ -304,6 +339,7 @@ const SidebarUtilityMenu = memo(function SidebarUtilityMenu() {
             label={gt("Usage")}
             onClick={handleUsageClick}
           />
+          <SidebarRoleModelsItem />
         </>
       )}
       <SidebarThreadUndoNotice />

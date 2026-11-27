@@ -32,6 +32,7 @@ import * as Scope from "effect/Scope";
 import * as Stream from "effect/Stream";
 import * as Tool from "effect/ai/Tool";
 import { withExecutedModelNote } from "@t3tools/provider-core/server/subagentProjection";
+import { derive } from "@t3tools/provider-core/server/IdAllocator";
 
 import type * as McpInvocationContext from "../mcp/McpInvocationContext.ts";
 import { ProjectToolkit } from "../mcp/toolkits/project/tools.ts";
@@ -39,6 +40,7 @@ import {
   providerOptionDescriptors,
   resolveInteractionMode,
   resolveRuntimeMode,
+  roleModelTarget,
   taskPrompt,
   withoutAgentModePicks,
 } from "../mcp/delegatedTaskModes.ts";
@@ -229,15 +231,13 @@ const make = Effect.gen(function* () {
 
   /** The instance there of the driver the caller named, preferring the one this thread runs on, as a task here does. */
   const resolveRemoteInstance = Effect.fn("RemoteDelegation.resolveRemoteInstance")(function* (
-    scope: ThreadScope,
-    environmentId: EnvironmentId,
+    providers: OrchestratorMcpCapabilitiesResult["providers"],
     requested: {
       readonly driverKind: ProviderDriverKind;
       readonly providerInstanceId: ProviderInstanceId | undefined;
       readonly inheritedInstanceId: ProviderInstanceId;
     },
   ) {
-    const { providers } = yield* forwarding.call(scope, RemoteCapabilitiesTool, environmentId, {});
     if (requested.providerInstanceId !== undefined) {
       const named = providers.find(
         (provider) => provider.providerInstanceId === requested.providerInstanceId,
@@ -304,16 +304,37 @@ const make = Effect.gen(function* () {
       // The provider and model inherit as they do for a task here. Another
       // provider there has no model to inherit, so the caller names one.
       const inherited = parent.thread.modelSelection;
+      const role = input.role === "general" ? undefined : input.role;
+      // The same key identifies the launch there and the recorded task here.
+      const key = input.clientRequestId ?? (yield* random.uuidV4());
+      const commandId = CommandId.make(
+        `command:mcp:${encodeURIComponent(scope.requestNamespace)}:remote-delegate:${encodeURIComponent(key)}`,
+      );
+      if (
+        role !== undefined &&
+        input.clientRequestId !== undefined &&
+        (yield* threads.hasReceipt(commandId))
+      ) {
+        const taskId = derive.delegatedTaskNode({ commandId });
+        yield* followOne(scope.thread.threadId, taskId).pipe(Effect.forkIn(followers));
+        return { taskId };
+      }
+      const capabilities =
+        role === undefined && target.driverKind === undefined
+          ? undefined
+          : yield* forwarding.call(scope, RemoteCapabilitiesTool, target.environmentId, {});
+      const roleModel = role === undefined ? undefined : capabilities?.roleModels?.[role];
+      const requested = roleModel ? roleModelTarget(roleModel) : target;
       const instanceId =
-        target.driverKind === undefined
-          ? (target.providerInstanceId ?? inherited.instanceId)
-          : yield* resolveRemoteInstance(scope, target.environmentId, {
-              driverKind: target.driverKind,
-              providerInstanceId: target.providerInstanceId,
+        requested.driverKind === undefined
+          ? (requested.providerInstanceId ?? inherited.instanceId)
+          : yield* resolveRemoteInstance(capabilities?.providers ?? [], {
+              driverKind: requested.driverKind,
+              providerInstanceId: requested.providerInstanceId,
               inheritedInstanceId: inherited.instanceId,
             });
       const model =
-        target.model ?? (instanceId === inherited.instanceId ? inherited.model : undefined);
+        requested.model ?? (instanceId === inherited.instanceId ? inherited.model : undefined);
       if (model === undefined) {
         return yield* new OrchestratorMcpFailure({
           code: "target_required",
@@ -327,7 +348,7 @@ const make = Effect.gen(function* () {
       // Only full access may pick an agent's own mode there, and the other side cannot see
       // that this thread already runs in one. Below that the task starts in the agent's default.
       const options =
-        target.options ??
+        requested.options ??
         (inheritedOptions === undefined ||
         (parent.thread.runtimeMode === "full-access" &&
           (yield* links.get(target.environmentId).pipe(
@@ -360,10 +381,6 @@ const make = Effect.gen(function* () {
         parent.thread.projectId,
         target.projectId,
       );
-      // One key for the launch there and the record here, so a retry finds both.
-      // Both are scoped to the provider session, as every key a caller passes is:
-      // the forwarder scopes the launch's, and the record's names it.
-      const key = input.clientRequestId ?? (yield* random.uuidV4());
       const task = taskPrompt(input);
       const title = input.title ?? parent.thread.title;
       const launched = yield* forwarding.call(
@@ -390,9 +407,6 @@ const make = Effect.gen(function* () {
       const link = yield* links.get(target.environmentId).pipe(
         Effect.map(Option.getOrUndefined),
         Effect.orElseSucceed(() => undefined),
-      );
-      const commandId = CommandId.make(
-        `command:mcp:${encodeURIComponent(scope.requestNamespace)}:remote-delegate:${encodeURIComponent(key)}`,
       );
       const remoteChild: OrchestrationV2RemoteTaskChild = {
         environmentId: target.environmentId,

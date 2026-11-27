@@ -403,6 +403,7 @@ export function applyServerSettingsPatch(
     // Merged per entry below; its `null` removals must not reach deepMerge.
     usageLimitSources: usageLimitSourcesPatch,
     textGenerators: textGeneratorsPatch,
+    roleModels: roleModelsPatch,
     secretProviders: secretProvidersPatch,
     sourceControlHosts: sourceControlHostsPatch,
     usagePriceOverrides: usagePriceOverridesPatch,
@@ -622,6 +623,9 @@ export function applyServerSettingsPatch(
       : {}),
     ...(textGeneratorsPatch !== undefined
       ? { textGenerators: mergeSettingsEntries(current.textGenerators, textGeneratorsPatch) }
+      : {}),
+    ...(roleModelsPatch !== undefined
+      ? { roleModels: mergeSettingsEntries(current.roleModels, roleModelsPatch) }
       : {}),
     ...(secretProvidersPatch !== undefined
       ? { secretProviders: mergeSettingsEntries(current.secretProviders, secretProvidersPatch) }

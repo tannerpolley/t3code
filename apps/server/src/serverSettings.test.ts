@@ -232,6 +232,32 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
       }),
     ).pipe(Effect.provide(layerServerSettings())),
   );
+  it.effect("persists and resets role models independently", () =>
+    Effect.gen(function* () {
+      const settings = yield* ServerSettingsModule.ServerSettingsService;
+      const fs = yield* FileSystem.FileSystem;
+      const { settingsPath } = yield* ServerConfig.ServerConfig;
+      const instanceId = ProviderInstanceId.make("codex");
+      const writer = { instanceId, model: "writer-model" };
+      const review = { instanceId, model: "review-model" };
+      const effort = { id: "reasoningEffort", value: "high" };
+      const saved = () =>
+        fs.readFileString(settingsPath).pipe(Effect.flatMap(decodeServerSettingsJson));
+
+      yield* settings.updateSettings({ roleModels: { writer, review: { ...review, effort } } });
+      assert.deepStrictEqual((yield* saved()).roleModels, {
+        writer,
+        review: { ...review, effort },
+      });
+
+      yield* settings.updateSettings({ roleModels: { review } });
+      assert.deepStrictEqual((yield* saved()).roleModels, { writer, review });
+
+      yield* settings.updateSettings({ roleModels: { review: null } });
+      assert.deepStrictEqual((yield* saved()).roleModels, { writer });
+    }).pipe(Effect.provide(layerServerSettings())),
+  );
+
   it.effect("migrates saved token delivery to paragraph buffering without resetting settings", () =>
     Effect.gen(function* () {
       const config = yield* ServerConfig.ServerConfig;

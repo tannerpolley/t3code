@@ -97,6 +97,7 @@ import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
 
 import * as ProviderAdapterRegistry from "../orchestration-v2/ProviderAdapterRegistry.ts";
+import { derive } from "@t3tools/provider-core/server/IdAllocator";
 import {
   SUBAGENT_RESULT_TURN_ITEM_TYPES,
   subagentResultForRun,
@@ -141,6 +142,7 @@ import {
   refuseAgentModePick,
   resolveInteractionMode,
   resolveRuntimeMode,
+  roleModelTarget,
   runtimeModeRank,
   taskPrompt,
 } from "./delegatedTaskModes.ts";
@@ -1728,6 +1730,7 @@ const make = Effect.gen(function* () {
     readonly parent: Pick<OrchestrationV2ThreadProjection, "thread">;
     readonly target: OrchestratorMcpTarget | undefined;
     readonly providers: ReadonlyArray<ServerProvider>;
+    readonly replaceModelOptions?: boolean;
     /** Receipt replays bypass current settings because they start no work. Dispatch must reuse the checked command ID. */
     readonly skipProjectEnablementFilter?: boolean;
     /** A retry replays its accepted command; refusing it here would lose that replay. */
@@ -1840,6 +1843,7 @@ const make = Effect.gen(function* () {
     }
 
     const inheritsOptions =
+      input.replaceModelOptions !== true &&
       instanceId === inheritedSelection.instanceId &&
       (advertised?.slug ?? model) ===
         (advertisedModel(provider, inheritedSelection.model)?.slug ?? inheritedSelection.model);
@@ -2886,6 +2890,9 @@ const make = Effect.gen(function* () {
           ) ?? [],
         runtimeMode: limits.runtimeMode,
         interactionMode: limits.interactionMode,
+        ...(Object.keys(settings.roleModels).length === 0
+          ? {}
+          : { roleModels: settings.roleModels }),
         providers: providers.map((provider) => {
           // Snapshots list instances any project enables; delegate_task checks the caller's project.
           const enabledForCaller =
@@ -2987,7 +2994,6 @@ const make = Effect.gen(function* () {
           "Delegated tasks require an active run owned by this MCP provider session.",
         );
       }
-      const providers = yield* loadProviders;
       const key = yield* requestKey(input.clientRequestId);
       const commandId = stableCommandId({
         scope,
@@ -2995,11 +3001,28 @@ const make = Effect.gen(function* () {
         operation: "delegate-task",
       });
       const isRetryOfAcceptedDelegation = yield* threadManagement.hasReceipt(commandId);
+      const role = input.role === "general" ? undefined : input.role;
+      // An accepted task keeps its model even if its role pick changes before a retry.
+      if (role !== undefined && isRetryOfAcceptedDelegation) {
+        const taskId = derive.delegatedTaskNode({ commandId });
+        return yield* input.mode === "wait"
+          ? awaitTask(scope, taskId, key, input.timeoutMs)
+          : readTask(scope, taskId, false, true);
+      }
+      const roleModel =
+        role === undefined
+          ? undefined
+          : (yield* serverSettings.getSettings.pipe(
+              Effect.mapError(() =>
+                failure("orchestration_error", "Unable to read server settings."),
+              ),
+            )).roleModels[role];
       const target = yield* resolveTargetRechecking({
         parent,
-        target: input.target,
-        providers,
+        target: roleModel ? roleModelTarget(roleModel) : input.target,
+        providers: yield* loadProviders,
         cwd: yield* parentWorkspaceCwd(parent),
+        replaceModelOptions: roleModel !== undefined,
         skipProjectEnablementFilter: isRetryOfAcceptedDelegation,
         skipAgentModeRefusal: isRetryOfAcceptedDelegation,
       });
