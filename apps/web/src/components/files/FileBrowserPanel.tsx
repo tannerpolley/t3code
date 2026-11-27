@@ -1,4 +1,5 @@
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
+import { useSaveProjectArtifact } from "~/state/projectArtifacts";
 import { contextMenuSourceOf } from "../../contextMenuSource";
 import { m } from "~/i18n/messages";
 import { RefreshIcon } from "~/components/ui/refresh-icon";
@@ -6,7 +7,7 @@ import type {
   ContextMenuItem as TreeContextMenuItem,
   ContextMenuOpenContext as TreeContextMenuOpenContext,
 } from "@pierre/trees";
-import type { ContextMenuSource, EnvironmentId, ProjectEntry } from "@t3tools/contracts";
+import type { ContextMenuSource, EnvironmentId, ProjectEntry, ProjectId } from "@t3tools/contracts";
 import { FileTree, useFileTree, useFileTreeSearch, useFileTreeSelector } from "@pierre/trees/react";
 import { settlePromise } from "@t3tools/client-runtime/state/runtime";
 import { serializeComposerFileLink } from "@t3tools/shared/composerTrigger";
@@ -55,6 +56,7 @@ interface FileBrowserPanelProps {
   environmentId: EnvironmentId;
   cwd: string;
   projectName: string;
+  projectId?: ProjectId | undefined;
   selectedPath: string | null;
   selectedPathRevealId: number;
   onOpenFile: (relativePath: string) => void;
@@ -171,6 +173,7 @@ export default function FileBrowserPanel({
   environmentId,
   cwd,
   projectName,
+  projectId,
   selectedPath,
   selectedPathRevealId,
   onOpenFile,
@@ -186,6 +189,7 @@ export default function FileBrowserPanel({
   const { resolvedTheme } = useTheme();
   const composerRef = useComposerHandleContext();
   const fileContextMenu = useFileContextMenu(environmentId);
+  const saveArtifact = useSaveProjectArtifact(environmentId);
   const {
     entries: directoryEntries,
     load,
@@ -245,12 +249,15 @@ export default function FileBrowserPanel({
         isDirectory: item.kind === "directory",
       };
       const fileMenuItems = fileContextMenu.buildItems(fileTarget);
+      const canSaveArtifact =
+        item.kind === "file" && projectId !== undefined && saveArtifact !== null;
       // The app menu owns focus; the tree's outside-click handler would dismiss it before click.
       context.close({ restoreFocus: !pointerIsFresh });
       void settlePromise(async () => {
         const clicked = await api.contextMenu.show(
           [
             ...fileMenuItems,
+            ...(canSaveArtifact ? [{ id: "save-artifact", label: gt("Save as artifact") }] : []),
             { id: "copy-mention", label: gt("Copy mention") },
             { id: "add-to-chat", label: gt("Add to chat") },
           ],
@@ -258,6 +265,10 @@ export default function FileBrowserPanel({
           pointerIsFresh ? pointer.source : undefined,
         );
         if (clicked === null) return;
+        if (clicked === "save-artifact" && canSaveArtifact) {
+          await saveArtifact(projectId, joinHostPath(cwd, relativePath));
+          return;
+        }
         // Open-with submenu ids are absent from the top-level item list.
         const isFileMenuAction =
           fileMenuItems.some((entry) => entry.id === clicked) || clicked.startsWith("editor:");

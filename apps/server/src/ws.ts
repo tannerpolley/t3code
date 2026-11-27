@@ -242,6 +242,7 @@ import { refreshPushedPullRequests } from "./git/refreshPushedPullRequests.ts";
 import { linkCreatedPullRequest } from "./git/linkCreatedPullRequest.ts";
 import * as ReviewService from "./review/ReviewService.ts";
 import * as ProjectEnrichmentService from "./project/ProjectEnrichmentService.ts";
+import * as ProjectArtifacts from "./project/ProjectArtifacts.ts";
 import * as ProjectService from "./project/ProjectService.ts";
 import { threadWorkspaceRoot } from "./project/threadWorkspaceRoot.ts";
 import * as ManagedProjectFolders from "./project/ManagedProjectFolders.ts";
@@ -1610,6 +1611,7 @@ export const layerWsRpc = (
       const startup = yield* ServerRuntimeStartup.ServerRuntimeStartup;
       const workspaceEntries = yield* WorkspaceEntries.WorkspaceEntries;
       const workspaceFolders = yield* WorkspaceFolders.WorkspaceFolders;
+      const projectArtifacts = yield* ProjectArtifacts.ProjectArtifacts;
       const taskFolders = yield* TaskFolders.TaskFolders;
       const layoutCommandApprovalWrites =
         yield* LayoutCommandApprovalWrites.LayoutCommandApprovalWrites;
@@ -3212,6 +3214,11 @@ export const layerWsRpc = (
                 }),
             ),
           ),
+        [WS_METHODS.projectArtifactsSubscribe]: ({ projectId }) =>
+          projectArtifacts.subscribe(projectId),
+        [WS_METHODS.projectArtifactsAdd]: (input) => projectArtifacts.add(input, "user"),
+        [WS_METHODS.projectArtifactsUpdate]: (input) => projectArtifacts.update(input),
+        [WS_METHODS.projectArtifactsRemove]: (input) => projectArtifacts.remove(input),
         [WS_METHODS.workspaceListFolders]: (input) => workspaceFolders.list(input),
         [WS_METHODS.workspaceScanFolders]: (input) => workspaceFolders.scan(input),
         [WS_METHODS.workspaceTaskFolder]: (input) =>

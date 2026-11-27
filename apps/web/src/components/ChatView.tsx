@@ -2540,6 +2540,7 @@ export default function ChatView(props: ChatViewProps) {
     addDeviceSurfaceStable,
     addDiffSurfaceStable,
     addFilesSurfaceStable,
+    addArtifactsSurfaceStable,
     addPullRequestSurfaceStable,
     addPullRequestsSurfaceStable,
     addIssuesSurfaceStable,
@@ -4277,6 +4278,7 @@ export default function ChatView(props: ChatViewProps) {
           onAddTerminal={addTerminalSurfaceStable}
           onAddDiff={addDiffSurfaceStable}
           onAddFiles={addFilesSurfaceStable}
+          onAddArtifacts={activeProject ? addArtifactsSurfaceStable : undefined}
           onAddPullRequest={addPullRequestSurfaceStable}
           onAddPullRequests={addPullRequestsSurfaceStable}
           onAddIssues={issuesSurfaceAvailable ? addIssuesSurfaceStable : undefined}

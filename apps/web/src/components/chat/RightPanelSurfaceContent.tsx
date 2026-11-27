@@ -37,6 +37,11 @@ const DiffPanel = lazy(() => import("../DiffPanel"));
 const DevicePanel = lazy(() =>
   import("../device/DevicePanel").then((module) => ({ default: module.DevicePanel })),
 );
+const ProjectArtifactsPanel = lazy(() =>
+  import("../files/ProjectArtifactsPanel").then((module) => ({
+    default: module.ProjectArtifactsPanel,
+  })),
+);
 const FilePreviewPanel = lazy(() => import("../files/FilePreviewPanel"));
 
 type RightPanelTerminalProps = Omit<
@@ -268,6 +273,17 @@ export function RightPanelSurfaceContent(props: {
               props.onCloseSurface(surface);
               useRightPanelStore.getState().show(threadRef);
             }}
+          />
+        </Suspense>
+      );
+    case "artifacts":
+      return props.files.projectId === undefined ? null : (
+        <Suspense fallback={null}>
+          <ProjectArtifactsPanel
+            key={`${props.environmentId}:${props.files.projectId}`}
+            projectId={props.files.projectId}
+            environmentId={props.environmentId}
+            onOpenFile={props.files.onOpenFile}
           />
         </Suspense>
       );
