@@ -981,10 +981,12 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     [gt, snoozePresets],
   );
   const reorderMenuItems = useMemo<MenuAction[]>(
-    () =>
-      props.reorderSupported === true
+    () => [
+      ...(!props.agentRow && (props.pinningSupported || props.reorderSupported)
+        ? [{ id: "arrange", title: gt("Arrange threads…"), image: "line.3.horizontal" }]
+        : []),
+      ...(props.reorderSupported === true
         ? [
-            { id: "arrange", title: gt("Arrange threads…"), image: "line.3.horizontal" },
             {
               id: "move-up",
               title: gt("Move up"),
@@ -998,8 +1000,16 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
               attributes: { disabled: props.canMoveDown !== true },
             } satisfies MenuAction,
           ]
-        : [],
-    [gt, props.canMoveDown, props.canMoveUp, props.reorderSupported],
+        : []),
+    ],
+    [
+      gt,
+      props.agentRow,
+      props.canMoveDown,
+      props.canMoveUp,
+      props.pinningSupported,
+      props.reorderSupported,
+    ],
   );
   const pinMenuItems = useMemo<MenuAction[]>(
     () =>

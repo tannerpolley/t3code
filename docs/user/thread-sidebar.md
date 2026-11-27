@@ -113,10 +113,10 @@ spot where the thread will land. Drops into either section keep the position you
 mobile, open a thread's menu and choose **Arrange threads**. Drag a handle within or between
 **Pinned** and **Active** to reorder, pin, or unpin. When the server saves positions inside project
 folders, use the web or desktop sidebar to reorder threads within those folders. Drop onto the
-**Settled** divider to settle a thread. The dragged card shows the action before you release it. Expand **Snoozed**
-or **Settled** to drag a parked thread back into either live section. Each drop saves; close the sheet to return to the thread list.
-**Move up** and **Move down** are also available in the thread menu. The server
-saves the order, so it survives a refresh and appears on your other connected devices.
+**Settled** divider to settle a thread. The dragged card shows the action before you release it.
+Expand **Snoozed** or **Settled** to drag a parked thread back into either live section. Each drop
+saves. Close the sheet to return to the thread list. On mobile, **Move up** and **Move down** are
+also available from a pinned thread's menu. The server saves the order across connected devices.
 
 On web and desktop, the list also animates section changes made with thread actions such as
 **Pin**, **Settle**, and **Snooze**. These transitions respect your system's reduced-motion
