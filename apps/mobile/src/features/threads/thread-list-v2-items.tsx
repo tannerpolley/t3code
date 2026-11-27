@@ -1,3 +1,4 @@
+import { IconButton } from "../../components/ui/IconButton";
 import {
   formatSidebarAgentStates,
   sidebarRoleSectionLabels,
@@ -100,6 +101,7 @@ import {
   threadListV2RowAccessibilityLabel,
   type ThreadListV2Status,
   type ThreadListV2AgentSectionItem,
+  type ThreadListV2ProjectFolderItem,
 } from "./threadListV2";
 import { QueuedMessageIcon } from "./queued-message-icon";
 import { ThreadSearchMatchExcerpt } from "./thread-search-match";
@@ -239,161 +241,27 @@ const LEGACY_MENU_ACTIONS: MenuAction[] = [
   },
 ];
 
-function ThreadListV2Section(props: {
-  readonly label: string;
-  readonly pane?: "screen" | "sidebar";
-  readonly tone?: "default" | "snoozed";
-  readonly disclosure?: {
-    readonly expanded: boolean;
-    readonly disabled?: boolean;
-    readonly onToggle: () => void;
-    readonly accessibilityLabel: string;
-    readonly accessibilityHint: string;
-  };
-}) {
-  const snoozed = props.tone === "snoozed";
-  const sidebarPane = props.pane === "sidebar";
-  const className = cn(
-    "mb-1.5 mt-4 flex-row items-center gap-2.5",
-    props.pane === "sidebar" ? "px-3" : "px-5",
-  );
-  const content = (
-    <>
-      <Text
-        className={cn(
-          "text-xs font-t3-medium",
-          sidebarPane
-            ? "text-drawer-foreground-muted"
-            : snoozed
-              ? "text-foreground-secondary"
-              : "text-foreground-tertiary",
-        )}
-      >
-        {props.label}
-      </Text>
-      <View
-        className={cn(
-          "h-px flex-1",
-          snoozed ? "bg-primary/20" : sidebarPane ? "bg-drawer-border" : "bg-border",
-        )}
-      />
-      {props.disclosure ? (
-        <SymbolView
-          name="chevron.down"
-          size={10}
-          tintColorClassName={
-            sidebarPane
-              ? "accent-drawer-foreground-muted"
-              : snoozed
-                ? "accent-icon-muted"
-                : "accent-foreground-muted"
-          }
-          type="monochrome"
-          style={{ transform: [{ rotate: props.disclosure.expanded ? "180deg" : "0deg" }] }}
-        />
-      ) : null}
-    </>
-  );
-
-  return props.disclosure ? (
-    <Pressable
-      accessibilityHint={props.disclosure.accessibilityHint}
-      accessibilityLabel={props.disclosure.accessibilityLabel}
-      accessibilityRole="button"
-      accessibilityState={{
-        disabled: props.disclosure.disabled,
-        expanded: props.disclosure.expanded,
-      }}
-      className={className}
-      disabled={props.disclosure.disabled}
-      onPress={props.disclosure.onToggle}
-      style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}
-    >
-      {content}
-    </Pressable>
-  ) : (
-    <View className={className}>{content}</View>
-  );
-}
-
 const ThreadListV2SectionDivider = memo(function ThreadListV2SectionDivider(props: {
   readonly label: string;
   readonly pane?: "screen" | "sidebar";
 }) {
-  return <ThreadListV2Section {...props} />;
+  const sidebar = props.pane === "sidebar";
+  return (
+    <View className={cn("mb-1.5 mt-4 flex-row items-center gap-2.5", sidebar ? "px-3" : "px-5")}>
+      <Text
+        className={cn(
+          "text-xs font-t3-medium",
+          sidebar ? "text-drawer-foreground-muted" : "text-foreground-tertiary",
+        )}
+      >
+        {props.label}
+      </Text>
+      <View className={cn("h-px flex-1", sidebar ? "bg-drawer-border" : "bg-border")} />
+    </View>
+  );
 });
-
-type ThreadListV2ShelfHeaderProps = {
-  readonly count: number;
-  readonly disabled?: boolean;
-  readonly expanded: boolean;
-  readonly onToggle: () => void;
-  readonly pane?: "screen" | "sidebar";
-};
 
 const TRIAGE_MENU_ACTION_IDS = new Set(["settle", "snooze", "unsettle", "unsnooze"]);
-
-const SHELF_COPY = {
-  working: {
-    label: msg("Working", { $context: "thread list section" }),
-    count: msg("{count, plural, one {{count} working thread} other {{count} working threads}}"),
-    collapse: msg("Collapses the working threads."),
-    expand: msg("Expands the working threads."),
-  },
-  snoozed: {
-    label: msg("Snoozed", { $context: "thread list section" }),
-    count: msg("{count, plural, one {{count} snoozed thread} other {{count} snoozed threads}}"),
-    collapse: msg("Collapses the snoozed threads."),
-    expand: msg("Expands the snoozed threads."),
-  },
-  settled: {
-    label: msg("Settled", { $context: "thread list section" }),
-    count: msg("{count, plural, one {{count} settled thread} other {{count} settled threads}}"),
-    collapse: msg("Collapses the settled threads."),
-    expand: msg("Expands the settled threads."),
-  },
-} as const;
-
-function ThreadListV2ShelfHeader(
-  props: ThreadListV2ShelfHeaderProps & { readonly kind: keyof typeof SHELF_COPY },
-) {
-  const gt = useGT();
-  const m = useMessages();
-  const copy = SHELF_COPY[props.kind];
-  const label = m(copy.label);
-  return (
-    <ThreadListV2Section
-      label={props.expanded ? label : gt("{label} ({count})", { label, count: props.count })}
-      pane={props.pane}
-      tone={props.kind === "snoozed" ? "snoozed" : "default"}
-      disclosure={{
-        expanded: props.expanded,
-        disabled: props.disabled,
-        onToggle: props.onToggle,
-        accessibilityLabel: m(copy.count, { count: props.count }),
-        accessibilityHint: m(props.expanded ? copy.collapse : copy.expand),
-      }}
-    />
-  );
-}
-
-export const ThreadListV2WorkingShelfHeader = memo(function ThreadListV2WorkingShelfHeader(
-  props: ThreadListV2ShelfHeaderProps,
-) {
-  return <ThreadListV2ShelfHeader {...props} kind="working" />;
-});
-
-export const ThreadListV2SnoozedShelfHeader = memo(function ThreadListV2SnoozedShelfHeader(
-  props: ThreadListV2ShelfHeaderProps,
-) {
-  return <ThreadListV2ShelfHeader {...props} kind="snoozed" />;
-});
-
-export const ThreadListV2SettledShelfHeader = memo(function ThreadListV2SettledShelfHeader(
-  props: ThreadListV2ShelfHeaderProps,
-) {
-  return <ThreadListV2ShelfHeader {...props} kind="settled" />;
-});
 
 export const ThreadListV2ShowMoreRow = memo(function ThreadListV2ShowMoreRow(props: {
   readonly pane?: "screen" | "sidebar";
@@ -751,28 +619,75 @@ export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props
   );
 });
 
+export function ThreadListV2ProjectFolderHeader({
+  item,
+  onToggle,
+  onNewThread,
+}: {
+  readonly item: ThreadListV2ProjectFolderItem;
+  readonly onToggle: (key: string, expanded: boolean) => void;
+  readonly onNewThread: (project: EnvironmentProject) => void;
+}) {
+  const gt = useGT();
+  const m = useMessages();
+  const summary = item.expanded ? "" : formatSidebarAgentStates(item.counts, m, true);
+  const { project } = item;
+
+  return (
+    <View className="mt-2 flex-row items-center">
+      <RowPressable
+        accessibilityRole="button"
+        accessibilityState={{ expanded: item.expanded }}
+        onPress={() => onToggle(item.key, item.expanded)}
+        className="min-h-11 flex-1 flex-row items-center gap-2 px-3"
+      >
+        <ProjectFavicon
+          environmentId={project.environmentId}
+          faviconPath={project.faviconPath}
+          projectIcon={project.projectIcon}
+          projectTitle={item.title}
+          workspaceRoot={project.workspaceRoot}
+          size={18}
+        />
+        <Text className="min-w-0 flex-1 text-sm font-t3-medium" numberOfLines={1}>
+          {item.title}
+        </Text>
+        {!item.expanded && item.total > 0 ? (
+          <Text className="shrink text-xs text-foreground-muted" numberOfLines={1}>
+            {summary || item.total}
+          </Text>
+        ) : null}
+        <SymbolView
+          name={item.expanded ? "chevron.down" : "chevron.right"}
+          size={12}
+          tintColorClassName="foreground-muted"
+        />
+      </RowPressable>
+      <IconButton
+        accessibilityLabel={gt("New thread in {project}", { project: item.title })}
+        icon="square.and.pencil"
+        onPress={() => onNewThread(project)}
+      />
+    </View>
+  );
+}
+
 export function ThreadListV2AgentSectionHeader({
   item,
   onToggle,
 }: {
   readonly item: ThreadListV2AgentSectionItem;
-  readonly onToggle: (key: string) => void;
+  readonly onToggle: (key: string, expanded: boolean) => void;
 }) {
-  const gt = useGT();
   const m = useMessages();
-  const project = item.role === null;
-  const title = item.role === null ? item.title : m(sidebarRoleSectionLabels[item.role]);
-  const summary = project && item.expanded ? "" : formatSidebarAgentStates(item.counts, m, project);
-  const count = project
-    ? gt("{count, plural, one {{count} agent} other {{count} agents}}", { count: item.total })
-    : item.total;
+  const summary = formatSidebarAgentStates(item.counts, m);
 
   return (
     <RowPressable
       accessibilityRole="button"
       accessibilityState={{ expanded: item.expanded }}
-      onPress={() => onToggle(item.key)}
-      className={cn("min-h-11 flex-row items-center gap-2 px-3", project ? "mt-2" : "ps-6")}
+      onPress={() => onToggle(item.key, item.expanded)}
+      className="min-h-11 flex-row items-center gap-2 pe-3 ps-6"
     >
       <SymbolView
         name={item.expanded ? "chevron.down" : "chevron.right"}
@@ -780,9 +695,9 @@ export function ThreadListV2AgentSectionHeader({
         tintColorClassName="foreground-muted"
       />
       <Text className="min-w-0 shrink text-sm font-t3-medium" numberOfLines={1}>
-        {title}
+        {m(sidebarRoleSectionLabels[item.role])}
       </Text>
-      {!project || !summary ? <Text className="text-xs text-foreground-muted">{count}</Text> : null}
+      <Text className="text-xs text-foreground-muted">{item.total}</Text>
       {summary ? <Text className="shrink text-xs text-foreground-muted">{summary}</Text> : null}
     </RowPressable>
   );

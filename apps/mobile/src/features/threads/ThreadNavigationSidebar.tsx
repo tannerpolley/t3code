@@ -1,3 +1,4 @@
+import { projectSidebarLayoutsAtom } from "../../state/server";
 import { steadyThreadShells } from "../../state/threads";
 import { useGT, useMessages } from "gt-react-native";
 import { useActiveNewTask } from "../../state/active-new-task";
@@ -29,7 +30,6 @@ import { scopedProjectKey, scopedThreadKey } from "../../lib/scopedEntities";
 import { useProjects } from "../../state/entities";
 import { steadyNavigationThreadShellsAtom } from "../../state/threads";
 import { useThreadSearch } from "../../state/queries";
-import { useThreadListV2ShelfPreferences } from "./use-thread-list-v2-shelf-preferences";
 import { useThreadListNow } from "./use-thread-list-now";
 import { usePendingThreadOrder } from "../../state/thread-order";
 import { threadListEnvironmentsAtom } from "../../state/presentation";
@@ -65,12 +65,10 @@ import { WorkspaceSidebarColumn } from "../layout/workspace/WorkspaceSidebarColu
 import {
   ThreadListV2PendingRow,
   ThreadListV2AgentSectionHeader,
+  ThreadListV2ProjectFolderHeader,
   ThreadListV2Row,
   THREAD_ROW_VIEWABILITY,
-  ThreadListV2SettledShelfHeader,
   ThreadListV2ShowMoreRow,
-  ThreadListV2SnoozedShelfHeader,
-  ThreadListV2WorkingShelfHeader,
 } from "./thread-list-v2-items";
 import { useThreadRowProviderInstanceResolver } from "./thread-provider-instance";
 import type { ThreadPrPresentation } from "../../state/thread-pr-presentation";
@@ -246,18 +244,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
     setLastSettledResetKey(settledResetKey);
     setSettledVisibleCount(THREAD_LIST_V2_SETTLED_INITIAL_COUNT);
   }
-  const showMoreSettled = () =>
-    setSettledVisibleCount((count) => count + THREAD_LIST_V2_SETTLED_PAGE_COUNT);
-  const {
-    loaded: shelfPreferencesLoaded,
-    settledShelfExpanded,
-    snoozedShelfExpanded,
-    workingShelfEnabled,
-    workingShelfExpanded,
-    toggleSettledShelf,
-    toggleSnoozedShelf,
-    toggleWorkingShelf,
-  } = useThreadListV2ShelfPreferences();
+  const projectLayouts = useAtomValue(projectSidebarLayoutsAtom);
   const agentThreads = useAtomValue(steadyThreadShells.quietThreadShellsAtom);
   const now = useThreadListNow(agentThreads);
   const listEnvironments = useAtomValue(threadListEnvironmentsAtom);
@@ -270,7 +257,6 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
     pinningEnvironmentIds,
     autoSettleOptOutEnvironmentIds,
     pinReorderEnvironmentIds,
-    activeReorderEnvironmentIds,
     titleRegenerationEnvironmentIds,
   } = listEnvironments;
   const resolveProviderInstance = useThreadRowProviderInstanceResolver(providersByEnvironmentId);
@@ -281,10 +267,12 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
     contentOnlyThreadKeys,
     olderSettledShelf,
     selectedRowKey,
-    toggleAgentSection,
+    toggleSidebarRow,
   } = useThreadListV2({
     agentThreads,
     projects: projectScopes,
+    projectSortOrder: options.projectSortOrder,
+    projectLayouts,
     openThreadKey: activeNewTask ? null : props.selectedThreadKey,
     threads: launchingThreads,
     pendingTasks,
@@ -295,20 +283,20 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
     settlementEnvironmentIds,
     snoozeEnvironmentIds,
     pinReorderEnvironmentIds,
-    activeReorderEnvironmentIds,
     queuedThreadKeys,
     settledLimit: settledVisibleCount,
     now,
     pendingOrder,
-    shelfPreferencesLoaded,
-    workingShelfEnabled,
-    workingShelfExpanded,
-    snoozedShelfExpanded,
-    settledShelfExpanded,
     selectedThreadKey,
   });
+  const showMoreSettled = () =>
+    setSettledVisibleCount(
+      (count) =>
+        Math.max(count, threadListV2Layout.listedSettledThreads.length) +
+        THREAD_LIST_V2_SETTLED_PAGE_COUNT,
+    );
   const listItems: readonly SidebarListItem[] =
-    settledShelfExpanded && threadListV2Layout.hiddenSettledCount > 0
+    threadListV2Layout.hiddenSettledCount > 0
       ? [
           ...threadListV2Items,
           {
@@ -375,7 +363,6 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
     savedConnectionsById,
     listEnvironments,
     threadSearchMatchByKey,
-    workingShelfEnabled,
   };
   useThreadJumpShortcuts(listItems, handleSelectThread, props.onOpenPendingTask);
   const sidebarItemsAreEqual = (previous: SidebarListItem, item: SidebarListItem): boolean => {
@@ -423,8 +410,16 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
           />
         );
       }
+      case "v2-project-folder":
+        return (
+          <ThreadListV2ProjectFolderHeader
+            item={item}
+            onToggle={toggleSidebarRow}
+            onNewThread={props.onNewThreadInProject}
+          />
+        );
       case "v2-agent-section":
-        return <ThreadListV2AgentSectionHeader item={item} onToggle={toggleAgentSection} />;
+        return <ThreadListV2AgentSectionHeader item={item} onToggle={toggleSidebarRow} />;
       case "v2-thread": {
         const thread = item.item.thread;
         const scopeKey = scopedProjectKey(thread.environmentId, thread.projectId);
@@ -443,7 +438,11 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
             snoozePresetMinute={item.snoozePresetMinute ?? ""}
             snoozeWakeLabelText={item.snoozeWakeLabelText}
             timeLabel={item.timeLabel}
-            project={projectByKey.get(scopeKey) ?? null}
+            project={
+              props.searchQuery.trim() || item.item.pinned
+                ? (projectByKey.get(scopeKey) ?? null)
+                : null
+            }
             providerInstance={resolveProviderInstance(thread)}
             providers={providersByEnvironmentId.get(thread.environmentId)}
             environmentLabel={
@@ -486,9 +485,8 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
             autoSettleOptOutSupported={autoSettleOptOutEnvironmentIds.has(thread.environmentId)}
             reorderSupported={
               !item.agentRow &&
-              (item.item.pinned
-                ? pinReorderEnvironmentIds.has(thread.environmentId)
-                : !workingShelfEnabled && activeReorderEnvironmentIds.has(thread.environmentId))
+              item.item.pinned &&
+              pinReorderEnvironmentIds.has(thread.environmentId)
             }
             canMoveUp={item.canMoveUp}
             canMoveDown={item.canMoveDown}
@@ -505,36 +503,6 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
           />
         );
       }
-      case "v2-working-shelf":
-        return (
-          <ThreadListV2WorkingShelfHeader
-            count={item.count}
-            disabled={item.disabled}
-            expanded={item.expanded}
-            onToggle={toggleWorkingShelf}
-            pane="sidebar"
-          />
-        );
-      case "v2-snoozed-shelf":
-        return (
-          <ThreadListV2SnoozedShelfHeader
-            count={item.count}
-            disabled={item.disabled}
-            expanded={item.expanded}
-            onToggle={toggleSnoozedShelf}
-            pane="sidebar"
-          />
-        );
-      case "v2-settled-shelf":
-        return (
-          <ThreadListV2SettledShelfHeader
-            count={item.count}
-            disabled={item.disabled}
-            expanded={item.expanded}
-            onToggle={toggleSettledShelf}
-            pane="sidebar"
-          />
-        );
       case "v2-show-more":
         return (
           <ThreadListV2ShowMoreRow

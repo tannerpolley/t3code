@@ -9,7 +9,8 @@ import { Atom, AtomRegistry } from "effect/reactivity";
 import { expect, it, vi } from "vite-plus/test";
 
 import { olderSettledThreads } from "../../state/threads";
-import { makeRawThreadShell } from "../../test-fixtures";
+import { makeProjectFixture, makeRawThreadShell } from "../../test-fixtures";
+import { buildHomeProjectScopes } from "../home/homeThreadList";
 import { useThreadListV2 } from "./useThreadListV2";
 
 vi.mock("../../state/threads", () => ({
@@ -42,7 +43,15 @@ it("reuses a large thread list across tab renders and updates when its inputs ch
   const input: Parameters<typeof useThreadListV2>[0] = {
     threads,
     agentThreads: [],
-    projects: [],
+    projects: buildHomeProjectScopes({
+      projects: [...environmentIds].map((environmentId) =>
+        makeProjectFixture({ environmentId, id: ProjectId.make("project-test"), title: "Project" }),
+      ),
+      environmentId: null,
+      projectGroupingMode: "separate",
+    }),
+    projectLayouts: new Map(),
+    projectSortOrder: "updated_at",
     openThreadKey: null,
     pendingTasks: [],
     environmentId: null,
@@ -52,16 +61,10 @@ it("reuses a large thread list across tab renders and updates when its inputs ch
     settlementEnvironmentIds: environmentIds,
     snoozeEnvironmentIds: environmentIds,
     pinReorderEnvironmentIds: environmentIds,
-    activeReorderEnvironmentIds: environmentIds,
     queuedThreadKeys: new Set(),
     settledLimit: 10,
     now: "2026-01-02T00:00:00.000Z",
     pendingOrder: null,
-    shelfPreferencesLoaded: true,
-    workingShelfEnabled: true,
-    workingShelfExpanded: false,
-    snoozedShelfExpanded: false,
-    settledShelfExpanded: true,
     selectedThreadKey: null,
   };
   const seen: Array<ReturnType<typeof useThreadListV2>> = [];
@@ -84,7 +87,7 @@ it("reuses a large thread list across tab renders and updates when its inputs ch
   using _root = { [Symbol.dispose]: () => act(() => root.unmount()) };
   await act(async () => root.render(<Probe input={{ ...input }} tab="chats" />));
   const initial = seen.at(-1)!;
-  expect(initial.layout.items).toHaveLength(160);
+  expect(initial.layout.items).toHaveLength(1200);
   expect(initial.layout.settledCount).toBe(1050);
 
   for (const tab of ["pullRequests", "chats", "settings", "chats"]) {
@@ -106,7 +109,7 @@ it("reuses a large thread list across tab renders and updates when its inputs ch
   });
 
   await act(async () => root.render(<Probe input={{ ...input, environmentId }} tab="chats" />));
-  expect(seen.at(-1)!.layout.items).toHaveLength(85);
+  expect(seen.at(-1)!.layout.items).toHaveLength(600);
   expect(seen.at(-1)!.layout.settledCount).toBe(525);
   expect(
     seen.at(-1)!.layout.items.every((item) => item.thread.environmentId === environmentId),
@@ -115,14 +118,11 @@ it("reuses a large thread list across tab renders and updates when its inputs ch
   const queuedThreadKeys = new Set([`${environmentId}:thread-150`]);
   await act(async () => root.render(<Probe input={{ ...input, queuedThreadKeys }} tab="chats" />));
   const queued = seen.at(-1)!;
-  expect(queued.layout.items).toHaveLength(161);
+  expect(queued.layout.items).toHaveLength(1200);
   expect(queued.layout.settledCount).toBe(1049);
   expect(
     queued.items.find((item) => item.type === "v2-thread" && item.item.thread.id === "thread-150"),
   ).toMatchObject({ hasQueuedMessages: true, item: { variant: "card" } });
-
-  await act(async () => root.render(<Probe input={{ ...input, settledLimit: 35 }} tab="chats" />));
-  expect(seen.at(-1)!.layout.items).toHaveLength(185);
 
   const updatedThreads = threads.map((thread) =>
     thread.id === "thread-0" ? { ...thread, title: "Updated title" } : thread,
@@ -158,7 +158,7 @@ it("reuses a large thread list across tab renders and updates when its inputs ch
   const clockThreads = threads.map((thread) =>
     thread.id === "thread-0" ? { ...thread, snoozedUntil: "2026-01-02T00:00:30.000Z" } : thread,
   );
-  const clockInput = { ...input, threads: clockThreads, snoozedShelfExpanded: true };
+  const clockInput = { ...input, threads: clockThreads };
   await act(async () => root.render(<Probe input={clockInput} tab="chats" />));
   const beforeClock = seen.at(-1)!;
   expect(beforeClock.layout.snoozedCount).toBe(1);
@@ -241,7 +241,7 @@ it("reuses a large thread list across tab renders and updates when its inputs ch
   });
   const loaded = seen.at(-1)!;
   expect(loaded.layout.settledCount).toBe(1100);
-  expect(loaded.layout.items).toHaveLength(160);
+  expect(loaded.layout.items).toHaveLength(1200);
   expect(loaded.olderSettledShelf.isListed(threads[150]!)).toBe(true);
   expect(loaded.items).not.toBe(loading.items);
 });

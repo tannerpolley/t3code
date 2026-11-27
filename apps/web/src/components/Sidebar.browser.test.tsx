@@ -523,13 +523,13 @@ it("lists child agents in role sections under their project and keeps a closed s
   await expect.element(reviewers).toHaveTextContent("Reviewers1");
   // Archived children and empty roles stay out.
   await expect.element(screen.getByText("Designers", { exact: true })).not.toBeInTheDocument();
-  // Children sit in their role section only, above the project's own threads.
+  // The project's own threads come first, followed by its role sections.
   const item = (locator: { element: () => Element }) => locator.element().closest("li");
   expect(item(implementors)?.nextElementSibling).toBe(item(implementor));
   expect(item(implementor)?.nextElementSibling).toBe(item(reviewers));
   expect(item(reviewers)?.nextElementSibling).toBe(item(doneReviewer));
   expect(
-    item(doneReviewer)!.compareDocumentPosition(item(parentRow)!) &
+    item(parentRow)!.compareDocumentPosition(item(implementors)!) &
       Node.DOCUMENT_POSITION_FOLLOWING,
   ).toBeTruthy();
   expect(implementor.element().getAttribute("data-sidebar-parent")).toBe(

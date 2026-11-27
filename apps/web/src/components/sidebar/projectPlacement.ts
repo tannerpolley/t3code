@@ -1,48 +1,15 @@
-import type {
-  EnvironmentId,
-  ProjectId,
-  SidebarLayout,
-  SidebarProjectSection,
-  ThreadId,
-} from "@t3tools/contracts";
+import type { EnvironmentId, ProjectId, SidebarProjectSection, ThreadId } from "@t3tools/contracts";
 import {
-  activeThreadSortKey,
+  projectThreadRank,
+  type PlacedThread,
+  type ProjectThreadLayouts,
   pinOrderKeyBetween,
   planPinnedReorder,
 } from "@t3tools/client-runtime/state/thread-sort";
 import type { SidebarProjectSnapshot } from "../../sidebarProjectGrouping";
 
-const compare = (a: string, b: string) => (a < b ? -1 : a > b ? 1 : 0);
-
-type PlacedThread = {
-  readonly id: ThreadId;
-  readonly environmentId: EnvironmentId;
-  readonly createdAt: string;
-};
-
-export type Layouts = ReadonlyMap<EnvironmentId, SidebarLayout>;
-
-function rank(thread: PlacedThread, layouts: Layouts) {
-  return (
-    layouts.get(thread.environmentId)?.threadRanks?.[thread.id] ??
-    activeThreadSortKey({ createdAt: thread.createdAt })
-  );
-}
-
-export function sortProjectThreads<T extends PlacedThread>(
-  threads: readonly T[],
-  layouts: Layouts,
-): T[] {
-  return threads
-    .map((thread) => ({ thread, rank: rank(thread, layouts) }))
-    .sort(
-      (a, b) =>
-        compare(a.rank, b.rank) ||
-        compare(a.thread.id, b.thread.id) ||
-        compare(a.thread.environmentId, b.thread.environmentId),
-    )
-    .map(({ thread }) => thread);
-}
+export { sortProjectThreads } from "@t3tools/client-runtime/state/thread-sort";
+export type Layouts = ProjectThreadLayouts;
 
 export function projectThreadPlacement<T extends PlacedThread>(
   threads: readonly T[],
@@ -60,7 +27,7 @@ export function projectThreadPlacement<T extends PlacedThread>(
   const key = (thread: T) => `${thread.environmentId}:${thread.id}`;
   const assignments = planPinnedReorder({
     orderedIds: ordered.map(key),
-    keysById: new Map(threads.map((thread) => [key(thread), rank(thread, layouts)])),
+    keysById: new Map(threads.map((thread) => [key(thread), projectThreadRank(thread, layouts)])),
     movedId: key(moved),
   });
   const ids = new Map(
@@ -79,8 +46,8 @@ export function projectThreadPlacement<T extends PlacedThread>(
   while (ordered[end]?.environmentId === moved.environmentId) end += 1;
   const left = ordered[start - 1];
   const right = ordered[end];
-  let before = left ? rank(left, layouts) : null;
-  const after = right ? rank(right, layouts) : null;
+  let before = left ? projectThreadRank(left, layouts) : null;
+  const after = right ? projectThreadRank(right, layouts) : null;
   const localAssignments: Array<[ThreadId, string]> = [];
   for (const thread of ordered.slice(start, end)) {
     const next = pinOrderKeyBetween(before, after);

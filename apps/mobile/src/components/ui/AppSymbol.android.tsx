@@ -25,6 +25,7 @@ import IconArrowsMinimize from "@tabler/icons-react-native/IconArrowsMinimize";
 import IconBan from "@tabler/icons-react-native/IconBan";
 import IconBellRinging from "@tabler/icons-react-native/IconBellRinging";
 import IconBolt from "@tabler/icons-react-native/IconBolt";
+import IconBookmark from "@tabler/icons-react-native/IconBookmark";
 import IconBox from "@tabler/icons-react-native/IconBox";
 import IconBrain from "@tabler/icons-react-native/IconBrain";
 import IconCamera from "@tabler/icons-react-native/IconCamera";
@@ -173,6 +174,7 @@ const ANDROID_ICON_BY_SF_SYMBOL = {
   "arrow.uturn.backward": IconArrowBackUp,
   "arrow.uturn.forward": IconArrowForwardUp,
   archivebox: IconArchive,
+  bookmark: IconBookmark,
   "archivebox.fill": IconArchive,
   "bell.badge": IconBellRinging,
   "bolt.circle": IconBolt,

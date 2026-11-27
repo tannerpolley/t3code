@@ -222,3 +222,53 @@ export function formatSidebarAgentStates(
   ];
   return parts.filter((part) => part !== null).join(" · ");
 }
+
+/**
+ * Boring sidebar folders. Folders follow `groups` order and threads keep their
+ * input order. A project with no threads gets a folder only when `keepEmpty` says so.
+ * A thread whose project is in no group has no folder and is left out.
+ */
+export function groupSidebarThreadsByProject<
+  TGroup extends {
+    readonly projectKey: string;
+    readonly memberProjectRefs: ReadonlyArray<{
+      readonly environmentId: string;
+      readonly projectId: string;
+    }>;
+  },
+  TThread extends { readonly environmentId: string; readonly projectId: string },
+>(
+  groups: readonly TGroup[],
+  threads: readonly TThread[],
+  children: ReadonlyMap<string, readonly EnvironmentThreadShell[]>,
+  keepEmpty: (group: TGroup) => boolean,
+) {
+  const folders = groups.map((group) => ({ group, threads: [] as TThread[] }));
+  const folderByProject = new Map<string, (typeof folders)[number]>();
+  for (const folder of folders) {
+    for (const ref of folder.group.memberProjectRefs) {
+      folderByProject.set(`${ref.environmentId}:${ref.projectId}`, folder);
+    }
+  }
+  for (const thread of threads) {
+    folderByProject.get(`${thread.environmentId}:${thread.projectId}`)?.threads.push(thread);
+  }
+  const rolesByFolder = sidebarRoleSections(
+    children,
+    (thread) =>
+      folderByProject.get(`${thread.environmentId}:${thread.projectId}`)?.group.projectKey,
+  );
+  return folders.flatMap((folder) => {
+    const roleSections = rolesByFolder.get(folder.group.projectKey) ?? [];
+    return folder.threads.length > 0 || roleSections.length > 0 || keepEmpty(folder.group)
+      ? [{ ...folder, roleSections }]
+      : [];
+  });
+}
+
+export function sidebarProjectContents<T, R>(threads: readonly T[], roles: readonly R[]) {
+  return [
+    { kind: "threads", rows: threads },
+    { kind: "roles", rows: roles },
+  ] as const;
+}

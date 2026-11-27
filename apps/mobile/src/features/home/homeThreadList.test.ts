@@ -1,27 +1,10 @@
-import type {
-  EnvironmentProject,
-  EnvironmentThreadShell,
-} from "@t3tools/client-runtime/state/shell";
+import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
 import { EnvironmentId, ProjectId, ProviderInstanceId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import { buildHomeProjectScopes, findHomeProjectScope } from "./homeThreadList";
-import { makeThreadShellFixture } from "../../test-fixtures";
+import { makeProjectFixture as makeProject, makeThreadShellFixture } from "../../test-fixtures";
 import { buildThreadListV2Items } from "../threads/threadListV2";
-
-function makeProject(
-  input: Partial<EnvironmentProject> & Pick<EnvironmentProject, "environmentId" | "id" | "title">,
-): EnvironmentProject {
-  return {
-    workspaceRoot: `/workspaces/${input.id}`,
-    repositoryIdentity: null,
-    defaultModelSelection: null,
-    scripts: [],
-    createdAt: "2026-06-01T00:00:00.000Z",
-    updatedAt: "2026-06-01T00:00:00.000Z",
-    ...input,
-  };
-}
 
 function makeThread(
   input: Partial<EnvironmentThreadShell> &

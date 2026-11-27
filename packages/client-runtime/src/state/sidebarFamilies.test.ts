@@ -1,9 +1,11 @@
-import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
 
 import type { EnvironmentThreadShell } from "./models.ts";
 import {
   countSidebarAgentStates,
+  groupSidebarThreadsByProject,
+  sidebarProjectContents,
   indexSidebarChildren,
   sidebarRoleSections,
 } from "./sidebarFamilies.ts";
@@ -95,4 +97,89 @@ describe("countSidebarAgentStates", () => {
       failed: 1,
     });
   });
+});
+
+describe("groupSidebarThreadsByProject", () => {
+  it("puts each thread in its project's folder and drops empty projects unless kept", () => {
+    const local = EnvironmentId.make("env");
+    const remoteEnvironmentId = EnvironmentId.make("environment-remote");
+    const t3code = ProjectId.make("t3code");
+    const t3codeRemote = ProjectId.make("t3code-remote");
+    const fleet = ProjectId.make("fleet");
+    const thread = (id: string, environmentId: EnvironmentId, projectId: ProjectId) => ({
+      id,
+      environmentId,
+      projectId,
+    });
+    const groups = [
+      {
+        projectKey: "t3code",
+        memberProjectRefs: [
+          { environmentId: local, projectId: t3code },
+          { environmentId: remoteEnvironmentId, projectId: t3codeRemote },
+        ],
+      },
+      {
+        projectKey: "fleet",
+        memberProjectRefs: [{ environmentId: local, projectId: fleet }],
+      },
+      {
+        projectKey: "notes",
+        memberProjectRefs: [{ environmentId: local, projectId: ProjectId.make("notes") }],
+      },
+    ];
+
+    const threads = [
+      thread("a", local, t3code),
+      thread("orphan", local, ProjectId.make("deleted")),
+      thread("b", remoteEnvironmentId, t3codeRemote),
+    ];
+    const summarize = (keepEmpty: (group: (typeof groups)[number]) => boolean) =>
+      groupSidebarThreadsByProject(groups, threads, new Map(), keepEmpty).map((folder) => ({
+        projectKey: folder.group.projectKey,
+        threads: folder.threads.map((entry) => entry.id),
+      }));
+
+    expect(summarize(() => true)).toEqual([
+      { projectKey: "t3code", threads: ["a", "b"] },
+      { projectKey: "fleet", threads: [] },
+      { projectKey: "notes", threads: [] },
+    ]);
+    expect(summarize(() => false)).toEqual([{ projectKey: "t3code", threads: ["a", "b"] }]);
+    // A pinned project keeps its empty folder while other empty projects drop out.
+    expect(summarize((group) => group.projectKey === "fleet")).toEqual([
+      { projectKey: "t3code", threads: ["a", "b"] },
+      { projectKey: "fleet", threads: [] },
+    ]);
+  });
+});
+
+it("lists project threads before role sections and keeps folders containing only agents", () => {
+  const main = thread("main");
+  const settled = { ...thread("settled"), settledOverride: "settled" as const };
+  const agent = thread("implementation", { parent: "main", role: "implementation" });
+  const review = thread("review", { project: "docs", parent: "old", role: "review" });
+  const folders = groupSidebarThreadsByProject(
+    ["docs", "app"].map((projectKey) => ({
+      projectKey,
+      memberProjectRefs: [{ environmentId: main.environmentId, projectId: projectKey }],
+    })),
+    [main, settled],
+    indexSidebarChildren([agent, review]),
+    () => false,
+  );
+
+  expect(
+    folders.map(({ group, threads, roleSections }) => [
+      group.projectKey,
+      ...sidebarProjectContents(threads, roleSections).flatMap(({ kind, rows }) =>
+        kind === "threads"
+          ? rows.map((row) => row.id)
+          : rows.flatMap((section) => section.threads.map((row) => row.id)),
+      ),
+    ]),
+  ).toEqual([
+    ["docs", "review"],
+    ["app", "main", "settled", "implementation"],
+  ]);
 });

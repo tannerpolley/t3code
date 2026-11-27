@@ -111,8 +111,9 @@ identify empty sections and a collapsed settled shelf.
 Drag within the pinned or active section to change its order. Other rows slide aside to show the
 spot where the thread will land. Drops into either section keep the position you choose. On
 mobile, open a thread's menu and choose **Arrange threads**. Drag a handle within or between
-**Pinned** and **Active** to reorder, pin, or unpin. Drop onto the **Settled** divider to
-settle a thread. The dragged card shows the action before you release it. Expand **Snoozed**
+**Pinned** and **Active** to reorder, pin, or unpin. When the server saves positions inside project
+folders, use the web or desktop sidebar to reorder threads within those folders. Drop onto the
+**Settled** divider to settle a thread. The dragged card shows the action before you release it. Expand **Snoozed**
 or **Settled** to drag a parked thread back into either live section. Each drop saves; close the sheet to return to the thread list.
 **Move up** and **Move down** are also available in the thread menu. The server
 saves the order, so it survives a refresh and appears on your other connected devices.
@@ -154,24 +155,21 @@ there. A thread returns to the top of the active list when it finishes, fails, o
 answer. The Working section lists the thread you last sent work to first. Pinned threads stay in
 the pinned section.
 
-This is on by default. Turn it off with **Settings → General → Working section** on web and desktop,
-or **Settings → General → Working section** on iOS and Android. Each device keeps its own
-choice.
+This is on by default in the web and desktop sidebar when project grouping is off.
+Turn it off with **Settings → General → Working section**.
 
 While this is on, the active list is ordered by when each thread last came back to you, so you
 cannot drag or move threads within it. Your saved order returns when you turn it off.
 
 ### Group threads by project (beta)
 
-Turn on **Settings → Labs → Boring sidebar (group by project)** on web and desktop to put active
-threads in a folder for each project. Pinned projects come first. A project with no active
-threads has no folder unless it is pinned or you pick it in the project filter. An archived
-project's folder comes last and shows only while it has active threads. Click a folder to open or
-close it. A closed folder shows how many threads it holds, and a dot when one of them
-needs you. Use the pen button on a folder, or right-click it, to start a thread in that project.
-Pinned threads stay above the folders, and Snoozed and Settled stay below them. In this mode you
-can drag a thread onto the composer to mention it, but not within the sidebar, and the Working
-section is off. Each device keeps its own choice.
+On iOS and Android, Home groups threads into project folders. On web and desktop, turn on
+**Settings → Labs → Boring sidebar (group by project)** to use folders. Each folder lists the
+project's threads, including snoozed and settled threads, before its agent role sections.
+Pinned threads stay above the folders.
+
+Tap or click a folder to open or close it. A closed folder can show how many threads are working,
+waiting on you, or failed. Use the button next to the project name to start a thread in that project.
 
 ## Settle finished work
 
@@ -232,12 +230,12 @@ already settled threads.
 
 ### Settle or archive
 
-Settle is for work that is done for now. A settled thread stays in the sidebar's Settled
-section and in search, and a message to it, from you, an agent, or a scheduled task, makes it
-active again. Archive is for work you want out of the way. An archived thread leaves the
-sidebar and search and shows only in **Settings → Archive**, where you can unarchive or
-delete it. It refuses new messages, including ones from agents and scheduled tasks, until you
-unarchive it. Removing a project deletes its threads either way.
+Settle is for work that is done for now. A settled thread stays in its project folder or the
+sidebar's Settled section. You can find it in search, and a message from you, an agent, or a
+scheduled task makes it active again. Archive is for work you want out of the way. An archived
+thread leaves the sidebar and search and shows only in **Settings → Archive**, where you can
+unarchive or delete it. It refuses new messages, including ones from agents and scheduled tasks,
+until you unarchive it. Removing a project deletes its threads either way.
 
 A scheduled task that posts into one thread keeps running after you archive that thread, and
 each run fails. Settle the thread instead, or move or pause the task in **Settings → Scheduled

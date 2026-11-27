@@ -187,7 +187,6 @@ import {
 import {
   applySidebarThreadDrop,
   filterSidebarV2VisibleThreads,
-  groupSidebarThreadsByProject,
   sidebarFolderExpansionKeys,
   buildBulkTitleRegenerationContextMenuItem,
   buildBulkUnpinContextMenuItem,
@@ -293,7 +292,8 @@ import {
 import {
   indexSidebarChildren,
   sidebarFamilyRows,
-  sidebarRoleSections,
+  groupSidebarThreadsByProject,
+  sidebarProjectContents,
   type SidebarFamilyRow,
 } from "@t3tools/client-runtime/state/sidebar-families";
 import { setSidebarFamilyExpanded, sidebarFamilyExpansion } from "./sidebar/sidebarFamilies";
@@ -585,20 +585,6 @@ function useSidebarThreads(input: {
     EMPTY_ROLE_SECTION_KEYS,
     ROLE_SECTION_KEYS_SCHEMA,
   );
-  const roleSectionsByFolder = (() => {
-    if (folderGroups === null) return null;
-    const folderKeyByProject = new Map(
-      folderGroups.flatMap((group) =>
-        group.memberProjectRefs.map(
-          ({ environmentId, projectId }) =>
-            [`${environmentId}:${projectId}`, group.projectKey] as const,
-        ),
-      ),
-    );
-    return sidebarRoleSections(childrenByParent, (child) =>
-      folderKeyByProject.get(`${child.environmentId}:${child.projectId}`),
-    );
-  })();
   const projectFolders =
     folderGroups === null
       ? null
@@ -607,6 +593,7 @@ function useSidebarThreads(input: {
           partition.visibleThreads.filter(
             (thread) => !pinnedThreadKeys.has(threadShellKey(thread)),
           ),
+          childrenByParent,
           keepEmpty,
         ).map((folder) => {
           const sharedExpansion = folder.group.memberProjectRefs.flatMap(
@@ -623,7 +610,7 @@ function useSidebarThreads(input: {
             );
           const threads = sortProjectThreads(folder.threads, projectLayouts);
           const folderRow = sidebarFolderRowId(folder.group.projectKey);
-          const roleSections = roleSectionsByFolder?.get(folder.group.projectKey) ?? [];
+          const roleSections = folder.roleSections;
           return {
             group: folder.group,
             collapsed,
@@ -711,10 +698,12 @@ function useSidebarThreads(input: {
           ...pinnedThreads.flatMap(rootRows),
           ...projectRows.flatMap((row) =>
             row.kind === "folder"
-              ? [
-                  ...row.folder.roleSections.flatMap((section) => section.rows),
-                  ...row.folder.threads.flatMap(rootRows),
-                ]
+              ? sidebarProjectContents(row.folder.threads, row.folder.roleSections).flatMap(
+                  (section) =>
+                    section.kind === "threads"
+                      ? section.rows.flatMap(rootRows)
+                      : section.rows.flatMap((role) => role.rows),
+                )
               : [],
           ),
         ];
@@ -4126,43 +4115,49 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                               onNewThread={startThreadInProjectFolder}
                               onContextMenu={handleProjectFolderContextMenu}
                             />,
-                            ...folder.roleSections.flatMap((section) => [
-                              <SidebarRoleSectionHeader
-                                key={section.rowId}
-                                id={section.rowId}
-                                sectionKey={section.key}
-                                role={section.role}
-                                parent={section.parentRow}
-                                depth={row.depth}
-                                collapsed={section.collapsed}
-                                threads={section.threads}
-                                onToggle={toggleRoleSection}
-                              />,
-                              ...section.rows.map((family) =>
-                                renderThreadRow(
-                                  family,
-                                  sectionByThreadKey.get(family.key) ?? "active",
-                                  folderRow,
-                                  row.depth,
+                            ...sidebarProjectContents(folder.threads, folder.roleSections).flatMap(
+                              (content) =>
+                                content.kind === "threads" ? (
+                                  <SortableContext
+                                    key={`threads:${folderRow}`}
+                                    items={content.rows.map(threadShellKey)}
+                                    strategy={verticalListSortingStrategy}
+                                  >
+                                    {content.rows.flatMap((thread) =>
+                                      (familyRows.get(threadShellKey(thread)) ?? []).map((family) =>
+                                        renderThreadRow(
+                                          family,
+                                          sectionByThreadKey.get(family.key) ?? "active",
+                                          folderRow,
+                                          row.depth,
+                                        ),
+                                      ),
+                                    )}
+                                  </SortableContext>
+                                ) : (
+                                  content.rows.flatMap((section) => [
+                                    <SidebarRoleSectionHeader
+                                      key={section.rowId}
+                                      id={section.rowId}
+                                      sectionKey={section.key}
+                                      role={section.role}
+                                      parent={section.parentRow}
+                                      depth={row.depth}
+                                      collapsed={section.collapsed}
+                                      threads={section.threads}
+                                      onToggle={toggleRoleSection}
+                                    />,
+                                    ...section.rows.map((family) =>
+                                      renderThreadRow(
+                                        family,
+                                        sectionByThreadKey.get(family.key) ?? "active",
+                                        folderRow,
+                                        row.depth,
+                                      ),
+                                    ),
+                                  ])
                                 ),
-                              ),
-                            ]),
-                            <SortableContext
-                              key={`threads:${folderRow}`}
-                              items={folder.threads.map(threadShellKey)}
-                              strategy={verticalListSortingStrategy}
-                            >
-                              {folder.threads.flatMap((thread) =>
-                                (familyRows.get(threadShellKey(thread)) ?? []).map((family) =>
-                                  renderThreadRow(
-                                    family,
-                                    sectionByThreadKey.get(family.key) ?? "active",
-                                    folderRow,
-                                    row.depth,
-                                  ),
-                                ),
-                              )}
-                            </SortableContext>,
+                            ),
                           );
                         }
                         continue;

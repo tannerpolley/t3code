@@ -2,11 +2,11 @@ import { AppActivityIndicator } from "./AppActivityIndicator";
 import { Column, Text as NativeText, RNHostView } from "@expo/ui/jetpack-compose";
 import { useGT } from "gt-react-native";
 import { use, useState, type ReactNode } from "react";
-import { View } from "react-native";
+import { Pressable, View } from "react-native";
 
-import type { AppSymbolName } from "./AppSymbol";
+import { SymbolView, type AppSymbolName } from "./AppSymbol";
 import { NativeAppBar } from "./NativeAppBar.android";
-import { IconButton } from "./IconButton";
+import { useAndroidControlSizing } from "./useAndroidControlSizing";
 import { AndroidAnchoredMenu } from "./AndroidAnchoredMenu.android";
 import { splitAndroidHeaderActions } from "./headerMenu.android";
 import { useScaledTextRole } from "../../features/settings/appearance/useScaledTextRole";
@@ -35,7 +35,29 @@ export function AndroidHeaderIconButton(props: {
   readonly selected?: boolean;
   readonly iconScale?: number;
 }) {
-  return <IconButton {...props} tintColorClassName="accent-header-foreground" />;
+  const { iconSize, buttonSize } = useAndroidControlSizing();
+  const { colors } = useControlTheme();
+  return (
+    <Pressable
+      accessible
+      importantForAccessibility="yes"
+      accessibilityLabel={props.accessibilityLabel}
+      accessibilityRole="button"
+      accessibilityState={{ disabled: Boolean(props.disabled), selected: props.selected }}
+      android_ripple={{ color: colors["--color-subtle-strong"], borderless: true }}
+      disabled={props.disabled}
+      onPress={props.onPress}
+      className="items-center justify-center"
+      style={{ width: buttonSize, height: buttonSize }}
+    >
+      <SymbolView
+        name={props.icon === "ellipsis" ? { ios: "ellipsis", android: "more_vert" } : props.icon}
+        size={iconSize * (props.iconScale ?? 1)}
+        tintColorClassName={props.disabled ? "accent-icon-subtle" : "accent-header-foreground"}
+        type="monochrome"
+      />
+    </Pressable>
+  );
 }
 
 export function AndroidScreenHeader(props: {
@@ -82,10 +104,9 @@ export function AndroidScreenHeader(props: {
           props.onBack || props.leading ? (
             <View collapsable={false} className="flex-row items-center">
               {props.onBack ? (
-                <IconButton
+                <AndroidHeaderIconButton
                   accessibilityLabel={gt("Navigate up")}
                   icon="arrow.left"
-                  tintColorClassName="accent-header-foreground"
                   onPress={props.onBack}
                 />
               ) : null}
@@ -172,10 +193,9 @@ export function AndroidScreenHeader(props: {
                   }
                 >
                   {(open) => (
-                    <IconButton
+                    <AndroidHeaderIconButton
                       accessibilityLabel={gt("More actions")}
                       icon="ellipsis"
-                      tintColorClassName="accent-header-foreground"
                       onPress={open}
                     />
                   )}

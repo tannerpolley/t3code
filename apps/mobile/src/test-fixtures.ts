@@ -1,3 +1,4 @@
+import type { EnvironmentProject } from "@t3tools/client-runtime/state/shell";
 import {
   presentThreadShell,
   type EnvironmentThreadShell,
@@ -69,4 +70,18 @@ export function makeThreadShellFixture(
     worktreePath: overrides.worktreePath,
   });
   return { ...presentThreadShell(environmentId, raw), ...overrides };
+}
+
+export function makeProjectFixture(
+  input: Partial<EnvironmentProject> & Pick<EnvironmentProject, "environmentId" | "id" | "title">,
+): EnvironmentProject {
+  return {
+    workspaceRoot: `/workspaces/${input.id}`,
+    repositoryIdentity: null,
+    defaultModelSelection: null,
+    scripts: [],
+    createdAt: "2026-06-01T00:00:00.000Z",
+    updatedAt: "2026-06-01T00:00:00.000Z",
+    ...input,
+  };
 }

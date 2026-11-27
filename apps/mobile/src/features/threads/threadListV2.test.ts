@@ -31,13 +31,17 @@ import type { MenuAction } from "@react-native-menu/menu";
 import { describe, expect, it, vi } from "vite-plus/test";
 
 import type { PendingNewTask } from "../../state/use-pending-new-tasks";
-import { makeRawThreadShell, makeThreadShellFixture } from "../../test-fixtures";
+import {
+  makeProjectFixture,
+  makeRawThreadShell,
+  makeThreadShellFixture,
+} from "../../test-fixtures";
+import { buildHomeProjectScopes } from "../home/homeThreadList";
 import { threadJumpTarget } from "../keyboard/threadKeyboardShortcuts";
 import {
   buildThreadListV2Items,
   buildThreadListV2ListItems,
   getThreadListV2OrderedSection,
-  indexThreadListAgentSections,
   layoutThreadListV2RowMenuActions,
   resolveThreadListV2SnoozeMenuSelection,
   resolveThreadListV2SwipeActions,
@@ -1339,7 +1343,7 @@ describe("cross-section thread drops", () => {
   });
 });
 
-it("groups agents by project and role, including agents of archived parents", () => {
+it("keeps active and settled threads above role sections and summarizes collapsed folders", () => {
   const root = makeThread({ id: ThreadId.make("root"), title: "Root" });
   const archived = makeThread({
     id: ThreadId.make("archived"),
@@ -1371,15 +1375,20 @@ it("groups agents by project and role, including agents of archived parents", ()
       relationshipToParent: "subagent",
     },
   });
-  const threads = [root, archived, working, waiting];
+  const settled = makeThread({
+    id: ThreadId.make("settled"),
+    title: "Settled",
+    settledOverride: "settled",
+  });
+  const threads = [root, archived, working, waiting, settled];
   const children = indexSidebarChildren(threads);
-  const projects = [
-    {
-      key: "project",
-      title: "Project",
-      projectRefs: [{ environmentId, projectId: root.projectId }],
-    },
-  ];
+  const projects = buildHomeProjectScopes({
+    projects: [makeProjectFixture({ id: root.projectId, title: "Project", environmentId })],
+    environmentId: null,
+    projectGroupingMode: "separate",
+  });
+  const folderKey = `v2-project-folder:${projects[0]!.key}`;
+  const roleKey = (role: string) => `v2-agent-role:${projects[0]!.key}:${role}`;
   const { items } = buildThreadListV2Items({
     threads,
     environmentId: null,
@@ -1390,11 +1399,12 @@ it("groups agents by project and role, including agents of archived parents", ()
     buildThreadListV2ListItems({
       items,
       pendingTasks: [],
-      agents: {
+      folders: {
         children,
         projects,
-        sections: indexThreadListAgentSections(children, projects),
-        collapsed: new Set(collapsed),
+        layouts: new Map(),
+        expanded: new Map(collapsed.map((key) => [key, false])),
+        scoped: false,
         routeKey,
         now: NOW,
       },
@@ -1402,36 +1412,39 @@ it("groups agents by project and role, including agents of archived parents", ()
 
   const expanded = rows();
   expect(expanded.map((item) => item.key)).toEqual([
+    folderKey,
     `v2-thread:${environmentId}:root`,
-    "v2-agent-project:project",
-    "v2-agent-role:project:implementation",
+    `v2-thread:${environmentId}:settled`,
+    roleKey("implementation"),
     `v2-thread:${environmentId}:working`,
-    "v2-agent-role:project:review",
+    roleKey("review"),
     `v2-thread:${environmentId}:waiting`,
   ]);
-  expect(expanded[0]).toMatchObject({ agentCount: 1, agentRow: false });
-  expect(expanded[2]).toMatchObject({
+  expect(expanded[1]).toMatchObject({ agentCount: 1, agentRow: false });
+  expect(expanded[3]).toMatchObject({
     role: "implementation",
     counts: { working: 1, attention: 0, failed: 0 },
   });
-  expect(expanded[4]).toMatchObject({
+  expect(expanded[5]).toMatchObject({
     role: "review",
     counts: { working: 0, attention: 1, failed: 0 },
   });
 
-  const collapsed = rows(["v2-agent-project:project"]);
-  expect(collapsed).toHaveLength(2);
-  expect(collapsed[1]).toMatchObject({
+  const collapsed = rows([folderKey]);
+  expect(collapsed).toHaveLength(1);
+  expect(rows([folderKey], `${environmentId}:root`).map((row) => row.key)).toEqual([
+    folderKey,
+    `v2-thread:${environmentId}:root`,
+  ]);
+  expect(collapsed[0]).toMatchObject({
     expanded: false,
     counts: { working: 1, attention: 1, failed: 0 },
   });
-  expect(threadListV2ListItemsAreEqual(expanded[1]!, collapsed[1]!)).toBe(false);
+  expect(threadListV2ListItemsAreEqual(expanded[0]!, collapsed[0]!)).toBe(false);
   expect(
-    rows(["v2-agent-role:project:review"]).some(
-      (item) => item.key === `v2-thread:${environmentId}:waiting`,
-    ),
+    rows([roleKey("review")]).some((item) => item.key === `v2-thread:${environmentId}:waiting`),
   ).toBe(false);
-  expect(rows(["v2-agent-role:project:review"], `${environmentId}:waiting`).at(-1)?.key).toBe(
+  expect(rows([roleKey("review")], `${environmentId}:waiting`).at(-1)?.key).toBe(
     `v2-thread:${environmentId}:waiting`,
   );
   expect(
