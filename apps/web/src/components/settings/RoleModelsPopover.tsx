@@ -158,7 +158,11 @@ function RoleModelRow({
             const next = choices.find(({ entry }) => entry.instanceId === id);
             const nextModel = next?.models.find((model) => model.isDefault) ?? next?.models[0];
             if (next && nextModel)
-              save({ instanceId: next.entry.instanceId, model: nextModel.slug });
+              save({
+                instanceId: next.entry.instanceId,
+                model: nextModel.slug,
+                effort: "orchestrator",
+              });
           }}
         />
         {pick ? (
@@ -173,7 +177,14 @@ function RoleModelRow({
               id: entry.slug,
               label: entry.name,
             }))}
-            onPick={(model) => save({ instanceId: pick.instanceId, model })}
+            onPick={(model) =>
+              save({
+                instanceId: pick.instanceId,
+                model,
+                // Another model's effort values may not apply; a model default choice still does.
+                ...(pick.effort === undefined ? {} : { effort: "orchestrator" }),
+              })
+            }
           />
         ) : null}
         {pick && selected ? (
@@ -278,7 +289,7 @@ export function RoleModelsPopover({
   return (
     <Popover>
       {tooltip ? <SharedTooltipTrigger render={popoverTrigger} label={label} /> : popoverTrigger}
-      <PopoverPopup side="top" align="end" width="lg" padding="compact">
+      <PopoverPopup side="top" align="end" width="xl" padding="compact">
         <PopoverTitle>{label}</PopoverTitle>
         <RoleModelsEditor key={environmentId} environmentId={environmentId} readOnly={readOnly} />
       </PopoverPopup>
