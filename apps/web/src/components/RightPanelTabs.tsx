@@ -41,6 +41,7 @@ import { restrictToFirstScrollableAncestor, restrictToHorizontalAxis } from "@dn
 import { horizontalListSortingStrategy, SortableContext, useSortable } from "@dnd-kit/sortable";
 import { CSS } from "@dnd-kit/utilities";
 import {
+  Bookmark,
   Bot,
   CircleDotIcon,
   Smartphone,
@@ -155,6 +156,7 @@ export interface RightPanelTabsProps {
   onAddTerminal: () => void;
   onAddDiff: () => void;
   onAddFiles: () => void;
+  onAddArtifacts?: (() => void) | undefined;
   onAddPullRequest: () => void;
   onAddPullRequests: () => void;
   onAddDevice: () => void;
@@ -336,6 +338,7 @@ function RightPanelEmptyState(props: {
   onAddTerminal: () => void;
   onAddDiff: () => void;
   onAddFiles: () => void;
+  onAddArtifacts?: (() => void) | undefined;
   onAddPullRequest: () => void;
   onAddPullRequests: () => void;
   onAddDevice: () => void;
@@ -380,6 +383,18 @@ function RightPanelEmptyState(props: {
       disabledReason: messages(SURFACE_UNAVAILABLE_HINTS.files),
       onClick: props.onAddFiles,
     },
+    ...(props.onAddArtifacts
+      ? [
+          {
+            label: msg("Artifacts"),
+            icon: Bookmark,
+            shortcut: "A",
+            available: true,
+            disabledReason: messages(SURFACE_UNAVAILABLE_HINTS.files),
+            onClick: props.onAddArtifacts,
+          },
+        ]
+      : []),
     {
       label: msg("Diff"),
       icon: FileDiff,
@@ -600,6 +615,8 @@ function surfaceTitle(
       return resolve(msg("Diff"));
     case "files":
       return resolve(msg("Files"));
+    case "artifacts":
+      return resolve(msg("Artifacts"));
     case "file":
       return surface.relativePath.slice(
         Math.max(surface.relativePath.lastIndexOf("/"), surface.relativePath.lastIndexOf("\\")) + 1,
@@ -693,6 +710,8 @@ function SurfaceIcon({
       return <FileDiff className="size-3 shrink-0" />;
     case "files":
       return <Files className="size-3 shrink-0" />;
+    case "artifacts":
+      return <Bookmark className="size-3 shrink-0" />;
     case "file":
       return (
         <PierreEntryIcon
@@ -1181,6 +1200,18 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
       disabledReason: messages(SURFACE_DISABLED_REASONS.files),
       onClick: props.onAddFiles,
     },
+    ...(props.onAddArtifacts
+      ? [
+          {
+            label: msg("Artifacts"),
+            icon: Bookmark,
+            shortcut: "A",
+            available: true,
+            disabledReason: messages(SURFACE_DISABLED_REASONS.files),
+            onClick: props.onAddArtifacts,
+          },
+        ]
+      : []),
     {
       label: msg("Diff"),
       icon: FileDiff,
@@ -1684,6 +1715,7 @@ export function RightPanelTabs(props: RightPanelTabsProps) {
             onAddTerminal={props.onAddTerminal}
             onAddDiff={props.onAddDiff}
             onAddFiles={props.onAddFiles}
+            onAddArtifacts={props.onAddArtifacts}
             onAddPullRequest={props.onAddPullRequest}
             onAddPullRequests={props.onAddPullRequests}
             onAddDevice={props.onAddDevice}

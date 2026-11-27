@@ -117,6 +117,8 @@ export class WorkspaceFileSystem extends Context.Service<
       input: FilesystemGetMetadataInput,
     ) => Effect.Effect<FilesystemGetMetadataResult>;
 
+    readonly resolveExistingFile: (input: ProjectReadFileInput) => Effect.Effect<string | null>;
+
     readonly readFile: (
       input: ProjectReadFileInput,
     ) => Effect.Effect<
@@ -378,6 +380,17 @@ export const make = Effect.gen(function* () {
       relativePath: target.relativePath,
       realTargetPath: resolved.exists ? resolved.realTargetPath : null,
     };
+  });
+
+  const resolveExistingFile = Effect.fn("WorkspaceFileSystem.resolveExistingFile")(function* (
+    input: ProjectReadFileInput,
+  ) {
+    const target = yield* resolveReadTarget(input).pipe(Effect.option);
+    if (target._tag === "None" || target.value.realTargetPath === null) return null;
+    const resolved = target.value.realTargetPath;
+    if (yield* isServerInternalPath(resolved)) return null;
+    const stat = yield* fileSystem.stat(resolved).pipe(Effect.option);
+    return stat._tag === "Some" && stat.value.type === "File" ? resolved : null;
   });
 
   const readFile: WorkspaceFileSystem["Service"]["readFile"] = Effect.fn(
@@ -642,7 +655,7 @@ export const make = Effect.gen(function* () {
     return { relativePath: target.relativePath };
   });
 
-  return WorkspaceFileSystem.of({ getMetadata, readFile, writeFile });
+  return WorkspaceFileSystem.of({ getMetadata, resolveExistingFile, readFile, writeFile });
 });
 
 export const layer = Layer.effect(WorkspaceFileSystem, make);

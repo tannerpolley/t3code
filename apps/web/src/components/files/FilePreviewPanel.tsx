@@ -1913,6 +1913,7 @@ export default function FilePreviewPanel({
                 environmentId={environmentId}
                 cwd={hostFolderPath ?? cwd}
                 projectName={hostFolderPath ?? projectName}
+                projectId={projectId}
                 hostFolder={hostFolderPath !== null}
                 selectedPath={
                   hostFolderPath === null

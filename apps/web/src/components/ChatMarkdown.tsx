@@ -152,6 +152,7 @@ import { rightPanelHostRef, useRightPanelStore } from "../rightPanelStore";
 import { useOpenIssueLink } from "../lib/openIssueLink";
 import { issueTrackerEnvironment } from "../state/issueTrackers";
 import { useEnvironmentQuery } from "../state/query";
+import { useSaveProjectArtifact } from "../state/projectArtifacts";
 import { readThreadShell, useProjects } from "../state/entities";
 import { serverEnvironment } from "../state/server";
 import { shellEnvironment } from "../state/shell";
@@ -649,6 +650,7 @@ function useChatMarkdownState(
   });
   const pullRequestLinking = usePullRequestLinking(threadRef?.environmentId);
   const environmentId = threadRef?.environmentId ?? explicitEnvironmentId ?? null;
+  const saveArtifact = useSaveProjectArtifact(threadRef?.environmentId ?? null);
   const canOperateHost = useEnvironmentScope(environmentId, AuthOrchestrationOperateScope);
   const canOperatePreview = useEnvironmentScope(environmentId, AuthPreviewOperateScope);
   const isClientHost = useAtomValue(clientHostEnvironmentAtom(environmentId));
@@ -1059,6 +1061,16 @@ function useChatMarkdownState(
           markdownFileCopyPaths(fileLinkMeta, await resolveHostPath(), cwd)
         }
         onOpenInPanel={(path) => openFileInPanel(fileLinkMeta, path)}
+        onSaveArtifact={
+          saveArtifact && threadRef && !isAppBundle
+            ? async () => {
+                const projectId = readThreadShell(threadRef)?.projectId;
+                if (projectId === undefined) return;
+                const { absolutePath } = await resolveHostPath();
+                await saveArtifact(projectId, resolvePathLinkTarget(absolutePath, cwd ?? ""));
+              }
+            : undefined
+        }
         onOpenMedia={
           threadRef && canPreviewMedia
             ? () => openMarkdownMedia(mediaPath, fileLinkMeta.filePath)

@@ -3,6 +3,7 @@ import { GitPreparePullRequestThreadInput, GitRunStackedActionInput } from "./gi
 import {
   AuthAccessWriteScope,
   AuthEnvironmentMaintainScope,
+  AuthFilesystemReadScope,
   AuthOrchestrationOperateScope,
   AuthOrchestrationReadScope,
   AuthPreviewOperateScope,
@@ -19,6 +20,9 @@ import { WS_METHODS } from "./rpc.ts";
 
 /** Incremental client enforcement; the server still authorizes every request. */
 export const CLIENT_GUARDED_RPC_SCOPES = {
+  [WS_METHODS.projectArtifactsAdd]: AuthOrchestrationOperateScope,
+  [WS_METHODS.projectArtifactsUpdate]: AuthOrchestrationOperateScope,
+  [WS_METHODS.projectArtifactsRemove]: AuthOrchestrationOperateScope,
   [WS_METHODS.sidebarLayoutUpdate]: AuthSettingsWriteScope,
   [WS_METHODS.providerAuthRemoveMethod]: AuthProvidersManageScope,
   // An MCP sign-in stores a credential for the agent, as an account sign-in does.
@@ -117,6 +121,13 @@ export function clientRpcRequiredScopes(
   method: string,
   input: unknown,
 ): readonly AuthEnvironmentScope[] {
+  if (
+    method === WS_METHODS.projectArtifactsAdd ||
+    method === WS_METHODS.projectArtifactsUpdate ||
+    method === WS_METHODS.projectArtifactsRemove
+  ) {
+    return [AuthOrchestrationOperateScope, AuthFilesystemReadScope];
+  }
   if (method === WS_METHODS.gitPreparePullRequestThread && input !== undefined) {
     const payload = decodePrepareThread(input);
     if (payload.mode === "worktree" && payload.threadId !== undefined)
