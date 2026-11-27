@@ -234,15 +234,10 @@ function ThreadArrangementSheet(props: { onClose: () => void }) {
         reorderableEnvironmentIds:
           section === "pinned"
             ? listEnvironments.pinReorderEnvironmentIds
-            : new Set(
-                // Folder rows use project ranks on placement-capable hosts.
-                [...listEnvironments.activeReorderEnvironmentIds].filter(
-                  (id) => !configs.get(id)?.sidebarProjectPlacement,
-                ),
-              ),
+            : listEnvironments.activeReorderEnvironmentIds,
       });
     return { pinned: planner("pinned"), active: planner("active") };
-  }, [sections, threads, listEnvironments, configs]);
+  }, [sections, threads, listEnvironments]);
   const rows = useMemo(() => {
     const result: Row[] = [];
     let offset = 0;
@@ -323,8 +318,18 @@ function ThreadArrangementSheet(props: { onClose: () => void }) {
       if (target.section === "settled") {
         if (current.sourceSection !== "settled" && configs.has(current.thread.environmentId))
           destination = { section: "settled", targetId: null, placement: "before" };
-      } else if (latest.current.planners[target.section](keyOf(current.thread), candidate) !== null)
-        destination = candidate;
+      } else {
+        const reordersProjectThread =
+          target.section === "active" &&
+          current.sourceSection === "active" &&
+          configs.get(current.thread.environmentId)?.sidebarProjectPlacement;
+        if (
+          !reordersProjectThread &&
+          latest.current.planners[target.section](keyOf(current.thread), candidate) !== null
+        ) {
+          destination = candidate;
+        }
+      }
     }
     if (
       current.destination?.targetId !== destination?.targetId ||
