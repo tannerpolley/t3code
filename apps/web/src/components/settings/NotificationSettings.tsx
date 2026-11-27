@@ -117,7 +117,7 @@ export function NotificationPresenceSettings() {
       settingKeys={["notificationPresencePeer"]}
       {...searchableSetting("notification-presence-peer")}
       description={gt(
-        "Enter your phone’s Tailscale name. Thread alerts go to the desktop when the phone is on the host’s local network and to the phone when away. Leave blank to turn this off.",
+        "Enter your phone’s Tailscale name. The phone gets thread alerts only while it is away from the host’s local network. The desktop always gets them. Leave blank to turn this off.",
       )}
       control={
         <Input

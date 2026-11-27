@@ -18,7 +18,7 @@ Notification permission and Android notification channels are controlled in syst
 
 In the desktop or web app, open **Settings → General → Notifications**. Select the environment that runs Tailscale and enter your phone’s Tailscale name under **Phone for notification routing**. Keep thread notifications enabled on the computer. Clear the phone name to turn off routing.
 
-When the environment reaches the phone directly on its local network, input requests, approvals, completions, and failures use desktop system notifications. When the phone is away or unreachable, they use mobile push. Live Activities and Android ongoing activity cards may lag while the phone is home. After you leave, the phone can alert for pending requests and results that are still current.
+Desktop system notifications for input requests, approvals, completions, and failures always appear. Your phone receives them only when it is away or unreachable. While the environment reaches the phone directly on its local network, phone alerts are held back, and Live Activities and Android ongoing activity cards may lag. After you leave, the phone can alert for pending requests and results that are still current.
 
 For the Android fork, install ntfy on your phone. In the same settings section, keep **ntfy server URL** at its default or enter your own ntfy server. Under **ntfy topic**, choose **Generate topic** and subscribe to that topic on the same server in ntfy. Keep the topic private. Anyone who knows an unprotected topic on ntfy.sh can read or post to it. Alerts contain the project, thread title or role, and status. Clear the topic to turn off ntfy alerts.
 
