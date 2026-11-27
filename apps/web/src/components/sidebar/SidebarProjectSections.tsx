@@ -1,10 +1,22 @@
+import { scopedThreadKey, scopeThreadRef } from "@t3tools/client-runtime/environment";
+import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/models";
+import {
+  countSidebarAgentStates,
+  type SidebarAgentRole,
+} from "@t3tools/client-runtime/state/sidebar-families";
 import type { ContextMenuSource } from "@t3tools/contracts";
 import { ChevronDownIcon, FolderIcon } from "lucide-react";
-import { T, useGT } from "gt-react";
-import { useRef, useState } from "react";
+import { msg, T, useGT, useMessages } from "gt-react";
+import { memo, useRef, useState } from "react";
 
 import { cn } from "../../lib/utils";
 import { contextMenuSourceOf } from "../../contextMenuSource";
+import { useUiStateStore } from "../../uiStateStore";
+import {
+  formatSidebarAgentStates,
+  resolveSidebarAgentState,
+  resolveThreadLastVisitedAt,
+} from "../Sidebar.logic";
 import { Button } from "../ui/button";
 import {
   Dialog,
@@ -58,6 +70,74 @@ export function SidebarProjectSectionHeader(props: {
     </li>
   );
 }
+
+const ROLE_SECTION_LABELS: Record<SidebarAgentRole, string> = {
+  implementation: msg("Implementors"),
+  review: msg("Reviewers"),
+  design: msg("Designers"),
+  writer: msg("Writers"),
+  research: msg("Researchers"),
+  test: msg("Testers"),
+  other: msg("Other agents"),
+};
+
+/** Counts the given threads by state, reading the same visit times as their rows. */
+export function useSidebarAgentStateSummary(
+  threads: readonly EnvironmentThreadShell[],
+  short = false,
+) {
+  const messages = useMessages();
+  const localLastVisitedAtById = useUiStateStore((state) => state.threadLastVisitedAtById);
+  const counts = countSidebarAgentStates(threads, (thread) =>
+    resolveSidebarAgentState({
+      ...thread,
+      lastVisitedAt: resolveThreadLastVisitedAt(
+        thread.lastVisitedAt,
+        localLastVisitedAtById[scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id))],
+      ),
+    }),
+  );
+  return formatSidebarAgentStates(counts, messages, short);
+}
+
+/** A project's child agents in one role. Its rows name it as their parent. */
+export const SidebarRoleSectionHeader = memo(function SidebarRoleSectionHeader(props: {
+  id: string;
+  sectionKey: string;
+  role: SidebarAgentRole;
+  parent: string;
+  depth: number;
+  collapsed: boolean;
+  threads: readonly EnvironmentThreadShell[];
+  onToggle: (sectionKey: string) => void;
+}) {
+  const messages = useMessages();
+  const summary = useSidebarAgentStateSummary(props.threads);
+  return (
+    <li className="list-none">
+      <button
+        type="button"
+        data-sidebar-row={props.id}
+        data-sidebar-parent={props.parent}
+        data-testid="sidebar-role-section"
+        aria-expanded={!props.collapsed}
+        onClick={() => props.onToggle(props.sectionKey)}
+        style={{
+          paddingInlineStart: `calc(var(--sidebar-row-content-inset) + 16px + ${Math.min(props.depth, 3) * 10}px)`,
+        }}
+        className="flex h-7 w-full cursor-pointer items-center gap-1.5 rounded-(--control-radius) pe-(--sidebar-row-content-inset) text-left text-xs text-sidebar-muted-foreground outline-none hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+      >
+        <ChevronDownIcon
+          aria-hidden
+          className={cn("size-3 shrink-0", props.collapsed && "-rotate-90")}
+        />
+        <span className="shrink-0 font-medium">{messages(ROLE_SECTION_LABELS[props.role])}</span>
+        <span className="tabular-nums">{props.threads.length}</span>
+        <span className="min-w-0 flex-1 truncate text-end tabular-nums">{summary}</span>
+      </button>
+    </li>
+  );
+});
 
 export function SidebarProjectSectionNameDialog(props: {
   name?: string | undefined;

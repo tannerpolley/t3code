@@ -38,6 +38,8 @@ import {
   resolveSidebarDropVerb,
   groupSidebarThreadsByProject,
   resolveSidebarFolderDot,
+  formatSidebarAgentStates,
+  resolveSidebarAgentState,
   sidebarFolderExpansionKeys,
   withoutRemovedCheckout,
 } from "./Sidebar.logic";
@@ -1762,6 +1764,48 @@ describe("resolveSidebarFolderDot", () => {
     expect(resolveSidebarFolderDot([idle, working])).toBe("working");
     expect(resolveSidebarFolderDot([working, unread])).toBe("unread");
     expect(resolveSidebarFolderDot([unread, limited])).toBe("attention");
+  });
+});
+
+describe("resolveSidebarAgentState", () => {
+  it("counts a turn blocked on a child as working and an idle session as nothing", () => {
+    const runtime = {
+      status: "running" as const,
+      activeRunId: null,
+      providerInstanceId: ProviderInstanceId.make("codex"),
+      providerName: "Codex",
+      lastError: null,
+      updatedAt: "2026-03-09T10:00:00.000Z",
+    };
+    const thread = {
+      hasActionableProposedPlan: false,
+      hasPendingApprovals: false,
+      hasPendingUserInput: false,
+      interactionMode: "default" as const,
+      latestRun: null,
+      lastVisitedAt: null,
+      runtime,
+    };
+    expect(resolveSidebarAgentState({ ...thread, blockedOnThreadWait: true })).toBe("working");
+    expect(resolveSidebarAgentState({ ...thread, runtime: { ...runtime, status: "idle" } })).toBe(
+      null,
+    );
+    expect(resolveSidebarAgentState({ ...thread, hasPendingApprovals: true })).toBe("attention");
+    expect(resolveSidebarAgentState({ ...thread, runtime: { ...runtime, status: "failed" } })).toBe(
+      "failed",
+    );
+  });
+});
+
+describe("formatSidebarAgentStates", () => {
+  it("joins the non-zero states in a fixed order", () => {
+    expect(formatSidebarAgentStates({ working: 2, attention: 1, failed: 1 })).toBe(
+      "2 working · 1 waiting on you · 1 failed",
+    );
+    expect(formatSidebarAgentStates({ working: 3, attention: 1, failed: 0 }, undefined, true)).toBe(
+      "3 working · 1 waiting",
+    );
+    expect(formatSidebarAgentStates({ working: 0, attention: 0, failed: 0 })).toBe("");
   });
 });
 

@@ -557,6 +557,10 @@ type SidebarThreadRowProps = {
   childCount: number;
   familyExpanded: boolean;
   onToggleFamily: (threadKey: string, expanded: boolean) => void;
+  // Child agents listed in role sections instead of under this row.
+  agentCount: number;
+  // Set in a role section, which already names the role.
+  titleIsThreadTitle: boolean;
   variantAction: SidebarSweepAction;
   settlementSupported: boolean;
   snoozeSupported: boolean;
@@ -702,7 +706,9 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   };
   const role = thread.delegatedRole;
   const rowTitle =
-    role === undefined || role === "general" ? thread.title : messages(sidebarRoleLabels[role]);
+    props.titleIsThreadTitle || role === undefined || role === "general"
+      ? thread.title
+      : messages(sidebarRoleLabels[role]);
   const isRegeneratingTitle = thread.titleRegeneration != null;
   const localLastVisitedAt = useUiStateStore((state) => state.threadLastVisitedAtById[threadKey]);
   const lastVisitedAt = resolveThreadLastVisitedAt(thread.lastVisitedAt, localLastVisitedAt);
@@ -1394,6 +1400,13 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
           {draftIndicator}
           {title}
           {pinIndicator}
+          {props.agentCount > 0 ? (
+            <span className="shrink-0 text-xs text-muted-foreground tabular-nums">
+              {gt("{count, plural, one {{count} agent} other {{count} agents}}", {
+                count: props.agentCount,
+              })}
+            </span>
+          ) : null}
         </span>
         {isRegeneratingTitle ? (
           <span role="status" className="sr-only">
