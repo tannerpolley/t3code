@@ -35,7 +35,12 @@ import {
   ProviderOptionSelections,
 } from "./model.ts";
 import { ModelSelection } from "./modelSelection.ts";
-import { DelegationModelRole, RoleModel, RoleModels } from "./delegatedRole.ts";
+import {
+  DelegationComplexity,
+  DelegationModelRole,
+  RoleModel,
+  RoleModels,
+} from "./delegatedRole.ts";
 import { ProjectScript, type ProjectMutation } from "./project.ts";
 import { DEFAULT_RUNTIME_MODE, RuntimeMode } from "./providerPolicy.ts";
 import { BrowserProfile, BrowserProfileId, DEFAULT_BROWSER_PROFILE_ID } from "./browserProfile.ts";
@@ -1891,7 +1896,14 @@ const ModelSelectionPatch = Schema.Struct({
 
 export const ServerSettingsPatch = Schema.Struct({
   roleModels: Schema.optionalKey(
-    Schema.Record(DelegationModelRole, Schema.optionalKey(Schema.NullOr(RoleModel))),
+    Schema.Record(
+      DelegationModelRole,
+      Schema.optionalKey(
+        Schema.NullOr(
+          Schema.Record(DelegationComplexity, Schema.optionalKey(Schema.NullOr(RoleModel))),
+        ),
+      ),
+    ),
   ),
   codexDefaultSpeed: Schema.optionalKey(Schema.NullOr(CodexDefaultSpeed)),
   setModelFavorites: Schema.optionalKey(

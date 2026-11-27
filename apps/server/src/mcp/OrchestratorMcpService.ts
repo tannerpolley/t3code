@@ -1,4 +1,5 @@
 import {
+  DelegationComplexity,
   DelegationModelRole,
   CommandId,
   type RunId,
@@ -1666,25 +1667,34 @@ const make = Effect.gen(function* () {
   ) => {
     const roleModels = { ...settings.roleModels };
     for (const role of DelegationModelRole.literals) {
-      const pick = roleModels[role];
-      if (!pick) continue;
-      const provider = providers.find((entry) => entry.instanceId === pick.instanceId);
-      const builtIn = provider?.models.some(
-        (model) => model.slug === pick.model && !model.isCustom,
-      );
-      const config = settings.providerInstances[pick.instanceId]?.config as
-        | { customModels?: unknown }
-        | undefined;
-      const isCustom =
-        !builtIn &&
-        provider?.driver !== "antigravity" &&
-        readCustomModelEntries(config?.customModels).some((model) => model.slug === pick.model);
-      if (
-        isModelHidden(
-          { slug: pick.model, isCustom },
-          settings.providerModelPreferences?.[pick.instanceId]?.hiddenModels,
-        )
-      ) {
+      if (roleModels[role] === undefined) continue;
+      const levels = { ...roleModels[role] };
+      for (const level of DelegationComplexity.literals) {
+        const pick = levels[level];
+        if (!pick) continue;
+        const provider = providers.find((entry) => entry.instanceId === pick.instanceId);
+        const builtIn = provider?.models.some(
+          (model) => model.slug === pick.model && !model.isCustom,
+        );
+        const config = settings.providerInstances[pick.instanceId]?.config as
+          | { customModels?: unknown }
+          | undefined;
+        const isCustom =
+          !builtIn &&
+          provider?.driver !== "antigravity" &&
+          readCustomModelEntries(config?.customModels).some((model) => model.slug === pick.model);
+        if (
+          isModelHidden(
+            { slug: pick.model, isCustom },
+            settings.providerModelPreferences?.[pick.instanceId]?.hiddenModels,
+          )
+        ) {
+          delete levels[level];
+        }
+      }
+      if (levels.routine || levels.complex) {
+        roleModels[role] = levels;
+      } else {
         delete roleModels[role];
       }
     }
@@ -3054,10 +3064,10 @@ const make = Effect.gen(function* () {
                 ),
               ),
               providers,
-            )[role];
+            )[role]?.[input.complexity ?? "routine"];
       const target = yield* resolveTargetRechecking({
         parent,
-        target: roleModel ? roleModelTarget(roleModel) : input.target,
+        target: roleModel ? roleModelTarget(roleModel, input.target?.options) : input.target,
         providers,
         cwd: yield* parentWorkspaceCwd(parent),
         replaceModelOptions: roleModel !== undefined,

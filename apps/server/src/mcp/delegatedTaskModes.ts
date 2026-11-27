@@ -14,11 +14,15 @@ import {
 import { ACP_SESSION_MODE_OPTION_ID } from "@t3tools/provider-acp/server/sessionConfig";
 import * as Effect from "effect/Effect";
 
-export function roleModelTarget(pick: RoleModel): OrchestratorMcpTarget {
+export function roleModelTarget(
+  pick: RoleModel,
+  requestedOptions: OrchestratorMcpTarget["options"],
+): OrchestratorMcpTarget {
   return {
     providerInstanceId: pick.instanceId,
     model: pick.model,
-    options: pick.effort === undefined ? [] : [pick.effort],
+    options:
+      pick.effort === "orchestrator" ? (requestedOptions ?? []) : pick.effort ? [pick.effort] : [],
   };
 }
 

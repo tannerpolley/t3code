@@ -232,7 +232,7 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
       }),
     ).pipe(Effect.provide(layerServerSettings())),
   );
-  it.effect("persists and resets role models independently", () =>
+  it.effect("migrates single role picks and persists independent level edits and resets", () =>
     Effect.gen(function* () {
       const settings = yield* ServerSettingsModule.ServerSettingsService;
       const fs = yield* FileSystem.FileSystem;
@@ -244,17 +244,34 @@ it.layer(Layer.mergeAll(NodeServices.layer, NodeCrypto.layer))("server settings"
       const saved = () =>
         fs.readFileString(settingsPath).pipe(Effect.flatMap(decodeServerSettingsJson));
 
-      yield* settings.updateSettings({ roleModels: { writer, review: { ...review, effort } } });
-      assert.deepStrictEqual((yield* saved()).roleModels, {
-        writer,
-        review: { ...review, effort },
+      const legacyReview = { ...review, effort };
+      yield* fs.writeFileString(
+        settingsPath,
+        JSON.stringify({ roleModels: { writer, review: legacyReview } }),
+      );
+      const writerLevels = { routine: writer, complex: writer };
+      assert.deepStrictEqual((yield* settings.getSettings).roleModels, {
+        writer: writerLevels,
+        review: { routine: legacyReview, complex: legacyReview },
       });
 
-      yield* settings.updateSettings({ roleModels: { review } });
-      assert.deepStrictEqual((yield* saved()).roleModels, { writer, review });
+      const complex = { ...review, effort: "orchestrator" } as const;
+      yield* settings.updateSettings({ roleModels: { review: { complex } } });
+      const expected = { writer: writerLevels, review: { routine: legacyReview, complex } };
+      assert.deepStrictEqual((yield* saved()).roleModels, expected);
+      assert.deepStrictEqual(
+        JSON.parse(yield* fs.readFileString(settingsPath)).roleModels,
+        expected,
+      );
 
-      yield* settings.updateSettings({ roleModels: { review: null } });
-      assert.deepStrictEqual((yield* saved()).roleModels, { writer });
+      yield* settings.updateSettings({ roleModels: { review: { routine: null } } });
+      assert.deepStrictEqual((yield* saved()).roleModels, {
+        writer: writerLevels,
+        review: { complex },
+      });
+
+      yield* settings.updateSettings({ roleModels: { review: { complex: null } } });
+      assert.deepStrictEqual((yield* saved()).roleModels, { writer: writerLevels });
     }).pipe(Effect.provide(layerServerSettings())),
   );
 
