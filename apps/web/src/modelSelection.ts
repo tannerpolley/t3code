@@ -1,4 +1,5 @@
 import {
+  ANTIGRAVITY_DEFAULT_MODEL,
   DEFAULT_TEXT_GENERATION_MODEL,
   DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER,
   defaultInstanceIdForDriver,
@@ -18,7 +19,7 @@ import {
 } from "@t3tools/shared/model";
 import { getComposerProviderState } from "./components/chat/composerProviderState";
 import { type ClientSettings, UnifiedSettings } from "@t3tools/contracts/settings";
-import { resolveModelPreferences } from "@t3tools/shared/serverSettings";
+import { isModelHidden, resolveModelPreferences } from "@t3tools/shared/serverSettings";
 import * as Arr from "effect/Array";
 import * as Equal from "effect/Equal";
 import * as Result from "effect/Result";
@@ -33,12 +34,15 @@ import { ModelEsque } from "./components/chat/providerIconUtils";
 import {
   type ProviderInstanceEntry,
   deriveProviderInstanceEntries,
+  isProviderInstancePickerReady,
   NO_PROVIDER_MODEL_SELECTION,
   resolveDefaultProviderModelSelection,
   resolveProjectDefaultProviderModelSelection,
 } from "./providerInstances";
 import { sortModelsForProviderInstance } from "./modelOrdering";
 import { resolveModelShortName } from "@t3tools/client-runtime/provider-clients";
+
+import { groupModelsBySubProvider } from "@t3tools/client-runtime/providerSubProviders";
 
 export const MAX_CUSTOM_MODEL_LENGTH = 256;
 const DEFAULT_TEXT_GENERATION_INSTANCE_ID = ProviderInstanceId.make("codex");
@@ -131,9 +135,8 @@ function applyInstanceModelPreferences(
     readonly modelOrder: ReadonlyArray<string>;
   },
 ): AppModelOption[] {
-  const hiddenModels = new Set(preferences.hiddenModels);
   return sortModelsForProviderInstance(
-    options.filter((option) => option.isCustom || !hiddenModels.has(option.slug)),
+    options.filter((option) => !isModelHidden(option, preferences.hiddenModels)),
     { modelOrder: preferences.modelOrder },
   );
 }
@@ -452,4 +455,38 @@ export function resolveAppModelSelectionState(
   }
 
   return NO_PROVIDER_MODEL_SELECTION;
+}
+
+export function roleModelChoices(
+  settings: UnifiedSettings,
+  providers: ReadonlyArray<ServerProvider>,
+) {
+  return deriveProviderInstanceEntries(providers)
+    .flatMap((entry) => {
+      if (!isProviderInstancePickerReady(entry)) return [];
+      const favorites = new Set(
+        settings.favorites
+          ?.filter((favorite) => favorite.provider === entry.instanceId)
+          .map((favorite) => favorite.model),
+      );
+      const models = sortModelsForProviderInstance(
+        getAppModelOptionsForInstance(settings, entry).filter(
+          (model) => entry.driverKind !== "antigravity" || model.slug !== ANTIGRAVITY_DEFAULT_MODEL,
+        ),
+        { favoriteModels: favorites, groupFavorites: true },
+      );
+      const subProviders = entry.snapshot.subProviders;
+      if (subProviders?.length) {
+        const { ungrouped, groups } = groupModelsBySubProvider(
+          models,
+          subProviders,
+          (model) => model.subProvider,
+        );
+        return [{ entry, models: [...ungrouped, ...groups.flatMap((group) => group.models)] }];
+      }
+      const current = models.filter((model) => !model.isLegacy || favorites.has(model.slug));
+      const legacy = models.filter((model) => model.isLegacy && !favorites.has(model.slug));
+      return [{ entry, models: [...current, ...legacy] }];
+    })
+    .filter(({ models }) => models.length > 0);
 }

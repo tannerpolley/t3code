@@ -25,6 +25,7 @@ import {
 import {
   defaultModelSelectionsAreMixed,
   getAppModelOptionsForInstance,
+  roleModelChoices,
   getCustomModelOptionsByInstance,
   getTextGenerationModelOptionsByInstance,
   resolveAppModelSelectionForInstance,
@@ -1485,4 +1486,33 @@ describe("composer fallback to another instance of the same driver", () => {
     expect(selectedInstanceId).toBe(ProviderInstanceId.make("codex"));
     expect(state.modelOptions?.[selectedInstanceId]).toBeUndefined();
   });
+});
+
+it("omits hidden role models and uses the picker names and order", () => {
+  const snapshot = provider({ instanceId: "codex", models: ["saved", "a", "b", "c", "d"] });
+  const models = roleModelChoices(
+    {
+      ...DEFAULT_UNIFIED_SETTINGS,
+      providerModelPreferences: {
+        [snapshot.instanceId]: { hiddenModels: ["saved"], modelOrder: ["c", "b", "a"] },
+      },
+      favorites: [{ provider: snapshot.instanceId, model: "d" }],
+    },
+    [
+      {
+        ...snapshot,
+        models: snapshot.models.map((model) => ({
+          ...model,
+          name: model.slug.toUpperCase(),
+          isLegacy: model.slug === "b",
+        })),
+      },
+    ],
+  )[0]?.models;
+  expect(models?.map(({ slug, name }) => [slug, name])).toEqual([
+    ["d", "D"],
+    ["c", "C"],
+    ["a", "A"],
+    ["b", "B"],
+  ]);
 });

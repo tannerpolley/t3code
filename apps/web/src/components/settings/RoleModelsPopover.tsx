@@ -8,14 +8,15 @@ import { resolveProviderInstanceDisplayName } from "@t3tools/client-runtime/stat
 import {
   AuthSettingsWriteScope,
   DelegationModelRole,
-  isProviderAvailable,
+  DEFAULT_SERVER_SETTINGS,
   type EnvironmentId,
   type RoleModel,
   type ServerProvider,
 } from "@t3tools/contracts";
 import { useGT, useMessages } from "gt-react";
 import { type ReactElement, useState } from "react";
-import { useUpdateEnvironmentSettings } from "~/hooks/useSettings";
+import { useMergedSettings, useUpdateEnvironmentSettings } from "~/hooks/useSettings";
+import { roleModelChoices } from "~/modelSelection";
 import { useEnvironment } from "~/state/environments";
 import { providersIgnoringCheckedAtAtom, serverEnvironment } from "~/state/server";
 import { useEnvironmentScope } from "~/state/session";
@@ -28,12 +29,14 @@ function RoleSelect({
   value,
   choices,
   disabled,
+  selectedLabel,
   onPick,
 }: {
   label: string;
   value: string;
   choices: ReadonlyArray<{ id: string; label: string }>;
   disabled: boolean;
+  selectedLabel?: string;
   onPick: (value: string) => void;
 }) {
   return (
@@ -45,7 +48,9 @@ function RoleSelect({
       }}
     >
       <SelectTrigger size="compact" variant="ghost" aria-label={label} className="min-w-0">
-        <SelectValue>{choices.find((choice) => choice.id === value)?.label ?? value}</SelectValue>
+        <SelectValue>
+          {selectedLabel ?? choices.find((choice) => choice.id === value)?.label ?? value}
+        </SelectValue>
       </SelectTrigger>
       <SelectPopup alignItemWithTrigger={false}>
         {choices.map((choice) => (
@@ -61,12 +66,14 @@ function RoleSelect({
 function RoleModelRow({
   role,
   providers,
+  choices,
   pick,
   readOnly,
   onSave,
 }: {
   role: DelegationModelRole;
   providers: ReadonlyArray<ServerProvider>;
+  choices: ReturnType<typeof roleModelChoices>;
   pick: RoleModel | undefined;
   readOnly: boolean;
   onSave: (pick: RoleModel | null, onSettled: () => void) => void;
@@ -77,7 +84,12 @@ function RoleModelRow({
   const roleLabel = messages(sidebarRoleLabels[role]);
   const provider = providers.find((entry) => entry.instanceId === pick?.instanceId);
   const model = provider?.models.find((entry) => entry.slug === pick?.model);
-  const effort = model?.capabilities?.optionDescriptors?.find(isReasoningControl);
+  const models = choices.find(({ entry }) => entry.instanceId === pick?.instanceId)?.models ?? [];
+  const selected = models.find((entry) => entry.slug === pick?.model);
+  const unavailable = pick && !selected;
+  const effort = selected
+    ? model?.capabilities?.optionDescriptors?.find(isReasoningControl)
+    : undefined;
   const effortChoices =
     effort?.type === "select"
       ? selectableProviderOptionChoices(effort)
@@ -87,9 +99,10 @@ function RoleModelRow({
             { id: "false", label: gt("Off", { $context: "option state" }) },
           ]
         : [];
-  const providerChoices = providers
-    .filter((entry) => entry.enabled && isProviderAvailable(entry) && entry.models.length > 0)
-    .map((entry) => ({ id: entry.instanceId, label: resolveProviderInstanceDisplayName(entry) }));
+  const providerChoices = choices.map(({ entry }) => ({
+    id: entry.instanceId,
+    label: entry.displayName,
+  }));
   const disabled = readOnly || saving;
   const save = (next: RoleModel | null) => {
     setSaving(true);
@@ -103,25 +116,32 @@ function RoleModelRow({
           label={gt("{role} provider", { role: roleLabel })}
           value={pick?.instanceId ?? ""}
           disabled={disabled}
+          {...(provider && !providerChoices.some((entry) => entry.id === provider.instanceId)
+            ? { selectedLabel: resolveProviderInstanceDisplayName(provider) }
+            : {})}
           choices={[{ id: "", label: gt("Orchestrator decides") }, ...providerChoices]}
           onPick={(id) => {
             if (id === "") {
               save(null);
               return;
             }
-            const next = providers.find((entry) => entry.instanceId === id);
-            const nextModel = next?.models.find((entry) => entry.isDefault) ?? next?.models[0];
-            if (next && nextModel) save({ instanceId: next.instanceId, model: nextModel.slug });
+            const next = choices.find(({ entry }) => entry.instanceId === id);
+            const nextModel = next?.models.find((model) => model.isDefault) ?? next?.models[0];
+            if (next && nextModel)
+              save({ instanceId: next.entry.instanceId, model: nextModel.slug });
           }}
         />
         {pick ? (
           <RoleSelect
             label={gt("{role} model", { role: roleLabel })}
             value={pick.model}
-            disabled={disabled || !provider?.models.length}
-            choices={(provider?.models ?? []).map((entry) => ({
+            disabled={disabled || models.length === 0}
+            {...(unavailable
+              ? { selectedLabel: `${model?.name ?? pick.model} · ${gt("Unavailable")}` }
+              : {})}
+            choices={models.map((entry) => ({
               id: entry.slug,
-              label: entry.shortName ?? entry.name,
+              label: entry.name,
             }))}
             onPick={(model) => save({ instanceId: pick.instanceId, model })}
           />
@@ -163,6 +183,8 @@ function RoleModelsEditor({
   const settings = useAtomValue(serverEnvironment.settingsValueAtom(environmentId));
   const environmentLabel = useEnvironment(environmentId)?.label;
   const providers = useAtomValue(providersIgnoringCheckedAtAtom(environmentId));
+  const pickerSettings = useMergedSettings(settings ?? DEFAULT_SERVER_SETTINGS);
+  const choices = settings ? roleModelChoices(pickerSettings, providers) : [];
   const canWrite = useEnvironmentScope(environmentId, AuthSettingsWriteScope);
   const updateSettings = useUpdateEnvironmentSettings(environmentId);
   return (
@@ -176,6 +198,7 @@ function RoleModelsEditor({
             key={role}
             role={role}
             providers={providers}
+            choices={choices}
             pick={settings?.roleModels[role]}
             readOnly={readOnly || !canWrite || settings === null}
             onSave={(pick, onSettled) =>

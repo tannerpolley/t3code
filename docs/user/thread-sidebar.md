@@ -309,6 +309,11 @@ beside the thread you are in. See
 On mobile, open a subagent from its conversation card or **Agents**. On iOS
 layouts with an inspector, its thread opens beside the parent. Maximize it to
 fill the screen; close the full-screen view to return to the parent and inspector.
+Use **Role models** to choose which model runs a delegated role. If you hide a saved
+model from the composer model picker, the role still shows that model as unavailable.
+New delegations for that role use **Orchestrator decides** until you choose another
+model or make the saved model visible again.
+
 Stop on a thread also stops the subagents it delegated to.
 Before archiving the parent, wait for its delegated tasks to finish or cancel them.
 

@@ -4938,6 +4938,16 @@ describe("OrchestratorMcpService provider resolution", () => {
             },
           },
           {
+            name: "a hidden role pick falls back to the delegate target",
+            role: "review",
+            roleModels: { review: { instanceId: antigravityId, model: "gemini-4-neon" } },
+            providerModelPreferences: {
+              [antigravityId]: { hiddenModels: ["gemini-4-neon"], modelOrder: [] },
+            },
+            target: { model: "other-model" },
+            expected: { instanceId: codexInstanceId, model: "other-model" },
+          },
+          {
             name: "a named role without a pick still follows the delegate target",
             role: "implementation",
             target: { model: "other-model" },
@@ -5025,6 +5035,9 @@ describe("OrchestratorMcpService provider resolution", () => {
             ServerSettings.layerTest({
               codexDefaultSpeed: "normal",
               ...("roleModels" in testCase ? { roleModels: testCase.roleModels } : {}),
+              ...("providerModelPreferences" in testCase
+                ? { providerModelPreferences: testCase.providerModelPreferences }
+                : {}),
             }),
             providerRegistryLayer([
               {
@@ -5147,7 +5160,10 @@ describe("OrchestratorMcpService provider resolution", () => {
               testCase.name,
             );
             if ("roleModels" in testCase) {
-              assert.deepEqual(capabilities.roleModels, testCase.roleModels);
+              assert.deepEqual(
+                capabilities.roleModels,
+                "providerModelPreferences" in testCase ? undefined : testCase.roleModels,
+              );
               assert.equal(result.model, testCase.expected.model);
               const settings = yield* ServerSettings.ServerSettingsService;
               yield* settings.updateSettings({ roleModels: { review: null } });

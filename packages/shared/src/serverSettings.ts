@@ -688,6 +688,13 @@ export function applyServerSettingsPatch(
   };
 }
 
+export function isModelHidden(
+  model: { readonly slug: string; readonly isCustom: boolean },
+  hiddenModels: ReadonlyArray<string> = [],
+): boolean {
+  return !model.isCustom && hiddenModels.includes(model.slug);
+}
+
 export function resolveModelPreferences(
   settings: Pick<ServerSettings, "favorites" | "providerModelPreferences">,
   legacy: Partial<ModelPreferences> = {},
