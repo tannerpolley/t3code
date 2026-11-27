@@ -212,36 +212,6 @@ export function AutoSettleSettingsRows(props: {
   );
 }
 
-export function WorkingSectionSettings() {
-  const gt = useGT();
-  const savePreferences = useAtomCommand(saveMobilePreferences);
-  const preferences = useAtomValue(mobilePreferencesAtom);
-  const workingShelfEnabled =
-    AsyncResult.isSuccess(preferences) && preferences.value.workingShelfEnabled !== false;
-
-  return (
-    <View className="gap-3">
-      <SettingsSection title={gt("Sidebar")}>
-        <SettingsSwitchRow
-          icon="bolt.circle"
-          label={gt("Working section")}
-          value={workingShelfEnabled}
-          onValueChange={(value) => {
-            void savePreferences({ workingShelfEnabled: value });
-          }}
-        />
-      </SettingsSection>
-      <Text className="px-2 text-sm text-foreground-muted">
-        <T>
-          Fold working and monitoring threads into a Working section. They return to the top of the
-          list when they need you. While this is on, active threads are ordered by time and cannot
-          be moved.
-        </T>
-      </Text>
-    </View>
-  );
-}
-
 export function NewThreadSettingsSection() {
   const gt = useGT();
   const savePreferences = useAtomCommand(saveMobilePreferences);

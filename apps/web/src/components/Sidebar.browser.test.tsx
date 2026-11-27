@@ -523,13 +523,13 @@ it("lists child agents in role sections under their project and keeps a closed s
   await expect.element(reviewers).toHaveTextContent("Reviewers1");
   // Archived children and empty roles stay out.
   await expect.element(screen.getByText("Designers", { exact: true })).not.toBeInTheDocument();
-  // Children sit in their role section only, above the project's own threads.
+  // The project's own threads come first, followed by its role sections.
   const item = (locator: { element: () => Element }) => locator.element().closest("li");
   expect(item(implementors)?.nextElementSibling).toBe(item(implementor));
   expect(item(implementor)?.nextElementSibling).toBe(item(reviewers));
   expect(item(reviewers)?.nextElementSibling).toBe(item(doneReviewer));
   expect(
-    item(doneReviewer)!.compareDocumentPosition(item(parentRow)!) &
+    item(parentRow)!.compareDocumentPosition(item(implementors)!) &
       Node.DOCUMENT_POSITION_FOLLOWING,
   ).toBeTruthy();
   expect(implementor.element().getAttribute("data-sidebar-parent")).toBe(
@@ -613,6 +613,11 @@ it("lists child agents in role sections under their project and keeps a closed s
     .toBeVisible();
   await expect.element(implementors).toHaveTextContent("Implementors11 waiting on you");
 
+  const section = screen.getByRole("button", { name: "In progress" });
+  const folder = screen.getByRole("button", { name: /^T3 Code/ });
+  expect(section.element().querySelector(".lucide-folder-open")).toBeVisible();
+  expect(folder.element().querySelector(".lucide-folder-open")).toBeVisible();
+
   // A closed project sums up its threads and agents on one line.
   _layout.mockReturnValue({
     byEnvironment: new Map([
@@ -638,8 +643,8 @@ it("lists child agents in role sections under their project and keeps a closed s
   });
   await screen.rerender(tree("remount"));
   await expect.element(implementors).not.toBeInTheDocument();
-  const folder = screen.getByRole("button", { name: /^T3 Code/ });
   await expect.element(folder).toHaveAttribute("aria-expanded", "false");
+  expect(folder.element().querySelector(".lucide-folder")).toBeVisible();
   await expect.element(folder.getByText("1 waiting", { exact: true })).toBeVisible();
 });
 

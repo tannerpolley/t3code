@@ -1,4 +1,4 @@
-import type { ProjectId } from "@t3tools/contracts";
+import type { EnvironmentId, ProjectId, SidebarLayout, ThreadId } from "@t3tools/contracts";
 import type { SidebarProjectSortOrder, SidebarThreadSortOrder } from "@t3tools/contracts/settings";
 import {
   generateSpreadPinOrderKeys,
@@ -301,4 +301,38 @@ export function sortActiveThreadsByOrderKey<
       (left.environmentId ?? "").localeCompare(right.environmentId ?? "")
     );
   });
+}
+
+export type PlacedThread = {
+  readonly id: ThreadId;
+  readonly environmentId: EnvironmentId;
+  readonly createdAt: string;
+};
+
+export type ProjectThreadLayouts = ReadonlyMap<EnvironmentId, SidebarLayout>;
+
+export function projectThreadRank(thread: PlacedThread, layouts: ProjectThreadLayouts) {
+  return (
+    layouts.get(thread.environmentId)?.threadRanks?.[thread.id] ??
+    activeThreadSortKey({ createdAt: thread.createdAt })
+  );
+}
+
+export function sortProjectThreads<T extends PlacedThread>(
+  threads: readonly T[],
+  layouts: ProjectThreadLayouts,
+): T[] {
+  return threads
+    .map((thread) => ({ thread, rank: projectThreadRank(thread, layouts) }))
+    .sort(
+      (a, b) =>
+        compareProjectRank(a.rank, b.rank) ||
+        compareProjectRank(a.thread.id, b.thread.id) ||
+        compareProjectRank(a.thread.environmentId, b.thread.environmentId),
+    )
+    .map(({ thread }) => thread);
+}
+
+function compareProjectRank(a: string, b: string) {
+  return a < b ? -1 : a > b ? 1 : 0;
 }

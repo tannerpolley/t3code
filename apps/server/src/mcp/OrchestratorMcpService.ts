@@ -1,4 +1,6 @@
 import {
+  DelegationComplexity,
+  DelegationModelRole,
   CommandId,
   type RunId,
   idleCompactionOf,
@@ -59,6 +61,7 @@ import {
   type ScheduledTask,
   type ScheduledTaskUpsertInput,
   scheduledTaskThreadMode,
+  type ServerSettings as ServerSettingsShape,
   type ServerProvider,
   type ServerProviderModel,
   ThreadId,
@@ -73,10 +76,12 @@ import {
   offeredCodexServiceTier,
   withLegacyUltracodeEffort,
   withoutCodexSpeed,
+  readCustomModelEntries,
 } from "@t3tools/shared/model";
 import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
 import { runRanAfter } from "@t3tools/shared/orchestrationV2ThreadError";
 import { resolveProjectSettings } from "@t3tools/shared/projectSettings";
+import { isModelHidden } from "@t3tools/shared/serverSettings";
 import { formatThreadLink } from "@t3tools/shared/threadLinks";
 import { threadPullRequestUpdatedAtMs } from "@t3tools/shared/threadPullRequests";
 import {
@@ -1656,6 +1661,46 @@ const make = Effect.gen(function* () {
     return { parent, target, shell, runCount } as const;
   });
 
+  const availableRoleModels = (
+    settings: ServerSettingsShape,
+    providers: ReadonlyArray<ServerProvider>,
+  ) => {
+    const roleModels = { ...settings.roleModels };
+    for (const role of DelegationModelRole.literals) {
+      if (roleModels[role] === undefined) continue;
+      const levels = { ...roleModels[role] };
+      for (const level of DelegationComplexity.literals) {
+        const pick = levels[level];
+        if (!pick) continue;
+        const provider = providers.find((entry) => entry.instanceId === pick.instanceId);
+        const builtIn = provider?.models.some(
+          (model) => model.slug === pick.model && !model.isCustom,
+        );
+        const config = settings.providerInstances[pick.instanceId]?.config as
+          | { customModels?: unknown }
+          | undefined;
+        const isCustom =
+          !builtIn &&
+          provider?.driver !== "antigravity" &&
+          readCustomModelEntries(config?.customModels).some((model) => model.slug === pick.model);
+        if (
+          isModelHidden(
+            { slug: pick.model, isCustom },
+            settings.providerModelPreferences?.[pick.instanceId]?.hiddenModels,
+          )
+        ) {
+          delete levels[level];
+        }
+      }
+      if (levels.routine || levels.complex) {
+        roleModels[role] = levels;
+      } else {
+        delete roleModels[role];
+      }
+    }
+    return roleModels;
+  };
+
   const loadProviders = providerRegistry.getProviders;
 
   /** The folder the composer's model picker scans for this thread. */
@@ -2871,6 +2916,7 @@ const make = Effect.gen(function* () {
       const settings = yield* serverSettings.getSettings.pipe(
         Effect.mapError(() => failure("orchestration_error", "Unable to read server settings.")),
       );
+      const roleModels = availableRoleModels(settings, providers);
       const inherited = parent?.thread.modelSelection;
       const inheritedProvider = providers.find(
         ({ instanceId }) => instanceId === inherited?.instanceId,
@@ -2890,9 +2936,7 @@ const make = Effect.gen(function* () {
           ) ?? [],
         runtimeMode: limits.runtimeMode,
         interactionMode: limits.interactionMode,
-        ...(Object.keys(settings.roleModels).length === 0
-          ? {}
-          : { roleModels: settings.roleModels }),
+        ...(Object.keys(roleModels).length === 0 ? {} : { roleModels }),
         providers: providers.map((provider) => {
           // Snapshots list instances any project enables; delegate_task checks the caller's project.
           const enabledForCaller =
@@ -3009,18 +3053,22 @@ const make = Effect.gen(function* () {
           ? awaitTask(scope, taskId, key, input.timeoutMs)
           : readTask(scope, taskId, false, true);
       }
+      const providers = yield* loadProviders;
       const roleModel =
         role === undefined
           ? undefined
-          : (yield* serverSettings.getSettings.pipe(
-              Effect.mapError(() =>
-                failure("orchestration_error", "Unable to read server settings."),
+          : availableRoleModels(
+              yield* serverSettings.getSettings.pipe(
+                Effect.mapError(() =>
+                  failure("orchestration_error", "Unable to read server settings."),
+                ),
               ),
-            )).roleModels[role];
+              providers,
+            )[role]?.[input.complexity ?? "routine"];
       const target = yield* resolveTargetRechecking({
         parent,
-        target: roleModel ? roleModelTarget(roleModel) : input.target,
-        providers: yield* loadProviders,
+        target: roleModel ? roleModelTarget(roleModel, input.target?.options) : input.target,
+        providers,
         cwd: yield* parentWorkspaceCwd(parent),
         replaceModelOptions: roleModel !== undefined,
         skipProjectEnablementFilter: isRetryOfAcceptedDelegation,

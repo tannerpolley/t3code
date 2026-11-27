@@ -649,6 +649,7 @@ const boxClaude: ServerProvider = {
   checkedAt: "2026-09-13T00:00:00.000Z",
   models: [
     { slug: "claude-sonnet-4-6", name: "Claude Sonnet", isCustom: false, capabilities: null },
+    { slug: "claude-opus-4-6", name: "Claude Opus", isCustom: false, capabilities: null },
   ],
   slashCommands: [],
   skills: [],
@@ -1378,14 +1379,19 @@ it.effect("a linked task uses the role model saved on the execution environment"
       const thread = yield* makeBoxThread;
       const effort = { id: "effort", value: "high" };
       const model = { instanceId: boxClaude.instanceId, model: "claude-sonnet-4-6" };
-      const b = yield* serveBox(thread, { implementation: { ...model, effort } });
+      const complex = { ...model, model: "claude-opus-4-6", effort: "orchestrator" } as const;
+      const b = yield* serveBox(thread, {
+        implementation: { routine: { ...model, effort }, complex },
+      });
       const offers = yield* SubscriptionRef.make<
         ReadonlyArray<ProviderContinuationRequests.ProviderContinuationRequest>
       >([]);
       const database = yield* SqlitePersistence.layerMemory.pipe(Layer.build);
       const a = yield* makeLaptop(database, offers);
       yield* linkTo(a.links, b, "full-access");
-      yield* a.settings.updateSettings({ roleModels: { implementation: modelSelection } });
+      yield* a.settings.updateSettings({
+        roleModels: { implementation: { routine: modelSelection, complex: modelSelection } },
+      });
       yield* seedParent(a);
 
       const result = yield* a.call("delegate_task", {
@@ -1407,6 +1413,22 @@ it.effect("a linked task uses the role model saved on the execution environment"
       expect(result.structuredContent).toMatchObject({
         providerInstanceId: model.instanceId,
         model: model.model,
+      });
+
+      const complexResult = yield* a.call("delegate_task", {
+        task: "Investigate the test failure on the box.",
+        role: "implementation",
+        complexity: "complex",
+        target: {
+          environmentId: box.environmentId,
+          options: { effort: "max" },
+        },
+      });
+      expect(complexResult.isError, JSON.stringify(complexResult.content)).toBe(false);
+      expect((yield* Ref.get(thread.launchedWith))?.modelSelection).toEqual({
+        instanceId: complex.instanceId,
+        model: complex.model,
+        options: [{ id: "effort", value: "max" }],
       });
     }),
   ).pipe(Effect.provide(NodeHttpServer.layerTest)),

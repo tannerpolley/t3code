@@ -257,6 +257,39 @@ const TASK_ID = ScheduledTaskId.make("task-1");
 const AUTOMATION_PROMPT = "Triage the inbox\n\nLabel every new issue and close duplicates.";
 
 describe("MessagesTimeline work rows", () => {
+  it("reveals the sidebar task's work row after navigation", async () => {
+    const props = baseProps();
+    const entries = [
+      work("task-entry", {
+        label: "Ran command",
+        tone: "tool",
+        taskId: "native-task",
+        itemType: "command_execution",
+        command: "npm test",
+        toolLifecycleStatus: "completed",
+      }),
+    ];
+    await using screen = await renderElement(
+      <MessagesTimeline {...props} timelineEntries={entries} taskNavigationHash="" />,
+    );
+    await vi.waitFor(() => expect(props.listRef.current).not.toBeNull());
+    await vi.waitFor(() =>
+      expect(screen.container.querySelector('[data-work-entry-id="task-entry"]')).not.toBeNull(),
+    );
+    const scroll = vi.spyOn(props.listRef.current!, "scrollToIndex");
+    await screen.rerender(
+      <MessagesTimeline
+        {...props}
+        timelineEntries={entries}
+        taskNavigationHash="task:native-task"
+        taskNavigationKey="sidebar-click"
+      />,
+    );
+    await vi.waitFor(() =>
+      expect(scroll).toHaveBeenCalledWith(expect.objectContaining({ animated: false })),
+    );
+  });
+
   it("keeps a tall HTML preview in place when its last accordion opens at the bottom", async () => {
     const props = baseProps();
     const html = injectHtmlRenderBootstrap(`<div style="height:1400px">Earlier preview content</div>

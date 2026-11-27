@@ -1,3 +1,4 @@
+import { projectSidebarLayoutsAtom } from "../../state/server";
 import { steadyThreadShells } from "../../state/threads";
 import { useGT, useMessages } from "gt-react-native";
 
@@ -76,12 +77,11 @@ import { useQueuedThreadKeys } from "../../state/use-thread-outbox";
 import {
   ThreadListV2PendingRow,
   ThreadListV2AgentSectionHeader,
+  ThreadListV2ProjectFolderHeader,
+  ThreadListV2ProjectSectionHeader,
   ThreadListV2Row,
   THREAD_ROW_VIEWABILITY,
-  ThreadListV2SettledShelfHeader,
   ThreadListV2ShowMoreRow,
-  ThreadListV2SnoozedShelfHeader,
-  ThreadListV2WorkingShelfHeader,
 } from "../threads/thread-list-v2-items";
 import { useThreadRowProviderInstanceResolver } from "../threads/thread-provider-instance";
 import { useOpenThreadPullRequests } from "../threads/use-open-thread-pull-requests";
@@ -92,7 +92,6 @@ import {
   THREAD_LIST_V2_SETTLED_PAGE_COUNT,
   type ThreadListV2ListItem,
 } from "../threads/threadListV2";
-import { useThreadListV2ShelfPreferences } from "../threads/use-thread-list-v2-shelf-preferences";
 import type { HomeListFilterMenuEnvironment } from "./home-list-filter-menu";
 import {
   buildHomeProjectScopes,
@@ -388,18 +387,7 @@ export function HomeScreen(props: HomeScreenProps) {
     setLastSettledResetKey(settledResetKey);
     setSettledVisibleCount(THREAD_LIST_V2_SETTLED_INITIAL_COUNT);
   }
-  const showMoreSettled = () =>
-    setSettledVisibleCount((count) => count + THREAD_LIST_V2_SETTLED_PAGE_COUNT);
-  const {
-    loaded: shelfPreferencesLoaded,
-    settledShelfExpanded,
-    snoozedShelfExpanded,
-    workingShelfEnabled,
-    workingShelfExpanded,
-    toggleSettledShelf,
-    toggleSnoozedShelf,
-    toggleWorkingShelf,
-  } = useThreadListV2ShelfPreferences();
+  const projectLayouts = useAtomValue(projectSidebarLayoutsAtom);
   const agentThreads = useAtomValue(steadyThreadShells.quietThreadShellsAtom);
   const now = useThreadListNow(agentThreads);
   const listEnvironments = useAtomValue(threadListEnvironmentsAtom);
@@ -412,7 +400,6 @@ export function HomeScreen(props: HomeScreenProps) {
     pinningEnvironmentIds,
     autoSettleOptOutEnvironmentIds,
     pinReorderEnvironmentIds,
-    activeReorderEnvironmentIds,
     titleRegenerationEnvironmentIds,
   } = listEnvironments;
   const resolveProviderInstance = useThreadRowProviderInstanceResolver(providersByEnvironmentId);
@@ -423,10 +410,12 @@ export function HomeScreen(props: HomeScreenProps) {
     contentOnlyThreadKeys,
     olderSettledShelf,
     selectedRowKey,
-    toggleAgentSection,
+    toggleSidebarRow,
   } = useThreadListV2({
     agentThreads,
     projects: projectScopes,
+    projectSortOrder: props.projectSortOrder,
+    projectLayouts,
     openThreadKey: activeNewTask ? null : (primaryColumn?.selectedThreadKey ?? null),
     threads: props.threads,
     pendingTasks: props.pendingTasks,
@@ -437,18 +426,18 @@ export function HomeScreen(props: HomeScreenProps) {
     settlementEnvironmentIds,
     snoozeEnvironmentIds,
     pinReorderEnvironmentIds,
-    activeReorderEnvironmentIds,
     queuedThreadKeys,
     settledLimit: settledVisibleCount,
     now,
     pendingOrder,
-    shelfPreferencesLoaded,
-    workingShelfEnabled,
-    workingShelfExpanded,
-    snoozedShelfExpanded,
-    settledShelfExpanded,
     selectedThreadKey,
   });
+  const showMoreSettled = () =>
+    setSettledVisibleCount(
+      (count) =>
+        Math.max(count, threadListV2Layout.listedSettledThreads.length) +
+        THREAD_LIST_V2_SETTLED_PAGE_COUNT,
+    );
   // Called as `props.onSelectThread(...)`, the compiler would cache this handler on the whole
   // props object, which is new on every render of Home's parent.
   const { onSelectThread } = props;
@@ -506,39 +495,22 @@ export function HomeScreen(props: HomeScreenProps) {
         />
       );
     }
-    if (item.type === "v2-working-shelf") {
-      return (
-        <ThreadListV2WorkingShelfHeader
-          count={item.count}
-          disabled={item.disabled}
-          expanded={item.expanded}
-          onToggle={toggleWorkingShelf}
-        />
-      );
+    if (item.type === "v2-project-section") {
+      return <ThreadListV2ProjectSectionHeader item={item} onToggle={toggleSidebarRow} />;
     }
-    if (item.type === "v2-snoozed-shelf") {
+    if (item.type === "v2-project-folder") {
       return (
-        <ThreadListV2SnoozedShelfHeader
-          count={item.count}
-          disabled={item.disabled}
-          expanded={item.expanded}
-          onToggle={toggleSnoozedShelf}
-        />
-      );
-    }
-    if (item.type === "v2-settled-shelf") {
-      return (
-        <ThreadListV2SettledShelfHeader
-          count={item.count}
-          disabled={item.disabled}
-          expanded={item.expanded}
-          onToggle={toggleSettledShelf}
+        <ThreadListV2ProjectFolderHeader
+          item={item}
+          onToggle={toggleSidebarRow}
+          onNewThread={props.onNewThreadInProject}
         />
       );
     }
     if (item.type === "v2-agent-section") {
-      return <ThreadListV2AgentSectionHeader item={item} onToggle={toggleAgentSection} />;
+      return <ThreadListV2AgentSectionHeader item={item} onToggle={toggleSidebarRow} />;
     }
+    if (item.type !== "v2-thread") return null;
     const thread = item.item.thread;
     return (
       <ThreadListV2Row
@@ -549,6 +521,7 @@ export function HomeScreen(props: HomeScreenProps) {
         thread={thread}
         agentCount={item.agentCount}
         agentRow={item.agentRow}
+        depth={item.depth}
         listVisible={props.visible}
         variant={item.item.variant}
         hasQueuedMessages={item.hasQueuedMessages}
@@ -559,7 +532,11 @@ export function HomeScreen(props: HomeScreenProps) {
         snoozeWakeLabelText={item.snoozeWakeLabelText}
         timeLabel={item.timeLabel}
         showTrailingDivider={item.showTrailingDivider}
-        project={projectByKey.get(scopedProjectKey(thread.environmentId, thread.projectId)) ?? null}
+        project={
+          props.searchQuery.trim() || item.item.pinned
+            ? (projectByKey.get(scopedProjectKey(thread.environmentId, thread.projectId)) ?? null)
+            : null
+        }
         providerInstance={resolveProviderInstance(thread)}
         providers={providersByEnvironmentId.get(thread.environmentId)}
         environmentLabel={
@@ -593,10 +570,7 @@ export function HomeScreen(props: HomeScreenProps) {
         pinningSupported={pinningEnvironmentIds.has(thread.environmentId)}
         autoSettleOptOutSupported={autoSettleOptOutEnvironmentIds.has(thread.environmentId)}
         reorderSupported={
-          !item.agentRow &&
-          (item.item.pinned
-            ? pinReorderEnvironmentIds.has(thread.environmentId)
-            : !workingShelfEnabled && activeReorderEnvironmentIds.has(thread.environmentId))
+          !item.agentRow && item.item.pinned && pinReorderEnvironmentIds.has(thread.environmentId)
         }
         canMoveUp={item.canMoveUp}
         canMoveDown={item.canMoveDown}
@@ -628,13 +602,13 @@ export function HomeScreen(props: HomeScreenProps) {
     selectedRowKey,
     visible: props.visible,
     threadSearchMatchByKey,
-    workingShelfEnabled,
   };
 
   const hasAnyThreads =
     props.threads.some((thread) => thread.archivedAt === null) ||
     props.pendingTasks.length > 0 ||
-    threadListV2Layout.settledCount > 0;
+    threadListV2Layout.settledCount > 0 ||
+    threadListV2Items.length > 0;
   // A hidden list gets no layout, so it never reports its rows as laid out.
   const hasRowsToLayOut = props.visible && hasAnyThreads && threadListV2Items.length > 0;
   // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- holds the native launch splash, which is outside React, until the rows are gone or this list unmounts; a layout effect runs before the splash hides in this commit
@@ -810,7 +784,7 @@ export function HomeScreen(props: HomeScreenProps) {
                 // Lifted above the rows so an iOS filter menu's dismissal morph is not covered.
                 ListHeaderComponentStyle={{ zIndex: 1 }}
                 ListFooterComponent={
-                  settledShelfExpanded && threadListV2Layout.hiddenSettledCount > 0 ? (
+                  threadListV2Layout.hiddenSettledCount > 0 ? (
                     <ThreadListV2ShowMoreRow
                       hiddenCount={threadListV2Layout.hiddenSettledCount}
                       {...(olderSettledShelf.loading

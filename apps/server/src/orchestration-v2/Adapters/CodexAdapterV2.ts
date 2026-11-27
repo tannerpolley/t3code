@@ -3198,6 +3198,48 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           Effect.timeout("10 seconds"),
         );
 
+        const backgroundProcessIdsByThread = new Map<string, ReadonlySet<string>>();
+        const publishBackgroundTerminals = Effect.fn("CodexAdapterV2.publishBackgroundTerminals")(
+          function* (nativeThreadId: string, processIds: ReadonlySet<string>) {
+            const root = rootProviderThreads.get(nativeThreadId);
+            if (root === undefined) return;
+            if (processIds.size > 0) backgroundProcessIdsByThread.set(nativeThreadId, processIds);
+            else backgroundProcessIdsByThread.delete(nativeThreadId);
+            const tracked = [...(yield* Ref.get(runningCommandItemsByTurn)).values()].flatMap(
+              (items) => [...items.values()],
+            );
+            const tasks = [...processIds].map((processId) => {
+              const item = tracked.find((candidate) => candidate.processId === processId);
+              return {
+                taskId: item?.id ?? processId,
+                kind: "command" as const,
+                ...(item?.command ? { description: item.command } : {}),
+              };
+            });
+            const previous = root.pendingBackgroundTasks ?? [];
+            if (
+              previous.length === tasks.length &&
+              previous.every(
+                (task, index) =>
+                  task.taskId === tasks[index]?.taskId &&
+                  task.description === tasks[index]?.description,
+              )
+            )
+              return;
+            const updated = {
+              ...root,
+              pendingBackgroundTasks: tasks,
+              updatedAt: yield* DateTime.now,
+            };
+            rootProviderThreads.set(nativeThreadId, updated);
+            yield* emitProviderEvent({
+              type: "provider_thread.updated",
+              driver: CODEX_PROVIDER,
+              providerThread: updated,
+            });
+          },
+        );
+
         /**
          * Codex can end a turn without item/completed for a command whose shell already
          * exited (openai/codex#53488). Only a live background terminal keeps a command
@@ -3221,6 +3263,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               if (page.nextCursor === null) break;
               cursor = page.nextCursor;
             }
+            yield* publishBackgroundTerminals(nativeThreadId, liveProcessIds);
             yield* turnTerminalizationPermit.withPermits(1)(
               Effect.gen(function* () {
                 const context = (yield* Ref.get(settledTurns)).get(nativeTurnId);
@@ -6031,6 +6074,18 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             if (payload.item.type === "commandExecution") {
               // Other tools can retain the context after thread closure.
               if (context.closedCommandItemIds?.has(payload.item.id)) return;
+              const processId = (yield* Ref.get(runningCommandItemsByTurn))
+                .get(payload.turnId)
+                ?.get(payload.item.id)?.processId;
+              if (processId !== undefined) {
+                const live = backgroundProcessIdsByThread.get(payload.threadId);
+                if (live?.has(processId)) {
+                  yield* publishBackgroundTerminals(
+                    payload.threadId,
+                    new Set([...live].filter((id) => id !== processId)),
+                  );
+                }
+              }
               const turnDrained = yield* clearRunningCommandItem(payload.turnId, payload.item.id);
               const userStopped = yield* Ref.modify(userStoppedCommandItemIds, (current) => {
                 const updated = new Set(current);
@@ -9190,6 +9245,12 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                     Effect.gen(function* () {
                       attemptedTerminalKeys.add(key);
                       yield* terminateBackgroundTerminal(nativeThreadId, processId);
+                      const pending =
+                        backgroundProcessIdsByThread.get(nativeThreadId) ?? new Set<string>();
+                      yield* publishBackgroundTerminals(
+                        nativeThreadId,
+                        new Set([...pending].filter((id) => id !== processId)),
+                      );
                       containedTerminalKeys.add(key);
                     }).pipe(
                       Effect.as({ success: true as const }),

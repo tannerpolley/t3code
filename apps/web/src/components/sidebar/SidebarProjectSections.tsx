@@ -7,7 +7,7 @@ import {
   type SidebarAgentRole,
 } from "@t3tools/client-runtime/state/sidebar-families";
 import type { ContextMenuSource } from "@t3tools/contracts";
-import { ChevronDownIcon, FolderIcon } from "lucide-react";
+import { ChevronDownIcon, FolderIcon, FolderOpenIcon } from "lucide-react";
 import { T, useGT, useMessages } from "gt-react";
 import { memo, useRef, useState } from "react";
 
@@ -35,6 +35,7 @@ export function SidebarProjectSectionHeader(props: {
   onToggle: () => void;
   onContextMenu: (position: { x: number; y: number }, source: ContextMenuSource) => void;
 }) {
+  const SectionIcon = props.collapsed ? FolderIcon : FolderOpenIcon;
   return (
     <li className="mt-2 list-none first:mt-0">
       <button
@@ -53,7 +54,7 @@ export function SidebarProjectSectionHeader(props: {
         }}
         className="flex h-8 w-full cursor-pointer items-center gap-2.5 rounded-(--control-radius) px-(--sidebar-row-content-inset) text-left text-sidebar-foreground outline-none hover:bg-sidebar-row-hover focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
       >
-        <FolderIcon aria-hidden className="size-4 shrink-0 text-sidebar-muted-foreground" />
+        <SectionIcon aria-hidden className="size-4 shrink-0 text-sidebar-muted-foreground" />
         <span className="min-w-0 flex-1 truncate text-(length:--sidebar-section-text-size,var(--text-sm)) leading-tight font-semibold">
           {props.name}
         </span>

@@ -160,6 +160,10 @@ import {
 } from "../state/entities";
 import { environmentPresentations } from "../state/presentation";
 import { primaryServerKeybindingsAtom } from "../state/server";
+import { useRunningTerminalsByThreadKey } from "../state/terminalSessions";
+import { useSidebarWorkflowRuns } from "../state/sidebarWorkflowRuns";
+import { projectTasks } from "@t3tools/client-runtime/state/project-tasks";
+import { SidebarProjectTasks } from "./sidebar/SidebarProjectTasks";
 import { environmentProjects } from "../state/projects";
 import { threadEnvironment } from "../state/threads";
 import { useOlderSettledShelf, useOlderSettledShelfGrowth } from "../state/olderSettledShelf";
@@ -187,7 +191,6 @@ import {
 import {
   applySidebarThreadDrop,
   filterSidebarV2VisibleThreads,
-  groupSidebarThreadsByProject,
   sidebarFolderExpansionKeys,
   buildBulkTitleRegenerationContextMenuItem,
   buildBulkUnpinContextMenuItem,
@@ -264,7 +267,6 @@ import { SidebarContent, SidebarGroup, useSidebar } from "./ui/sidebar";
 import { SidebarChromeFooter, SidebarChromeHeader } from "./sidebar/SidebarChrome";
 import { useSidebarLayout } from "../state/sidebarLayout";
 import {
-  projectSectionRows,
   projectThreadPlacement,
   sectionProjectIds,
   sortProjectThreads,
@@ -293,7 +295,9 @@ import {
 import {
   indexSidebarChildren,
   sidebarFamilyRows,
-  sidebarRoleSections,
+  groupSidebarThreadsByProject,
+  projectSectionRows,
+  sidebarProjectContents,
   type SidebarFamilyRow,
 } from "@t3tools/client-runtime/state/sidebar-families";
 import { setSidebarFamilyExpanded, sidebarFamilyExpansion } from "./sidebar/sidebarFamilies";
@@ -372,6 +376,7 @@ const SETTLED_SHELF_EXPANDED_KEY = "t3code:sidebar:settled-expanded";
 const SNOOZED_SHELF_EXPANDED_KEY = "t3code:sidebar:snoozed-expanded";
 const WORKING_SHELF_EXPANDED_KEY = "t3code:sidebar:working-expanded";
 const ROLE_SECTIONS_COLLAPSED_KEY = "t3code:sidebar:role-sections-collapsed";
+const TASK_SECTIONS_EXPANDED_KEY = "t3code:sidebar:task-sections-expanded";
 const EMPTY_ROLE_SECTION_KEYS: readonly string[] = [];
 const ROLE_SECTION_KEYS_SCHEMA = Schema.Array(Schema.String);
 const NO_CHILDREN: ReadonlyMap<string, readonly EnvironmentThreadShell[]> = new Map();
@@ -585,20 +590,6 @@ function useSidebarThreads(input: {
     EMPTY_ROLE_SECTION_KEYS,
     ROLE_SECTION_KEYS_SCHEMA,
   );
-  const roleSectionsByFolder = (() => {
-    if (folderGroups === null) return null;
-    const folderKeyByProject = new Map(
-      folderGroups.flatMap((group) =>
-        group.memberProjectRefs.map(
-          ({ environmentId, projectId }) =>
-            [`${environmentId}:${projectId}`, group.projectKey] as const,
-        ),
-      ),
-    );
-    return sidebarRoleSections(childrenByParent, (child) =>
-      folderKeyByProject.get(`${child.environmentId}:${child.projectId}`),
-    );
-  })();
   const projectFolders =
     folderGroups === null
       ? null
@@ -607,6 +598,7 @@ function useSidebarThreads(input: {
           partition.visibleThreads.filter(
             (thread) => !pinnedThreadKeys.has(threadShellKey(thread)),
           ),
+          childrenByParent,
           keepEmpty,
         ).map((folder) => {
           const sharedExpansion = folder.group.memberProjectRefs.flatMap(
@@ -623,7 +615,7 @@ function useSidebarThreads(input: {
             );
           const threads = sortProjectThreads(folder.threads, projectLayouts);
           const folderRow = sidebarFolderRowId(folder.group.projectKey);
-          const roleSections = roleSectionsByFolder?.get(folder.group.projectKey) ?? [];
+          const roleSections = folder.roleSections;
           return {
             group: folder.group,
             collapsed,
@@ -711,10 +703,12 @@ function useSidebarThreads(input: {
           ...pinnedThreads.flatMap(rootRows),
           ...projectRows.flatMap((row) =>
             row.kind === "folder"
-              ? [
-                  ...row.folder.roleSections.flatMap((section) => section.rows),
-                  ...row.folder.threads.flatMap(rootRows),
-                ]
+              ? sidebarProjectContents(row.folder.threads, row.folder.roleSections).flatMap(
+                  (section) =>
+                    section.kind === "threads"
+                      ? section.rows.flatMap(rootRows)
+                      : section.rows.flatMap((role) => role.rows),
+                )
               : [],
           ),
         ];
@@ -1299,6 +1293,14 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
           ),
         );
   const threads = useQuietThreadShells();
+  const [expandedTaskSections, setExpandedTaskSections] = useLocalStorage(
+    TASK_SECTIONS_EXPANDED_KEY,
+    EMPTY_ROLE_SECTION_KEYS,
+    ROLE_SECTION_KEYS_SCHEMA,
+  );
+  const taskEnvironmentIds = [...new Set(threads.map((thread) => thread.environmentId))];
+  const runningTerminals = useRunningTerminalsByThreadKey(taskEnvironmentIds);
+  const workflowRuns = useSidebarWorkflowRuns(taskEnvironmentIds);
   const promotingDraftThreadKeys = usePromotingDraftThreadKeys();
   const listedThreads =
     promotingDraftThreadKeys.length === 0
@@ -1871,7 +1873,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     return mapping;
   })();
 
-  const navigateToThread = (threadRef: ScopedThreadRef) => {
+  const navigateToThread = (threadRef: ScopedThreadRef, taskId?: string) => {
     if (useThreadSelectionStore.getState().selectedThreadKeys.size > 0) {
       clearSelection();
     }
@@ -1882,6 +1884,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     return router.navigate({
       to: "/$environmentId/$threadId",
       params: buildThreadRouteParams(threadRef),
+      ...(taskId === undefined ? {} : { hash: `task:${encodeURIComponent(taskId)}` }),
     });
   };
 
@@ -4113,6 +4116,18 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                           }
                           const { folder } = row;
                           const folderRow = sidebarFolderRowId(folder.group.projectKey);
+                          const memberKeys = new Set(
+                            folder.group.memberProjectRefs.map(
+                              (member) => `${member.environmentId}:${member.projectId}`,
+                            ),
+                          );
+                          const tasks = projectTasks(
+                            threads.filter((thread) =>
+                              memberKeys.has(`${thread.environmentId}:${thread.projectId}`),
+                            ),
+                            runningTerminals,
+                            workflowRuns,
+                          );
                           items.push(
                             <SidebarProjectFolderHeader
                               key={folderRow}
@@ -4126,43 +4141,84 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                               onNewThread={startThreadInProjectFolder}
                               onContextMenu={handleProjectFolderContextMenu}
                             />,
-                            ...folder.roleSections.flatMap((section) => [
-                              <SidebarRoleSectionHeader
-                                key={section.rowId}
-                                id={section.rowId}
-                                sectionKey={section.key}
-                                role={section.role}
-                                parent={section.parentRow}
-                                depth={row.depth}
-                                collapsed={section.collapsed}
-                                threads={section.threads}
-                                onToggle={toggleRoleSection}
-                              />,
-                              ...section.rows.map((family) =>
-                                renderThreadRow(
-                                  family,
-                                  sectionByThreadKey.get(family.key) ?? "active",
-                                  folderRow,
-                                  row.depth,
+                            ...sidebarProjectContents(folder.threads, folder.roleSections).flatMap(
+                              (content) =>
+                                content.kind === "threads" ? (
+                                  <SortableContext
+                                    key={`threads:${folderRow}`}
+                                    items={content.rows.map(threadShellKey)}
+                                    strategy={verticalListSortingStrategy}
+                                  >
+                                    {content.rows.flatMap((thread) =>
+                                      (familyRows.get(threadShellKey(thread)) ?? []).map((family) =>
+                                        renderThreadRow(
+                                          family,
+                                          sectionByThreadKey.get(family.key) ?? "active",
+                                          folderRow,
+                                          row.depth,
+                                        ),
+                                      ),
+                                    )}
+                                  </SortableContext>
+                                ) : (
+                                  content.rows.flatMap((section) => [
+                                    <SidebarRoleSectionHeader
+                                      key={section.rowId}
+                                      id={section.rowId}
+                                      sectionKey={section.key}
+                                      role={section.role}
+                                      parent={section.parentRow}
+                                      depth={row.depth}
+                                      collapsed={section.collapsed}
+                                      threads={section.threads}
+                                      onToggle={toggleRoleSection}
+                                    />,
+                                    ...section.rows.map((family) =>
+                                      renderThreadRow(
+                                        family,
+                                        sectionByThreadKey.get(family.key) ?? "active",
+                                        folderRow,
+                                        row.depth,
+                                      ),
+                                    ),
+                                  ])
                                 ),
-                              ),
-                            ]),
-                            <SortableContext
-                              key={`threads:${folderRow}`}
-                              items={folder.threads.map(threadShellKey)}
-                              strategy={verticalListSortingStrategy}
-                            >
-                              {folder.threads.flatMap((thread) =>
-                                (familyRows.get(threadShellKey(thread)) ?? []).map((family) =>
-                                  renderThreadRow(
-                                    family,
-                                    sectionByThreadKey.get(family.key) ?? "active",
-                                    folderRow,
-                                    row.depth,
-                                  ),
-                                ),
-                              )}
-                            </SortableContext>,
+                            ),
+                            ...(!folder.collapsed && tasks.length > 0
+                              ? [
+                                  <SidebarProjectTasks
+                                    key={`tasks:${folderRow}`}
+                                    id={`tasks:${folderRow}`}
+                                    parent={folderRow}
+                                    depth={row.depth}
+                                    tasks={tasks}
+                                    now={Date.parse(snoozeNow)}
+                                    collapsed={!expandedTaskSections.includes(folderRow)}
+                                    onToggle={() =>
+                                      setExpandedTaskSections((current) =>
+                                        current.includes(folderRow)
+                                          ? current.filter((key) => key !== folderRow)
+                                          : [...current, folderRow],
+                                      )
+                                    }
+                                    onOpen={(task) => {
+                                      const ref = scopeThreadRef(
+                                        task.thread.environmentId,
+                                        task.thread.id,
+                                      );
+                                      if (task.kind === "terminals") {
+                                        useRightPanelStore.getState().openTerminal(ref, task.id);
+                                      }
+                                      void navigateToThread(
+                                        ref,
+                                        task.kind === "commands" || task.kind === "monitors"
+                                          ? task.id
+                                          : undefined,
+                                      );
+                                    }}
+                                  />,
+                                ]
+                              : []),
                           );
                         }
                         continue;

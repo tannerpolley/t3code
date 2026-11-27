@@ -3,7 +3,7 @@ import {
   getProjectFaviconResourceKey,
   isProjectFaviconFallbackUrl,
 } from "@t3tools/shared/projectFavicon";
-import { FolderCodeIcon, FolderIcon } from "lucide-react";
+import { FolderCodeIcon, FolderIcon, FolderOpenIcon } from "lucide-react";
 import type { ComponentType } from "react";
 import { createElement, lazy, Suspense, useState } from "react";
 import { useAtomValue } from "@effect/atom-react";
@@ -33,6 +33,7 @@ export type ProjectFaviconProject = Pick<
 >;
 export function ProjectFavicon(input: {
   project: ProjectFaviconProject;
+  open?: boolean;
   className?: string | undefined;
   fallbackIcon?: ComponentType<{ className?: string }>;
 }) {
@@ -66,7 +67,11 @@ export function ProjectFavicon(input: {
       <span aria-hidden="true" className={iconClassName}>
         <Suspense fallback={<DynamicProjectIconFallback />}>
           <LucideProjectIcon
-            name={project.projectIcon.name}
+            name={
+              input.open && project.projectIcon.name === "folder"
+                ? "folder-open"
+                : project.projectIcon.name
+            }
             className={cn("size-full", colorClassName)}
           />
         </Suspense>
@@ -84,7 +89,7 @@ function AutomaticProjectFavicon(input: Parameters<typeof ProjectFavicon>[0]) {
     faviconPath: project.faviconPath,
   };
   const src = useAtomValue(projectFaviconUrlAtom(target));
-  const FallbackIcon = input.fallbackIcon ?? FolderIcon;
+  const FallbackIcon = input.fallbackIcon ?? (input.open ? FolderOpenIcon : FolderIcon);
 
   if (!src || isProjectFaviconFallbackUrl(src)) {
     return <ProjectFaviconFallback className={input.className} icon={FallbackIcon} />;

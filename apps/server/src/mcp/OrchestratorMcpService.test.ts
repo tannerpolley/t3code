@@ -4872,6 +4872,17 @@ describe("OrchestratorMcpService provider resolution", () => {
         } as const;
         const base = { ...inherited, options: [inherited.options[0]] };
         const override = [{ id: "reasoningEffort", value: "max" }] as const;
+        const reviewPick = { instanceId: antigravityId, model: "gemini-4-neon" };
+        const roleModels = {
+          review: {
+            routine: { ...reviewPick, effort: { id: "thought_level", value: "medium" } },
+            complex: {
+              instanceId: codexInstanceId,
+              model: inherited.model,
+              effort: "orchestrator",
+            },
+          },
+        } as const;
         const cases = [
           {
             name: "inherits reasoning and follows environment speed with a Fast parent",
@@ -4918,13 +4929,7 @@ describe("OrchestratorMcpService provider resolution", () => {
           {
             name: "the owner pick replaces the delegate provider, model, and effort",
             role: "review",
-            roleModels: {
-              review: {
-                instanceId: antigravityId,
-                model: "gemini-4-neon",
-                effort: { id: "thought_level", value: "medium" },
-              },
-            },
+            roleModels,
             target: {
               providerInstanceId: peerId,
               driverKind: driver,
@@ -4936,6 +4941,42 @@ describe("OrchestratorMcpService provider resolution", () => {
               model: "gemini-4-neon",
               options: [{ id: "thought_level", value: "medium" }],
             },
+          },
+          {
+            name: "complex uses its own pick and keeps the orchestrator's effort",
+            role: "review",
+            complexity: "complex",
+            roleModels,
+            target: { providerInstanceId: peerId, model: "not-advertised", options: override },
+            expected: { ...base, options: override },
+          },
+          {
+            name: "orchestrator decides uses the model default if no effort was passed",
+            role: "review",
+            complexity: "complex",
+            roleModels,
+            target: {},
+            expected: { ...base, options: [] },
+          },
+          {
+            name: "model default clears requested and inherited effort",
+            role: "review",
+            roleModels: {
+              review: { routine: { instanceId: codexInstanceId, model: inherited.model } },
+            },
+            target: { options: override },
+            expected: { ...base, options: [] },
+          },
+          {
+            name: "a hidden routine pick falls back to the delegate target and leaves complex available",
+            role: "review",
+            roleModels,
+            availableRoleModels: { review: { complex: roleModels.review.complex } },
+            providerModelPreferences: {
+              [antigravityId]: { hiddenModels: ["gemini-4-neon"], modelOrder: [] },
+            },
+            target: { model: "other-model" },
+            expected: { instanceId: codexInstanceId, model: "other-model" },
           },
           {
             name: "a named role without a pick still follows the delegate target",
@@ -5025,6 +5066,9 @@ describe("OrchestratorMcpService provider resolution", () => {
             ServerSettings.layerTest({
               codexDefaultSpeed: "normal",
               ...("roleModels" in testCase ? { roleModels: testCase.roleModels } : {}),
+              ...("providerModelPreferences" in testCase
+                ? { providerModelPreferences: testCase.providerModelPreferences }
+                : {}),
             }),
             providerRegistryLayer([
               {
@@ -5136,6 +5180,7 @@ describe("OrchestratorMcpService provider resolution", () => {
             const request = {
               task: "Review the change.",
               ...("role" in testCase ? { role: testCase.role } : {}),
+              ...("complexity" in testCase ? { complexity: testCase.complexity } : {}),
               target: yield* decodeTarget(testCase.target),
               mode: "async",
               clientRequestId: testCase.name,
@@ -5147,7 +5192,12 @@ describe("OrchestratorMcpService provider resolution", () => {
               testCase.name,
             );
             if ("roleModels" in testCase) {
-              assert.deepEqual(capabilities.roleModels, testCase.roleModels);
+              assert.deepEqual(
+                capabilities.roleModels,
+                "availableRoleModels" in testCase
+                  ? testCase.availableRoleModels
+                  : testCase.roleModels,
+              );
               assert.equal(result.model, testCase.expected.model);
               const settings = yield* ServerSettings.ServerSettingsService;
               yield* settings.updateSettings({ roleModels: { review: null } });

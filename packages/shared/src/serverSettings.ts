@@ -3,6 +3,7 @@ import {
   DEFAULT_MODEL_BY_PROVIDER,
   DEFAULT_TEXT_GENERATION_MODEL,
   DEFAULT_TEXT_GENERATION_MODEL_BY_PROVIDER,
+  DelegationModelRole,
   defaultInstanceIdForDriver,
   globalIdleCompaction,
   type IdleCompactionMode,
@@ -248,6 +249,24 @@ function mergeSettingsEntries<Value>(
     }
   }
   return Object.fromEntries(next);
+}
+
+function mergeRoleModels(
+  current: ServerSettings["roleModels"],
+  patch: NonNullable<ServerSettingsPatch["roleModels"]>,
+): ServerSettings["roleModels"] {
+  const next = { ...current };
+  for (const role of DelegationModelRole.literals) {
+    const levels = patch[role];
+    if (levels === undefined) continue;
+    const picks = levels === null ? {} : mergeSettingsEntries(next[role] ?? {}, levels);
+    if (Object.keys(picks).length > 0) {
+      next[role] = picks;
+    } else {
+      delete next[role];
+    }
+  }
+  return next;
 }
 
 // Secret persistence keys tokens by trimmed, lowercased host, so merge on the same key.
@@ -625,7 +644,7 @@ export function applyServerSettingsPatch(
       ? { textGenerators: mergeSettingsEntries(current.textGenerators, textGeneratorsPatch) }
       : {}),
     ...(roleModelsPatch !== undefined
-      ? { roleModels: mergeSettingsEntries(current.roleModels, roleModelsPatch) }
+      ? { roleModels: mergeRoleModels(current.roleModels, roleModelsPatch) }
       : {}),
     ...(secretProvidersPatch !== undefined
       ? { secretProviders: mergeSettingsEntries(current.secretProviders, secretProvidersPatch) }
@@ -686,6 +705,13 @@ export function applyServerSettingsPatch(
     ...nextWithReplacements,
     textGenerationModelSelection: createModelSelection(instanceId, model, options),
   };
+}
+
+export function isModelHidden(
+  model: { readonly slug: string; readonly isCustom: boolean },
+  hiddenModels: ReadonlyArray<string> = [],
+): boolean {
+  return !model.isCustom && hiddenModels.includes(model.slug);
 }
 
 export function resolveModelPreferences(

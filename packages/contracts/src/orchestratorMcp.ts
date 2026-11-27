@@ -1,7 +1,7 @@
 import * as Effect from "effect/Effect";
 import * as Schema from "effect/Schema";
 import * as SchemaTransformation from "effect/SchemaTransformation";
-import { OrchestratorMcpTaskRole, RoleModels } from "./delegatedRole.ts";
+import { DelegationComplexity, OrchestratorMcpTaskRole, RoleModels } from "./delegatedRole.ts";
 
 import { AuthMcpClientAccess } from "./auth.ts";
 import {
@@ -138,7 +138,12 @@ export const OrchestratorMcpInteractionMode = Schema.Union([
 ]);
 export type OrchestratorMcpInteractionMode = typeof OrchestratorMcpInteractionMode.Type;
 
-export { DelegationModelRole, OrchestratorMcpTaskRole, RoleModel } from "./delegatedRole.ts";
+export {
+  DelegationComplexity,
+  DelegationModelRole,
+  OrchestratorMcpTaskRole,
+  RoleModel,
+} from "./delegatedRole.ts";
 
 export const OrchestratorMcpDelegatedTaskStatus = Schema.Literals([
   "queued",
@@ -169,6 +174,7 @@ export const OrchestratorMcpDelegateTaskInput = Schema.Struct({
   ),
   title: Schema.optional(OrchestratorMcpTitle),
   role: Schema.optional(OrchestratorMcpTaskRole),
+  complexity: Schema.optional(DelegationComplexity),
   isolation: Schema.optional(
     Schema.Literals(["shared", "worktree"]).annotate({
       description:

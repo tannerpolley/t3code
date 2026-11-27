@@ -3656,6 +3656,12 @@ export default function ChatView(props: ChatViewProps) {
             >
               <WorkspaceMutationIdContext value={workspaceMutationId}>
                 <ThreadTimeline
+                  taskNavigationHash={
+                    citationHref.includes("#")
+                      ? citationHref.slice(citationHref.indexOf("#") + 1)
+                      : ""
+                  }
+                  taskNavigationKey={String(citationKey ?? "")}
                   pendingApprovals={pendingApprovals}
                   heldApprovalRequestIds={heldApprovalRequestIds}
                   respondingRequestIds={respondingRequestIds}

@@ -323,8 +323,11 @@ const make = Effect.gen(function* () {
         role === undefined && target.driverKind === undefined
           ? undefined
           : yield* forwarding.call(scope, RemoteCapabilitiesTool, target.environmentId, {});
-      const roleModel = role === undefined ? undefined : capabilities?.roleModels?.[role];
-      const requested = roleModel ? roleModelTarget(roleModel) : target;
+      const roleModel =
+        role === undefined
+          ? undefined
+          : capabilities?.roleModels?.[role]?.[input.complexity ?? "routine"];
+      const requested = roleModel ? roleModelTarget(roleModel, target.options) : target;
       const instanceId =
         requested.driverKind === undefined
           ? (requested.providerInstanceId ?? inherited.instanceId)

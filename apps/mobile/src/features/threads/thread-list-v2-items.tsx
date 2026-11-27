@@ -1,3 +1,4 @@
+import { IconButton } from "../../components/ui/IconButton";
 import {
   formatSidebarAgentStates,
   sidebarRoleSectionLabels,
@@ -13,7 +14,8 @@ import { isProviderDriverKind } from "@t3tools/contracts";
 import { ThreadRowSpinner } from "./ThreadRowSpinner";
 import { useAppActive } from "../../lib/appState";
 import { useIsFocused } from "@react-navigation/native";
-import { useAtomValue } from "@effect/atom-react";
+import { AsyncResult } from "effect/reactivity";
+import { RegistryContext, useAtomValue } from "@effect/atom-react";
 import * as Dialog from "../../components/ui/Dialog";
 import type { ThreadRowProviderInstance } from "./thread-provider-instance";
 import {
@@ -28,6 +30,7 @@ import { RowPressable } from "../../components/ui/RowPressable";
 import { CustomSnoozeSheet } from "./CustomSnoozeSheet";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { threadArrangementOpenAtom } from "../../state/thread-order";
+import { serverEnvironment } from "../../state/server";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
 import { useVisibleSecondClock } from "./use-visible-second-clock";
@@ -53,7 +56,7 @@ import { threadChipCopyTarget } from "@t3tools/client-runtime/thread-reference";
 import type { MenuAction } from "@react-native-menu/menu";
 import { useNavigation } from "@react-navigation/native";
 import { msg, T, useGT, useMessages } from "gt-react-native";
-import { memo, useCallback, useMemo, useState, type ComponentProps } from "react";
+import { memo, useCallback, useContext, useMemo, useState, type ComponentProps } from "react";
 import { Platform, Pressable, Text as RNText, useWindowDimensions, View } from "react-native";
 import type { SwipeableMethods } from "react-native-gesture-handler/ReanimatedSwipeable";
 
@@ -100,6 +103,8 @@ import {
   threadListV2RowAccessibilityLabel,
   type ThreadListV2Status,
   type ThreadListV2AgentSectionItem,
+  type ThreadListV2ProjectFolderItem,
+  type ThreadListV2ProjectSectionItem,
 } from "./threadListV2";
 import { QueuedMessageIcon } from "./queued-message-icon";
 import { ThreadSearchMatchExcerpt } from "./thread-search-match";
@@ -239,161 +244,27 @@ const LEGACY_MENU_ACTIONS: MenuAction[] = [
   },
 ];
 
-function ThreadListV2Section(props: {
-  readonly label: string;
-  readonly pane?: "screen" | "sidebar";
-  readonly tone?: "default" | "snoozed";
-  readonly disclosure?: {
-    readonly expanded: boolean;
-    readonly disabled?: boolean;
-    readonly onToggle: () => void;
-    readonly accessibilityLabel: string;
-    readonly accessibilityHint: string;
-  };
-}) {
-  const snoozed = props.tone === "snoozed";
-  const sidebarPane = props.pane === "sidebar";
-  const className = cn(
-    "mb-1.5 mt-4 flex-row items-center gap-2.5",
-    props.pane === "sidebar" ? "px-3" : "px-5",
-  );
-  const content = (
-    <>
-      <Text
-        className={cn(
-          "text-xs font-t3-medium",
-          sidebarPane
-            ? "text-drawer-foreground-muted"
-            : snoozed
-              ? "text-foreground-secondary"
-              : "text-foreground-tertiary",
-        )}
-      >
-        {props.label}
-      </Text>
-      <View
-        className={cn(
-          "h-px flex-1",
-          snoozed ? "bg-primary/20" : sidebarPane ? "bg-drawer-border" : "bg-border",
-        )}
-      />
-      {props.disclosure ? (
-        <SymbolView
-          name="chevron.down"
-          size={10}
-          tintColorClassName={
-            sidebarPane
-              ? "accent-drawer-foreground-muted"
-              : snoozed
-                ? "accent-icon-muted"
-                : "accent-foreground-muted"
-          }
-          type="monochrome"
-          style={{ transform: [{ rotate: props.disclosure.expanded ? "180deg" : "0deg" }] }}
-        />
-      ) : null}
-    </>
-  );
-
-  return props.disclosure ? (
-    <Pressable
-      accessibilityHint={props.disclosure.accessibilityHint}
-      accessibilityLabel={props.disclosure.accessibilityLabel}
-      accessibilityRole="button"
-      accessibilityState={{
-        disabled: props.disclosure.disabled,
-        expanded: props.disclosure.expanded,
-      }}
-      className={className}
-      disabled={props.disclosure.disabled}
-      onPress={props.disclosure.onToggle}
-      style={({ pressed }) => ({ opacity: pressed ? 0.6 : 1 })}
-    >
-      {content}
-    </Pressable>
-  ) : (
-    <View className={className}>{content}</View>
-  );
-}
-
 const ThreadListV2SectionDivider = memo(function ThreadListV2SectionDivider(props: {
   readonly label: string;
   readonly pane?: "screen" | "sidebar";
 }) {
-  return <ThreadListV2Section {...props} />;
+  const sidebar = props.pane === "sidebar";
+  return (
+    <View className={cn("mb-1.5 mt-4 flex-row items-center gap-2.5", sidebar ? "px-3" : "px-5")}>
+      <Text
+        className={cn(
+          "text-xs font-t3-medium",
+          sidebar ? "text-drawer-foreground-muted" : "text-foreground-tertiary",
+        )}
+      >
+        {props.label}
+      </Text>
+      <View className={cn("h-px flex-1", sidebar ? "bg-drawer-border" : "bg-border")} />
+    </View>
+  );
 });
-
-type ThreadListV2ShelfHeaderProps = {
-  readonly count: number;
-  readonly disabled?: boolean;
-  readonly expanded: boolean;
-  readonly onToggle: () => void;
-  readonly pane?: "screen" | "sidebar";
-};
 
 const TRIAGE_MENU_ACTION_IDS = new Set(["settle", "snooze", "unsettle", "unsnooze"]);
-
-const SHELF_COPY = {
-  working: {
-    label: msg("Working", { $context: "thread list section" }),
-    count: msg("{count, plural, one {{count} working thread} other {{count} working threads}}"),
-    collapse: msg("Collapses the working threads."),
-    expand: msg("Expands the working threads."),
-  },
-  snoozed: {
-    label: msg("Snoozed", { $context: "thread list section" }),
-    count: msg("{count, plural, one {{count} snoozed thread} other {{count} snoozed threads}}"),
-    collapse: msg("Collapses the snoozed threads."),
-    expand: msg("Expands the snoozed threads."),
-  },
-  settled: {
-    label: msg("Settled", { $context: "thread list section" }),
-    count: msg("{count, plural, one {{count} settled thread} other {{count} settled threads}}"),
-    collapse: msg("Collapses the settled threads."),
-    expand: msg("Expands the settled threads."),
-  },
-} as const;
-
-function ThreadListV2ShelfHeader(
-  props: ThreadListV2ShelfHeaderProps & { readonly kind: keyof typeof SHELF_COPY },
-) {
-  const gt = useGT();
-  const m = useMessages();
-  const copy = SHELF_COPY[props.kind];
-  const label = m(copy.label);
-  return (
-    <ThreadListV2Section
-      label={props.expanded ? label : gt("{label} ({count})", { label, count: props.count })}
-      pane={props.pane}
-      tone={props.kind === "snoozed" ? "snoozed" : "default"}
-      disclosure={{
-        expanded: props.expanded,
-        disabled: props.disabled,
-        onToggle: props.onToggle,
-        accessibilityLabel: m(copy.count, { count: props.count }),
-        accessibilityHint: m(props.expanded ? copy.collapse : copy.expand),
-      }}
-    />
-  );
-}
-
-export const ThreadListV2WorkingShelfHeader = memo(function ThreadListV2WorkingShelfHeader(
-  props: ThreadListV2ShelfHeaderProps,
-) {
-  return <ThreadListV2ShelfHeader {...props} kind="working" />;
-});
-
-export const ThreadListV2SnoozedShelfHeader = memo(function ThreadListV2SnoozedShelfHeader(
-  props: ThreadListV2ShelfHeaderProps,
-) {
-  return <ThreadListV2ShelfHeader {...props} kind="snoozed" />;
-});
-
-export const ThreadListV2SettledShelfHeader = memo(function ThreadListV2SettledShelfHeader(
-  props: ThreadListV2ShelfHeaderProps,
-) {
-  return <ThreadListV2ShelfHeader {...props} kind="settled" />;
-});
 
 export const ThreadListV2ShowMoreRow = memo(function ThreadListV2ShowMoreRow(props: {
   readonly pane?: "screen" | "sidebar";
@@ -751,38 +622,154 @@ export const ThreadListV2PendingRow = memo(function ThreadListV2PendingRow(props
   );
 });
 
-export function ThreadListV2AgentSectionHeader({
+function sectionIndent(depth: number) {
+  return Math.min(depth, 3) * 10;
+}
+
+export function ThreadListV2ProjectSectionHeader({
   item,
   onToggle,
 }: {
-  readonly item: ThreadListV2AgentSectionItem;
-  readonly onToggle: (key: string) => void;
+  readonly item: ThreadListV2ProjectSectionItem;
+  readonly onToggle: (key: string, expanded: boolean | null) => void;
 }) {
+  const registry = useContext(RegistryContext);
+  const update = useAtomCommand(serverEnvironment.updateSidebarLayout);
   const gt = useGT();
-  const m = useMessages();
-  const project = item.role === null;
-  const title = item.role === null ? item.title : m(sidebarRoleSectionLabels[item.role]);
-  const summary = project && item.expanded ? "" : formatSidebarAgentStates(item.counts, m, project);
-  const count = project
-    ? gt("{count, plural, one {{count} agent} other {{count} agents}}", { count: item.total })
-    : item.total;
-
+  const toggle = async () => {
+    const { environmentId } = item;
+    const record = AsyncResult.getOrElse(
+      registry.get(serverEnvironment.sidebarLayout({ environmentId, input: {} })),
+      () => null,
+    );
+    if (
+      !record ||
+      !registry.get(serverEnvironment.updateSidebarLayout.permissionAtom(environmentId))
+    ) {
+      onToggle(item.key, item.expanded);
+      return;
+    }
+    const result = await update({
+      environmentId,
+      input: {
+        revision: record.revision,
+        mutation: { type: "collapse", sectionId: item.sectionId, collapsed: item.expanded },
+      },
+    });
+    if (result._tag === "Success") onToggle(item.key, null);
+    if (result._tag === "Failure") {
+      Dialog.alert(gt("Could not save sidebar layout. Try again."));
+    }
+  };
   return (
     <RowPressable
       accessibilityRole="button"
       accessibilityState={{ expanded: item.expanded }}
-      onPress={() => onToggle(item.key)}
-      className={cn("min-h-11 flex-row items-center gap-2 px-3", project ? "mt-2" : "ps-6")}
+      onPress={() => void toggle()}
+      className="mt-2 min-h-11 flex-row items-center gap-2 pe-3"
+      style={{ paddingStart: 12 + sectionIndent(item.depth) }}
     >
+      <SymbolView
+        name={item.expanded ? "folder.open" : "folder.fill"}
+        size={18}
+        tintColorClassName="foreground-muted"
+      />
+      <Text className="min-w-0 flex-1 text-sm font-t3-medium" numberOfLines={1}>
+        {item.title}
+      </Text>
       <SymbolView
         name={item.expanded ? "chevron.down" : "chevron.right"}
         size={12}
         tintColorClassName="foreground-muted"
       />
+    </RowPressable>
+  );
+}
+
+export function ThreadListV2ProjectFolderHeader({
+  item,
+  onToggle,
+  onNewThread,
+}: {
+  readonly item: ThreadListV2ProjectFolderItem;
+  readonly onToggle: (key: string, expanded: boolean) => void;
+  readonly onNewThread: (project: EnvironmentProject) => void;
+}) {
+  const gt = useGT();
+  const m = useMessages();
+  const summary = item.expanded ? "" : formatSidebarAgentStates(item.counts, m, true);
+  const { project } = item;
+
+  return (
+    <View
+      className="mt-2 flex-row items-center"
+      style={{ paddingStart: sectionIndent(item.depth) }}
+    >
+      <RowPressable
+        accessibilityRole="button"
+        accessibilityState={{ expanded: item.expanded }}
+        onPress={() => onToggle(item.key, item.expanded)}
+        className="min-h-11 flex-1 flex-row items-center gap-2 px-3"
+      >
+        <ProjectFavicon
+          environmentId={project.environmentId}
+          faviconPath={project.faviconPath}
+          projectIcon={project.projectIcon}
+          projectTitle={item.title}
+          workspaceRoot={project.workspaceRoot}
+          open={item.expanded}
+          size={18}
+        />
+        <Text className="min-w-0 flex-1 text-sm font-t3-medium" numberOfLines={1}>
+          {item.title}
+        </Text>
+        {!item.expanded && item.total > 0 ? (
+          <Text className="shrink text-xs text-foreground-muted" numberOfLines={1}>
+            {summary || item.total}
+          </Text>
+        ) : null}
+        <SymbolView
+          name={item.expanded ? "chevron.down" : "chevron.right"}
+          size={12}
+          tintColorClassName="foreground-muted"
+        />
+      </RowPressable>
+      <IconButton
+        accessibilityLabel={gt("New thread in {project}", { project: item.title })}
+        icon="square.and.pencil"
+        onPress={() => onNewThread(project)}
+      />
+    </View>
+  );
+}
+
+export function ThreadListV2AgentSectionHeader({
+  item,
+  onToggle,
+}: {
+  readonly item: ThreadListV2AgentSectionItem;
+  readonly onToggle: (key: string, expanded: boolean) => void;
+}) {
+  const m = useMessages();
+  const summary = formatSidebarAgentStates(item.counts, m);
+
+  return (
+    <RowPressable
+      accessibilityRole="button"
+      accessibilityState={{ expanded: item.expanded }}
+      onPress={() => onToggle(item.key, item.expanded)}
+      className="min-h-11 flex-row items-center gap-2 pe-3"
+      style={{ paddingStart: 24 + sectionIndent(item.depth) }}
+    >
+      <SymbolView
+        name={item.expanded ? "folder.open" : "folder.fill"}
+        size={12}
+        tintColorClassName="foreground-muted"
+      />
       <Text className="min-w-0 shrink text-sm font-t3-medium" numberOfLines={1}>
-        {title}
+        {m(sidebarRoleSectionLabels[item.role])}
       </Text>
-      {!project || !summary ? <Text className="text-xs text-foreground-muted">{count}</Text> : null}
+      <Text className="text-xs text-foreground-muted">{item.total}</Text>
       {summary ? <Text className="shrink text-xs text-foreground-muted">{summary}</Text> : null}
     </RowPressable>
   );
@@ -792,6 +779,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   readonly thread: EnvironmentThreadShell;
   readonly agentCount: number;
   readonly agentRow: boolean;
+  readonly depth?: number;
   readonly listVisible: boolean;
   readonly variant: "card" | "slim";
   readonly hasQueuedMessages?: boolean;
@@ -1066,10 +1054,12 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     [gt, snoozePresets],
   );
   const reorderMenuItems = useMemo<MenuAction[]>(
-    () =>
-      props.reorderSupported === true
+    () => [
+      ...(!props.agentRow && (props.pinningSupported || props.reorderSupported)
+        ? [{ id: "arrange", title: gt("Arrange threads…"), image: "line.3.horizontal" }]
+        : []),
+      ...(props.reorderSupported === true
         ? [
-            { id: "arrange", title: gt("Arrange threads…"), image: "line.3.horizontal" },
             {
               id: "move-up",
               title: gt("Move up"),
@@ -1083,8 +1073,16 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
               attributes: { disabled: props.canMoveDown !== true },
             } satisfies MenuAction,
           ]
-        : [],
-    [gt, props.canMoveDown, props.canMoveUp, props.reorderSupported],
+        : []),
+    ],
+    [
+      gt,
+      props.agentRow,
+      props.canMoveDown,
+      props.canMoveUp,
+      props.pinningSupported,
+      props.reorderSupported,
+    ],
   );
   const pinMenuItems = useMemo<MenuAction[]>(
     () =>
@@ -1647,11 +1645,15 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     </RowPressable>
   );
 
+  const inset = sectionIndent(props.depth ?? 0);
+  const indentation = inset > 0 ? { marginStart: inset } : undefined;
   if (!canSwipe)
-    return <View style={rowAppearance.swipeContainerStyle}>{rowContent(() => {})}</View>;
+    return (
+      <View style={[rowAppearance.swipeContainerStyle, indentation]}>{rowContent(() => {})}</View>
+    );
 
   return (
-    <View collapsable={false}>
+    <View collapsable={false} style={indentation}>
       {customSnoozeOpen && (
         <CustomSnoozeSheet onClose={() => setCustomSnoozeOpen(false)} onSnooze={handleSnooze} />
       )}
@@ -1663,7 +1665,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         containerStyle={rowAppearance.swipeContainerStyle}
         enableTrackpadSwipe
         fullSwipeAction="primary"
-        fullSwipeWidth={props.fullSwipeWidth ?? windowWidth - 32}
+        fullSwipeWidth={(props.fullSwipeWidth ?? windowWidth - 32) - inset}
         listAnimatesLayout
         onDelete={handleDelete}
         onSwipeableClose={props.onSwipeableClose}

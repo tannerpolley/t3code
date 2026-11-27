@@ -48,7 +48,7 @@ export function ThreadHeader(props: {
   if (props.onOpenArtifacts) {
     actions.push({
       accessibilityLabel: gt("Artifacts"),
-      icon: "archivebox",
+      icon: "bookmark",
       onPress: props.onOpenArtifacts,
       separateBackground: false,
     });

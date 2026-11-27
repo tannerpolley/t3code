@@ -3,9 +3,12 @@ import {
   EnvironmentId,
   IssueTrackerKind,
   ProjectId,
+  SourceControlProviderKind,
+  ThreadId,
   type IssueDetail,
   type IssueListResult,
 } from "@t3tools/contracts";
+import { scopeThreadRef } from "@t3tools/client-runtime/environment";
 import { DEFAULT_RESOLVED_KEYBINDINGS } from "@t3tools/shared/keybindings";
 import { describe, expect, it, vi } from "vite-plus/test";
 import { page, userEvent } from "vite-plus/test/browser";
@@ -66,6 +69,24 @@ vi.mock(import("~/state/environments"), async (original) => ({
 vi.mock(import("~/state/entities"), async (original) => ({
   ...(await original()),
   useProjects: () => [],
+  useProject: (ref) =>
+    ref &&
+    ({
+      repositoryIdentity: {
+        canonicalKey: `github.com/${repoScope(ref.projectId)}`,
+        locator: {
+          source: "git-remote",
+          remoteName: "origin",
+          remoteUrl: `https://github.com/${repoScope(ref.projectId)}.git`,
+        },
+        provider: SourceControlProviderKind.make("github"),
+        owner: "owner",
+        name: repoScope(ref.projectId).split("/")[1],
+        displayName: repoScope(ref.projectId),
+      },
+    } as ReturnType<typeof import("~/state/entities").useProject>),
+  useServerConfigs: (() =>
+    new Map([[environmentId, { environment: { capabilities: { issues: true } } }]])) as never,
 }));
 vi.mock(import("~/state/issues"), async (original) => {
   const actual = await original();
@@ -136,7 +157,12 @@ vi.mock(import("~/state/issues"), async (original) => {
               !input?.labels?.length ||
               issue.labels.some(({ name }) => input.labels?.includes(name)),
           )
-          .map((issue) => ({ ...issue, state: current.get(issue.key) ?? issue.state })),
+          .map((issue) => ({
+            ...issue,
+            projectId: input?.projectId ?? issue.projectId,
+            scope: input?.scope ?? issue.scope,
+            state: current.get(issue.key) ?? issue.state,
+          })),
         trackers: [
           {
             tracker: github,
@@ -170,14 +196,19 @@ import {
   useRightPanelStore,
 } from "~/rightPanelStore";
 import { IssuesPage } from "./IssuesPage";
+import { RepoIssuesPanel } from "./RepoIssueBoard";
 
 const environmentId = EnvironmentId.make("env-1");
 const projectId = ProjectId.make("project-1");
+const otherProjectId = ProjectId.make("project-2");
+const repoScope = (id: ProjectId) => (id === projectId ? "owner/repo" : "owner/other");
 const github = IssueTrackerKind.make("github");
 const workflow = [
   { category: "open", name: "Backlog" },
   { category: "open", name: "In progress" },
   { category: "closed", name: "Done", closeReason: "completed" },
+  { category: "open", name: "Todo" },
+  { category: "open", name: "In review" },
 ] as const satisfies ReadonlyArray<IssueDetail["state"]>;
 const capabilities = {
   create: true,
@@ -271,6 +302,9 @@ describe("IssuesPage board", () => {
       view: "board",
     });
     await expect.element(screen.getByRole("region", { name: "Done" })).toBeVisible();
+    expect(
+      screen.getByRole("region", { name: "Done" }).element().getBoundingClientRect().left,
+    ).toBeGreaterThan(backlog.element().getBoundingClientRect().left);
 
     await screen.getByRole("button", { name: "List", exact: true }).click();
     await expect.element(backlog).not.toBeInTheDocument();
@@ -316,4 +350,47 @@ describe("IssuesPage board", () => {
       .toBeVisible();
     expect(state.move).toHaveBeenCalledTimes(2);
   });
+});
+
+it("stacks the right-panel board and remembers each repository's collapsed groups", async () => {
+  setup();
+  state.useBoardFixture = true;
+  const panel = (id: ProjectId) => (
+    <AppAtomRegistryProvider>
+      <div className="flex w-80">
+        <RepoIssuesPanel
+          threadRef={scopeThreadRef(environmentId, ThreadId.make("thread-1"))}
+          projectId={id}
+        />
+      </div>
+    </AppAtomRegistryProvider>
+  );
+  await using screen = await render(panel(projectId));
+  const groups = ["Done", "In review", "In progress", "Todo", "Backlog"].map((name) =>
+    screen.getByRole("region", { name, exact: true }),
+  );
+  const backlog = screen.getByRole("button", { name: "Backlog 2" });
+  const progress = screen.getByRole("button", { name: "In progress 2" });
+  const card = screen.getByText("Restore saved issue filters");
+  await expect.element(groups[0]!).toBeVisible();
+  const bounds = groups.map((group) => group.element().getBoundingClientRect());
+  for (const [index, group] of bounds.slice(1).entries()) {
+    expect(group.top).toBeGreaterThanOrEqual(bounds[index]!.bottom);
+    expect(group.left).toBe(bounds[index]!.left);
+  }
+  await expect.element(backlog).toHaveAttribute("aria-expanded", "true");
+  await expect.element(card).toBeVisible();
+  await backlog.click();
+  await expect.element(backlog).toHaveAttribute("aria-expanded", "false");
+  await expect.element(card).not.toBeInTheDocument();
+  await expect.element(progress).toHaveAttribute("aria-expanded", "true");
+
+  await screen.rerender(panel(otherProjectId));
+  await expect.element(backlog).toHaveAttribute("aria-expanded", "true");
+  await expect.element(card).toBeVisible();
+  await screen.rerender(panel(projectId));
+  await expect.element(backlog).toHaveAttribute("aria-expanded", "false");
+  await expect.element(card).not.toBeInTheDocument();
+  await backlog.click();
+  await expect.element(card).toBeVisible();
 });

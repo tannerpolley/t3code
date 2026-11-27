@@ -3,7 +3,8 @@ import { Atom } from "effect/reactivity";
 import { indexSidebarChildren } from "@t3tools/client-runtime/state/sidebar-families";
 import type { OlderSettledScope } from "@t3tools/client-runtime/state/threads";
 import type { EnvironmentId } from "@t3tools/contracts";
-import { useCallback, useMemo, useSyncExternalStore } from "react";
+import { useCallback, useMemo } from "react";
+import type { ProjectThreadLayouts } from "@t3tools/client-runtime/state/thread-sort";
 
 import { keepMarked } from "../../i18n/messages";
 import { scopedProjectKey } from "../../lib/scopedEntities";
@@ -13,11 +14,13 @@ import {
   buildThreadListV2Items,
   buildThreadListV2ListItems,
   getThreadListV2OrderedSection,
-  indexThreadListAgentSections,
-  threadListInboxReturns,
   threadListV2LayoutTime,
 } from "./threadListV2";
-import type { HomeProjectScope } from "../home/homeThreadList";
+import {
+  sortHomeProjectScopes,
+  type HomeProjectScope,
+  type HomeProjectSortOrder,
+} from "../home/homeThreadList";
 import { computeThreadMoveAvailability } from "./threadOrder";
 
 /**
@@ -32,22 +35,11 @@ function useKeySet(newlineSeparatedKeys: string): ReadonlySet<string> {
   );
 }
 
-const collapsedAgentSectionsAtom = Atom.make<ReadonlySet<string>>(new Set<string>()).pipe(
+const expandedSidebarRowsAtom = Atom.make<ReadonlyMap<string, boolean>>(new Map()).pipe(
   Atom.keepAlive,
 );
 
 type LayoutInput = Parameters<typeof buildThreadListV2Items>[0];
-
-/**
- * The React Compiler drops unread dependencies, so pass the expired-grace version through
- * this call to keep inbox updates tied to its subscription.
- */
-function observeInbox(
-  threads: Parameters<typeof threadListInboxReturns.observe>[0],
-  _expiredGraceVersion: number,
-) {
-  return threadListInboxReturns.observe(threads);
-}
 
 /**
  * Shelf callbacks prevent compiler caching across the whole derivation, so each stage keeps
@@ -57,6 +49,8 @@ export function useThreadListV2(input: {
   readonly threads: LayoutInput["threads"];
   readonly agentThreads: LayoutInput["threads"];
   readonly projects: readonly HomeProjectScope[];
+  readonly projectSortOrder: HomeProjectSortOrder;
+  readonly projectLayouts: ProjectThreadLayouts;
   readonly openThreadKey: string | null;
   readonly pendingTasks: ReadonlyArray<PendingNewTask>;
   readonly environmentId: EnvironmentId | null;
@@ -67,20 +61,14 @@ export function useThreadListV2(input: {
   readonly settlementEnvironmentIds: ReadonlySet<EnvironmentId>;
   readonly snoozeEnvironmentIds: ReadonlySet<EnvironmentId>;
   readonly pinReorderEnvironmentIds: ReadonlySet<EnvironmentId>;
-  readonly activeReorderEnvironmentIds: ReadonlySet<EnvironmentId>;
   readonly queuedThreadKeys: ReadonlySet<string>;
   readonly settledLimit: number;
   readonly now: string;
   readonly pendingOrder: LayoutInput["pendingOrder"];
-  readonly shelfPreferencesLoaded: boolean;
-  readonly workingShelfEnabled: boolean;
-  readonly workingShelfExpanded: boolean;
-  readonly snoozedShelfExpanded: boolean;
-  readonly settledShelfExpanded: boolean;
   readonly selectedThreadKey: string | null;
 }) {
-  const { threads, workingShelfEnabled } = input;
-  const [collapsed, setCollapsed] = useAtom(collapsedAgentSectionsAtom);
+  const { threads } = input;
+  const [expanded, setExpanded] = useAtom(expandedSidebarRowsAtom);
   const children = useMemo(() => indexSidebarChildren(input.agentThreads), [input.agentThreads]);
   const projects = useMemo(() => {
     const projectKeys =
@@ -91,65 +79,55 @@ export function useThreadListV2(input: {
               scopedProjectKey(environmentId, projectId),
             ),
           );
-    return input.projects.filter(
+    const scopes = input.projects.filter(
       (project) =>
         projectKeys === null ||
         project.projectRefs.some(({ environmentId, projectId }) =>
           projectKeys.has(scopedProjectKey(environmentId, projectId)),
         ),
     );
-  }, [input.projectRefs, input.projects]);
-  const sections = useMemo(
-    () => indexThreadListAgentSections(children, projects),
-    [children, projects],
-  );
+    return [
+      ...sortHomeProjectScopes({
+        scopes,
+        threads,
+        pendingTasks: input.pendingTasks,
+        projectSortOrder: input.projectSortOrder,
+      }),
+    ].sort(
+      (a, b) => Number(a.archived) - Number(b.archived) || Number(b.pinned) - Number(a.pinned),
+    );
+  }, [input.projectRefs, input.projects, input.pendingTasks, input.projectSortOrder, threads]);
   const layoutTime = useMemo(
     () => threadListV2LayoutTime({ threads, now: input.now, searchQuery: input.searchQuery }),
     [threads, input.now, input.searchQuery],
   );
-  // A thread can stop working when the threads change, or when its exit grace expires.
-  const inboxVersion = useSyncExternalStore(
-    threadListInboxReturns.subscribe,
-    threadListInboxReturns.getSnapshot,
-  );
-  const inbox = useMemo(
-    () => observeInbox(workingShelfEnabled ? threads : null, inboxVersion),
-    [threads, workingShelfEnabled, inboxVersion],
-  );
-  // Compute move availability per section; per-row planning is quadratic.
-  const moveAvailability = useMemo(() => {
-    const sectionAvailability = (section: "pinned" | "active") =>
+  const moveAvailability = useMemo(
+    () =>
       computeThreadMoveAvailability({
         allThreads: threads,
-        section,
+        section: "pinned",
         pendingOrder: input.pendingOrder,
-        reorderableEnvironmentIds:
-          section === "pinned" ? input.pinReorderEnvironmentIds : input.activeReorderEnvironmentIds,
+        reorderableEnvironmentIds: input.pinReorderEnvironmentIds,
         ordered: getThreadListV2OrderedSection({
           threads,
-          section,
+          section: "pinned",
           pendingOrder: input.pendingOrder,
           now: layoutTime,
           settlementEnvironmentIds: input.settlementEnvironmentIds,
           snoozeEnvironmentIds: input.snoozeEnvironmentIds,
           queuedThreadKeys: input.queuedThreadKeys,
         }),
-      });
-    return new Map([
-      ...sectionAvailability("pinned"),
-      ...(workingShelfEnabled ? [] : sectionAvailability("active")),
-    ]);
-  }, [
-    threads,
-    input.pendingOrder,
-    input.pinReorderEnvironmentIds,
-    input.activeReorderEnvironmentIds,
-    layoutTime,
-    input.settlementEnvironmentIds,
-    input.snoozeEnvironmentIds,
-    input.queuedThreadKeys,
-    workingShelfEnabled,
-  ]);
+      }),
+    [
+      threads,
+      input.pendingOrder,
+      input.pinReorderEnvironmentIds,
+      layoutTime,
+      input.settlementEnvironmentIds,
+      input.snoozeEnvironmentIds,
+      input.queuedThreadKeys,
+    ],
+  );
   // Older settled threads load in pages; the shelf lists them only as far as they are loaded.
   const scopes = useMemo(
     () =>
@@ -162,7 +140,7 @@ export function useThreadListV2(input: {
   );
   const olderSettledShelf = useOlderSettledShelf({
     scopes,
-    expanded: input.settledShelfExpanded,
+    expanded: true,
     // A search lists only matches, so the shelf would page forever; loaded pages stay.
     visibleCount: input.searchQuery.trim().length === 0 ? input.settledLimit : 0,
   });
@@ -179,14 +157,9 @@ export function useThreadListV2(input: {
         settlementEnvironmentIds: input.settlementEnvironmentIds,
         snoozeEnvironmentIds: input.snoozeEnvironmentIds,
         queuedThreadKeys: input.queuedThreadKeys,
-        settledLimit: input.settledLimit,
         now: layoutTime,
-        workingShelfEnabled,
-        workingShelfExpanded: input.workingShelfExpanded,
-        inboxReturnAt: inbox.returnedAt,
-        isWorking: inbox.isWorking,
-        snoozedShelfExpanded: input.snoozedShelfExpanded,
-        settledShelfExpanded: input.settledShelfExpanded,
+        snoozedShelfExpanded: true,
+        settledShelfExpanded: true,
         selectedThreadKey: input.selectedThreadKey,
         isListedSettled: isListed,
         unloadedSettledCount: unloadedCount(
@@ -211,14 +184,7 @@ export function useThreadListV2(input: {
       input.settlementEnvironmentIds,
       input.snoozeEnvironmentIds,
       input.queuedThreadKeys,
-      input.settledLimit,
       layoutTime,
-      workingShelfEnabled,
-      input.workingShelfExpanded,
-      inbox.returnedAt,
-      inbox.isWorking,
-      input.snoozedShelfExpanded,
-      input.settledShelfExpanded,
       input.selectedThreadKey,
       isListed,
       unloadedCount,
@@ -249,58 +215,55 @@ export function useThreadListV2(input: {
     () =>
       buildThreadListV2ListItems({
         items: layout.items,
-        agents: {
-          children,
-          projects: input.searchQuery.trim() ? [] : projects,
-          sections,
-          collapsed,
-          routeKey: input.openThreadKey,
-          now: input.now,
-        },
+        ...(input.searchQuery.trim() === ""
+          ? {
+              folders: {
+                children,
+                projects,
+                layouts: input.projectLayouts,
+                environmentId: input.environmentId,
+                expanded,
+                scoped: input.projectRefs != null,
+                routeKey: input.openThreadKey ?? input.selectedThreadKey,
+                now: input.now,
+              },
+            }
+          : {}),
         pendingTasks,
-        workingCount: layout.workingCount,
-        workingShelfExpanded: input.workingShelfExpanded,
-        workingShelfHeaderIndex: layout.workingShelfHeaderIndex,
-        snoozedCount: layout.snoozedCount,
-        snoozedShelfExpanded: input.snoozedShelfExpanded,
-        snoozedShelfHeaderIndex: layout.snoozedShelfHeaderIndex,
-        settledCount: layout.settledCount,
-        settledShelfExpanded: input.settledShelfExpanded,
-        settledShelfHeaderIndex: layout.settledShelfHeaderIndex,
         snoozeLabelNow: `${input.now.slice(0, 16)}:00.000Z`,
         snoozeEnvironmentIds: input.snoozeEnvironmentIds,
         queuedThreadKeys: input.queuedThreadKeys,
         moveAvailability,
-        shelfPreferencesLoading: !input.shelfPreferencesLoaded,
         resolve: keepMarked,
       }),
     [
       layout,
       children,
       projects,
-      sections,
-      collapsed,
+      input.projectLayouts,
+      input.environmentId,
+      expanded,
+      input.projectRefs,
       input.openThreadKey,
+      input.selectedThreadKey,
       input.searchQuery,
       pendingTasks,
-      input.workingShelfExpanded,
-      input.snoozedShelfExpanded,
-      input.settledShelfExpanded,
       input.now,
       input.snoozeEnvironmentIds,
       input.queuedThreadKeys,
       moveAvailability,
-      input.shelfPreferencesLoaded,
     ],
   );
-  const toggleAgentSection = useCallback(
-    (key: string) =>
-      setCollapsed((current) => {
-        const next = new Set(current);
-        if (!next.delete(key)) next.add(key);
+  const toggleSidebarRow = useCallback(
+    (key: string, expanded: boolean | null) =>
+      setExpanded((current) => {
+        if (expanded !== null) return new Map(current).set(key, !expanded);
+        if (!current.has(key)) return current;
+        const next = new Map(current);
+        next.delete(key);
         return next;
       }),
-    [setCollapsed],
+    [setExpanded],
   );
   const selectedRowKey = items.some((row) => row.key === `v2-thread:${input.openThreadKey}`)
     ? input.openThreadKey
@@ -311,7 +274,7 @@ export function useThreadListV2(input: {
     contentOnlyThreadKeys,
     olderSettledShelf,
     selectedRowKey,
-    toggleAgentSection,
+    toggleSidebarRow,
   };
 }
 

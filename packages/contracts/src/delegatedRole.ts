@@ -1,4 +1,5 @@
 import * as Schema from "effect/Schema";
+import * as SchemaTransformation from "effect/SchemaTransformation";
 import { TrimmedNonEmptyString } from "./baseSchemas.ts";
 import { ProviderOptionSelection } from "./model.ts";
 import { ProviderInstanceId } from "./providerInstance.ts";
@@ -19,11 +20,30 @@ export const OrchestratorMcpTaskRole = Schema.Literals([
 ]);
 export type OrchestratorMcpTaskRole = typeof OrchestratorMcpTaskRole.Type;
 
+export const DelegationComplexity = Schema.Literals(["routine", "complex"]);
+export type DelegationComplexity = typeof DelegationComplexity.Type;
+
 export const RoleModel = Schema.Struct({
   instanceId: ProviderInstanceId,
   model: TrimmedNonEmptyString,
-  effort: Schema.optionalKey(ProviderOptionSelection),
+  effort: Schema.optionalKey(
+    Schema.Union([ProviderOptionSelection, Schema.Literal("orchestrator")]),
+  ),
 });
 export type RoleModel = typeof RoleModel.Type;
 
-export const RoleModels = Schema.Record(DelegationModelRole, Schema.optionalKey(RoleModel));
+const RoleModelLevels = Schema.Record(DelegationComplexity, Schema.optionalKey(RoleModel));
+const CompatibleRoleModelLevels = Schema.Union([RoleModel, RoleModelLevels]).pipe(
+  Schema.decodeTo(
+    Schema.toType(RoleModelLevels),
+    SchemaTransformation.transform({
+      decode: (value) => ("instanceId" in value ? { routine: value, complex: value } : value),
+      encode: (value) => value,
+    }),
+  ),
+);
+
+export const RoleModels = Schema.Record(
+  DelegationModelRole,
+  Schema.optionalKey(CompatibleRoleModelLevels),
+);
