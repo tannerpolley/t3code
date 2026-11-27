@@ -1,3 +1,5 @@
+import type { PDFDocumentProxy } from "pdfjs-dist";
+
 const PDF_PAGE_GAP = 16;
 export const PDF_MIN_ZOOM = 0.25;
 export const PDF_MAX_ZOOM = 3;
@@ -149,4 +151,67 @@ export function pdfFindMatchRuns(runs: readonly string[], query: string) {
   )
     for (let index = match; index < match + needle.length; index++) hits[owner[index]!] = true;
   return hits;
+}
+
+export async function pdfLinkPage(pdf: PDFDocumentProxy, dest: unknown): Promise<number | null> {
+  const explicit: unknown = typeof dest === "string" ? await pdf.getDestination(dest) : dest;
+  if (!Array.isArray(explicit)) return null;
+  const [ref] = explicit as unknown[];
+  const page =
+    typeof ref === "number"
+      ? ref
+      : typeof ref === "object" && ref !== null
+        ? await pdf.getPageIndex(ref as Parameters<PDFDocumentProxy["getPageIndex"]>[0])
+        : null;
+  return page !== null && Number.isInteger(page) && page >= 0 && page < pdf.numPages ? page : null;
+}
+
+export type PdfOutlineEntry = { id: number; title: string; page: number | null; depth: number };
+
+export async function resolvePdfOutline(pdf: PDFDocumentProxy): Promise<PdfOutlineEntry[]> {
+  const outline = (await pdf.getOutline()) ?? [];
+  const entries: PdfOutlineEntry[] = [];
+  async function visit(items: typeof outline, depth: number) {
+    for (const item of items) {
+      const page = await pdfLinkPage(pdf, item.dest).catch(() => null);
+      entries.push({ id: entries.length, title: item.title, page, depth });
+      await visit(item.items, depth + 1);
+    }
+  }
+  await visit(outline, 0);
+  return entries;
+}
+
+export function currentPdfSection(entries: readonly PdfOutlineEntry[], page: number) {
+  let current = -1;
+  for (let index = 0; index < entries.length; index++) {
+    const target = entries[index]!.page;
+    if (target !== null && target <= page && (current === -1 || target >= entries[current]!.page!))
+      current = index;
+  }
+  return current;
+}
+
+/**
+ * Outline rows shown in the bookmarks tree: an entry is hidden under a collapsed ancestor. The
+ * current section highlights itself, or the collapsed ancestor that hides it.
+ */
+export function visiblePdfOutline(
+  entries: readonly PdfOutlineEntry[],
+  expanded: ReadonlySet<number>,
+  section: number,
+) {
+  const rows: { entry: PdfOutlineEntry; parent: boolean; open: boolean; current: boolean }[] = [];
+  let hiddenBelow = Infinity;
+  for (const [index, entry] of entries.entries()) {
+    if (entry.depth > hiddenBelow) {
+      if (index === section) rows.at(-1)!.current = true;
+      continue;
+    }
+    const parent = (entries[index + 1]?.depth ?? -1) > entry.depth;
+    const open = parent && expanded.has(entry.id);
+    hiddenBelow = parent && !open ? entry.depth : Infinity;
+    rows.push({ entry, parent, open, current: index === section });
+  }
+  return rows;
 }

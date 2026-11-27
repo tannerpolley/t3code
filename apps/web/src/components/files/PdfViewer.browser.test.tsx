@@ -46,6 +46,7 @@ vi.mock(import("./pdfDocument"), async (importOriginal) => {
 });
 
 import PdfViewer from "./PdfViewer";
+import outlinePdf from "./outline.fixture.pdf?url";
 
 // Page 1 is a short banner whose title is drawn in two runs with a font change, so pdf.js
 // splits it into two text spans. Page 2 is a letter page rotated a quarter turn.
@@ -140,9 +141,38 @@ it("fits the width, then finds split and rotated text and jumps to its page", as
 
     await find.fill(" ");
     await expect.element(screen.getByRole("status")).toHaveTextContent("0/0");
+    await expect.element(screen.getByRole("button", { name: "Bookmarks" })).not.toBeInTheDocument();
   } finally {
     URL.revokeObjectURL(url);
   }
+});
+
+it("opens the bookmarks pane by default and tracks navigation through collapsed sections", async () => {
+  await using screen = await render(
+    <div className="flex h-[300px] w-[500px]">
+      <PdfViewer src={outlinePdf} title="Bookmarked PDF" />
+    </div>,
+  );
+  const toggle = screen.getByRole("button", { name: "Bookmarks", exact: true });
+  const pane = screen.getByRole("navigation", { name: "PDF bookmarks" });
+  const chapter = pane.getByRole("button", { name: "Chapter", exact: true });
+  const section = pane.getByRole("button", { name: "Section", exact: true });
+
+  await expect.element(toggle).toHaveAttribute("aria-pressed", "true");
+  await expect.element(chapter).toHaveAttribute("aria-current", "location");
+  await expect.element(section).not.toBeInTheDocument();
+  await pane.getByRole("button", { name: "Expand Chapter" }).click();
+  await section.click();
+  await expect.element(screen.getByText("2 / 2 pages")).toBeVisible();
+  await expect.element(section).toHaveAttribute("aria-current", "location");
+  await pane.getByRole("button", { name: "Collapse Chapter" }).click();
+  await expect.element(chapter).toHaveAttribute("aria-current", "location");
+
+  await toggle.click();
+  await expect.element(pane).not.toBeInTheDocument();
+  await toggle.click();
+  await chapter.click();
+  await expect.element(screen.getByText("1 / 2 pages")).toBeVisible();
 });
 
 it("keeps the painted page while its width changes, then repaints it without a blank frame", async () => {
