@@ -141,6 +141,7 @@ function RepoIssueBoard({
         </p>
       ) : null}
       <IssueBoard
+        layout="stacked"
         rows={rows}
         renderRow={(row) => (
           <IssueRow
