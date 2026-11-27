@@ -6,7 +6,6 @@ import {
   presentThreadShell,
 } from "@t3tools/client-runtime/state/models";
 import { isShownUnderParent } from "@t3tools/client-runtime/state/threads";
-import { runAtomCommand } from "@t3tools/client-runtime/state/runtime";
 import type { AnyRouter } from "@tanstack/react-router";
 import { parseThreadKey, threadKey } from "@t3tools/client-runtime/state/entities";
 import type { EnvironmentId, OrchestrationV2ThreadShell, ThreadId } from "@t3tools/contracts";
@@ -25,7 +24,6 @@ import { getClientSettings, subscribeClientSettings } from "../hooks/useSettings
 import { isWindowsPlatform } from "../lib/utils";
 import { environmentSummaries } from "../state/presentation";
 import { environmentShell } from "../state/shell";
-import { readNotificationPresence, serverEnvironment } from "../state/server";
 import { environmentThreadShells } from "../state/threads";
 import {
   hasDesktopNotifications,
@@ -132,11 +130,10 @@ export function startThreadNotifications(
     setNotificationBadge(0);
   };
 
-  const present = async (
+  const present = (
     environmentId: EnvironmentId,
     state: NotificationState,
     kind: ThreadNotificationKind,
-    signal: AbortSignal,
   ) => {
     const { thread, status } = state;
     if (
@@ -212,33 +209,6 @@ export function startThreadNotifications(
       Notification.permission !== "granted"
     )
       return;
-    if (
-      (kind === "completion" ||
-        status === "approval" ||
-        status === "input" ||
-        status === "failed" ||
-        (status === "limited" && thread.latestRun?.status === "failed")) &&
-      registry.get(serverEnvironment.configValueAtom(environmentId))?.settings
-        .notificationPresencePeer
-    ) {
-      const presence = await runAtomCommand(
-        registry,
-        readNotificationPresence,
-        { environmentId, input: {} },
-        { signal, reportFailure: false },
-      );
-      if (
-        signal.aborted ||
-        presence._tag !== "Success" ||
-        presence.value === "away" ||
-        !hasDesktopNotifications(getClientSettings().notificationMode) ||
-        (document.visibilityState === "visible" && document.hasFocus()) ||
-        registry
-          .get(environmentThreadShells.hiddenThreadKeysAtom)
-          .has(threadKey({ environmentId, threadId: thread.id }))
-      )
-        return;
-    }
     try {
       const notification = new Notification(title, {
         body: thread.title,
@@ -344,14 +314,13 @@ export function startThreadNotifications(
   };
 
   const watchEnvironment = (environmentId: EnvironmentId): WatchedEnvironment => {
-    const presentation = new AbortController();
     const entry: WatchedEnvironment = {
       previous: new Map(),
       reconnecting: false,
       unsubscribe: () => {},
       gate: createThreadNotificationGate<ThreadId>((threadId, kind) => {
         const state = entry.previous.get(threadId);
-        if (state) void present(environmentId, state, kind, presentation.signal);
+        if (state) present(environmentId, state, kind);
       }),
     };
     let threads: ReadonlyArray<OrchestrationV2ThreadShell> | null = null;
@@ -383,7 +352,6 @@ export function startThreadNotifications(
       reobserve,
     );
     entry.unsubscribe = () => {
-      presentation.abort();
       unsubscribeShell();
       unsubscribeRequests();
       unsubscribeDelegated();

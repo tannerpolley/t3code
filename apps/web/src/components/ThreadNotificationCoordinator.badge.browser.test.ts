@@ -1,13 +1,11 @@
 import type { AnyRouter } from "@tanstack/react-router";
-import { EnvironmentId, ThreadId } from "@t3tools/contracts";
+import { EnvironmentId } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
-import * as Effect from "effect/Effect";
 import * as Option from "effect/Option";
 import { Atom, AtomRegistry } from "effect/reactivity";
 import { expect, it, vi } from "vite-plus/test";
 
 import { fakeTimers, stubGlobal } from "../../test/render";
-import { threadNotificationTag } from "../threadNotifications";
 import { RELEASED_COMPLETION_GRACE_MS } from "./ThreadNotificationCoordinator.logic";
 
 const state = vi.hoisted(() => ({
@@ -20,8 +18,6 @@ const state = vi.hoisted(() => ({
   sound: vi.fn(),
   unlock: vi.fn(),
   badge: vi.fn(),
-  presencePeer: "",
-  readPresence: vi.fn(),
   settingsListeners: new Set<() => void>(),
 }));
 vi.mock(import("./ui/toast"), async (original) => {
@@ -55,17 +51,6 @@ vi.mock(import("../state/presentation"), async (original) => {
       get environmentIdsAtom() {
         return environmentIdsAtom as never;
       },
-    },
-  };
-});
-vi.mock(import("../state/server"), async (original) => {
-  const actual = await original();
-  return {
-    ...actual,
-    readNotificationPresence: { run: state.readPresence, label: "test-presence" } as never,
-    serverEnvironment: {
-      ...actual.serverEnvironment,
-      configValueAtom: (() => presenceConfigAtom) as never,
     },
   };
 });
@@ -107,9 +92,6 @@ const shellAtom = Atom.family((_id: string) => Atom.make<unknown>(null));
 const environmentIdsAtom = Atom.make<ReadonlyArray<string>>([]);
 const noRequestsAtom = Atom.make(new Map());
 const noDelegatedAtom = Atom.make<ReadonlySet<string>>(new Set<string>());
-const presenceConfigAtom = Atom.make(() => ({
-  settings: { notificationPresencePeer: state.presencePeer },
-}));
 state.shells = { set: (id, value) => registry.set(shellAtom(id), value) };
 
 class TestNotification extends EventTarget {
@@ -217,7 +199,6 @@ function setup() {
   stack.defer(() => testRegistry.dispose());
   state.mode = "notifications";
   state.inApp = false;
-  state.presencePeer = "";
   state.settingsListeners.clear();
   registry.set(environmentIdsAtom, ["one", "two"]);
   state.shells.set("one", shell());
@@ -279,20 +260,6 @@ it.each(["hasPendingApprovals", "hasPendingUserInput"] as const)(
     expect(notification.close).toHaveBeenCalled();
   },
 );
-
-it("routes waiting-for-input OS notifications using the originating environment's presence", async () => {
-  await using app = setup();
-  state.presencePeer = "pixel-9";
-  state.readPresence.mockImplementation((_registry, { environmentId }) =>
-    Effect.succeed(environmentId === "one" ? "away" : "home"),
-  );
-  app.start();
-  state.shells.set("one", shell({ hasPendingUserInput: true }));
-  state.shells.set("two", shell({ hasPendingUserInput: true }));
-  await expect
-    .poll(() => TestNotification.sent.map(({ tag }) => tag))
-    .toEqual([threadNotificationTag(EnvironmentId.make("two"), ThreadId.make("thread"))]);
-});
 
 it.each(["hasPendingApprovals", "hasPendingUserInput"] as const)(
   "notifies once per %s request, not again as queued runs start behind it",
