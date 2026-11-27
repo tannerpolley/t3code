@@ -234,6 +234,8 @@ export interface MessagesTimelineHistoryControls {
 }
 
 interface MessagesTimelineProps {
+  taskNavigationHash?: string;
+  taskNavigationKey?: string;
   pendingApprovals?: ReadonlyArray<PendingApproval>;
   heldApprovalRequestIds?: ReadonlySet<string> | undefined;
   respondingRequestIds?: TimelineRowSharedState["respondingRequestIds"];
@@ -363,6 +365,8 @@ export function MessagesTimeline(props: MessagesTimelineProps) {
 }
 
 const ConversationTimeline = memo(function ConversationTimeline({
+  taskNavigationHash = "",
+  taskNavigationKey = "",
   pendingApprovals = EMPTY_PENDING_APPROVALS,
   heldApprovalRequestIds,
   respondingRequestIds = EMPTY_RESPONDING_REQUEST_IDS,
@@ -1371,6 +1375,43 @@ const ConversationTimeline = memo(function ConversationTimeline({
     rows,
     contentInsetEndAdjustment,
   });
+
+  const revealedTaskKey = useRef<string | null>(null);
+  const encodedTask = taskNavigationHash.replace(/^#/, "");
+  const taskId = encodedTask.startsWith("task:")
+    ? new URLSearchParams(`task=${encodedTask.slice(5)}`).get("task")
+    : null;
+  const taskRowIndex =
+    taskId === null
+      ? -1
+      : rows.findIndex(
+          (row) =>
+            (row.kind === "work" || row.kind === "work-live") &&
+            row.groupedEntries.some(
+              (entry) =>
+                entry.taskId === taskId ||
+                entry.projectedItem?.item.nativeItemRef?.nativeId === taskId ||
+                String(entry.projectedItem?.item.id) === taskId,
+            ),
+        );
+  // oxlint-disable-next-line t3code/no-unreasoned-state-sync -- reveal a sidebar task after its thread timeline mounts
+  useEffect(() => {
+    const key = `${taskNavigationKey}:${taskId}`;
+    if (
+      taskId === null ||
+      taskRowIndex < 0 ||
+      !findListReady ||
+      restoringThreadPosition ||
+      revealedTaskKey.current === key
+    )
+      return;
+    void listRef.current?.scrollToIndex({
+      index: taskRowIndex,
+      animated: false,
+      viewOffset: TIMELINE_MINIMAP_TARGET_OFFSET,
+    });
+    revealedTaskKey.current = key;
+  }, [taskId, taskNavigationKey, taskRowIndex, findListReady, restoringThreadPosition, listRef]);
 
   useThreadFindNavigation({
     // Find reveals its match only after the opening restore settles; both

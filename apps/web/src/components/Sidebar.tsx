@@ -1873,7 +1873,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     return mapping;
   })();
 
-  const navigateToThread = (threadRef: ScopedThreadRef) => {
+  const navigateToThread = (threadRef: ScopedThreadRef, taskId?: string) => {
     if (useThreadSelectionStore.getState().selectedThreadKeys.size > 0) {
       clearSelection();
     }
@@ -1884,6 +1884,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
     return router.navigate({
       to: "/$environmentId/$threadId",
       params: buildThreadRouteParams(threadRef),
+      ...(taskId === undefined ? {} : { hash: `task:${encodeURIComponent(taskId)}` }),
     });
   };
 
@@ -4200,11 +4201,21 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                                           : [...current, folderRow],
                                       )
                                     }
-                                    onOpen={(task) =>
-                                      navigateToThread(
-                                        scopeThreadRef(task.thread.environmentId, task.thread.id),
-                                      )
-                                    }
+                                    onOpen={(task) => {
+                                      const ref = scopeThreadRef(
+                                        task.thread.environmentId,
+                                        task.thread.id,
+                                      );
+                                      if (task.kind === "terminals") {
+                                        useRightPanelStore.getState().openTerminal(ref, task.id);
+                                      }
+                                      void navigateToThread(
+                                        ref,
+                                        task.kind === "commands" || task.kind === "monitors"
+                                          ? task.id
+                                          : undefined,
+                                      );
+                                    }}
                                   />,
                                 ]
                               : []),
