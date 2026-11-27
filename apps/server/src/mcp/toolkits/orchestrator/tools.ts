@@ -74,7 +74,7 @@ const threadMetadataDependencies = [
 
 const OrchestratorCapabilitiesTool = Tool.make("orchestrator_capabilities", {
   description:
-    "List providers, models, options, and runtime modes for `delegate_task`. Short list. `search` finds others. Any catalog model works.",
+    "List providers, models, options, and runtime modes for `delegate_task`. `roleModels` lists routine and complex picks by role. `search` finds more models. Any catalog model works.",
   parameters: OrchestratorMcpCapabilitiesInput,
   success: OrchestratorMcpCapabilitiesResult,
   failure: OrchestratorMcpFailure,
@@ -88,7 +88,7 @@ const OrchestratorCapabilitiesTool = Tool.make("orchestrator_capabilities", {
 
 const DelegateTaskTool = Tool.make("delegate_task", {
   description:
-    "Start a child with only `task`. No history or secrets. Role picks override provider/model/options. `isolation:'worktree'` separates checkouts. Keep `taskId` for `task_status`/`task_cancel`.",
+    "Start a child with only `task`. No history or secrets. Choose `complexity` (routine by default, or complex) to apply that role pick. It overrides provider/model/options unless effort is `orchestrator`, which keeps your options. `isolation:'worktree'` separates checkouts. Keep `taskId` for `task_status`/`task_cancel`.",
   parameters: OrchestratorMcpDelegateTaskInput,
   success: OrchestratorMcpDelegateTaskResult,
   failure: OrchestratorMcpFailure,
