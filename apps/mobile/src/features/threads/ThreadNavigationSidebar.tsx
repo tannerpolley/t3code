@@ -66,6 +66,7 @@ import {
   ThreadListV2PendingRow,
   ThreadListV2AgentSectionHeader,
   ThreadListV2ProjectFolderHeader,
+  ThreadListV2ProjectSectionHeader,
   ThreadListV2Row,
   THREAD_ROW_VIEWABILITY,
   ThreadListV2ShowMoreRow,
@@ -410,6 +411,8 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
           />
         );
       }
+      case "v2-project-section":
+        return <ThreadListV2ProjectSectionHeader item={item} onToggle={toggleSidebarRow} />;
       case "v2-project-folder":
         return (
           <ThreadListV2ProjectFolderHeader
@@ -429,6 +432,7 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
             thread={thread}
             agentCount={item.agentCount}
             agentRow={item.agentRow}
+            depth={item.depth}
             listVisible={props.visible}
             variant={item.item.variant}
             hasQueuedMessages={item.hasQueuedMessages}

@@ -1,11 +1,7 @@
+import { projectSectionRows } from "@t3tools/client-runtime/state/sidebar-families";
 import { EMPTY_SIDEBAR_LAYOUT, EnvironmentId, ProjectId, ThreadId } from "@t3tools/contracts";
 import { expect, it } from "vite-plus/test";
-import {
-  projectSectionRows,
-  projectThreadPlacement,
-  sortProjectThreads,
-  type Layouts,
-} from "./projectPlacement";
+import { projectThreadPlacement, sortProjectThreads, type Layouts } from "./projectPlacement";
 
 const local = EnvironmentId.make("local");
 const remote = EnvironmentId.make("remote");

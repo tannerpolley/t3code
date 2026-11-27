@@ -3,6 +3,7 @@ import {
   countSidebarAgentStates,
   sidebarAgentState,
   groupSidebarThreadsByProject,
+  projectSectionRows,
   sidebarProjectContents,
   type SidebarAgentRole,
   type SidebarAgentState,
@@ -441,6 +442,7 @@ export interface ThreadListV2Layout {
 export interface ThreadListV2ThreadListItem {
   readonly type: "v2-thread";
   readonly key: string;
+  readonly depth: number;
   readonly item: ThreadListV2Item;
   readonly snoozeWakeLabelText: string | undefined;
   readonly timeLabel: string;
@@ -487,9 +489,20 @@ export interface ThreadListV2SettledShelfListItem {
   readonly disabled: boolean;
 }
 
+export interface ThreadListV2ProjectSectionItem {
+  readonly type: "v2-project-section";
+  readonly key: string;
+  readonly environmentId: EnvironmentId;
+  readonly sectionId: string;
+  readonly title: string;
+  readonly depth: number;
+  readonly expanded: boolean;
+}
+
 export interface ThreadListV2AgentSectionItem {
   readonly type: "v2-agent-section";
   readonly key: string;
+  readonly depth: number;
   readonly role: SidebarAgentRole;
   readonly total: number;
   readonly counts: Readonly<Record<SidebarAgentState, number>>;
@@ -499,6 +512,7 @@ export interface ThreadListV2AgentSectionItem {
 export interface ThreadListV2ProjectFolderItem {
   readonly type: "v2-project-folder";
   readonly key: string;
+  readonly depth: number;
   readonly title: string;
   readonly project: EnvironmentProject;
   readonly total: number;
@@ -507,6 +521,7 @@ export interface ThreadListV2ProjectFolderItem {
 }
 
 export type ThreadListV2ListItem =
+  | ThreadListV2ProjectSectionItem
   | ThreadListV2ProjectFolderItem
   | ThreadListV2AgentSectionItem
   | ThreadListV2ThreadListItem
@@ -521,6 +536,7 @@ export function isThreadListV2ListItem(value: {
   return (
     value.type === "v2-thread" ||
     value.type === "v2-agent-section" ||
+    value.type === "v2-project-section" ||
     value.type === "v2-project-folder" ||
     value.type === "v2-pending" ||
     value.type === "v2-working-shelf" ||
@@ -539,6 +555,7 @@ export function threadListV2ListItemsAreEqual(
       return (
         previous.type === "v2-thread" &&
         previous.key === item.key &&
+        previous.depth === item.depth &&
         previous.item.thread === item.item.thread &&
         previous.item.variant === item.item.variant &&
         previous.item.snoozed === item.item.snoozed &&
@@ -554,10 +571,19 @@ export function threadListV2ListItemsAreEqual(
         previous.canMoveUp === item.canMoveUp &&
         previous.canMoveDown === item.canMoveDown
       );
+    case "v2-project-section":
+      return (
+        previous.type === "v2-project-section" &&
+        previous.key === item.key &&
+        previous.depth === item.depth &&
+        previous.title === item.title &&
+        previous.expanded === item.expanded
+      );
     case "v2-project-folder":
       return (
         previous.type === "v2-project-folder" &&
         previous.key === item.key &&
+        previous.depth === item.depth &&
         previous.title === item.title &&
         previous.project === item.project &&
         previous.total === item.total &&
@@ -570,6 +596,7 @@ export function threadListV2ListItemsAreEqual(
       return (
         previous.type === "v2-agent-section" &&
         previous.key === item.key &&
+        previous.depth === item.depth &&
         previous.role === item.role &&
         previous.total === item.total &&
         previous.expanded === item.expanded &&
@@ -639,6 +666,7 @@ export function buildThreadListV2ListItems(input: {
     readonly children: ReadonlyMap<string, readonly EnvironmentThreadShell[]>;
     readonly projects: readonly HomeProjectScope[];
     readonly layouts: ProjectThreadLayouts;
+    readonly environmentId?: EnvironmentId | null;
     readonly expanded: ReadonlyMap<string, boolean>;
     readonly scoped: boolean;
     readonly routeKey: string | null;
@@ -665,6 +693,7 @@ export function buildThreadListV2ListItems(input: {
   const buildThreadItem = (
     item: ThreadListV2Item,
     agentRow = false,
+    depth = 0,
   ): ThreadListV2ThreadListItem => {
     const snoozeWakeLabelText =
       item.snoozed && item.thread.snoozedUntil != null && input.snoozeLabelNow !== undefined
@@ -686,6 +715,7 @@ export function buildThreadListV2ListItems(input: {
       type: "v2-thread",
       key: `v2-thread:${item.thread.environmentId}:${item.thread.id}`,
       item,
+      depth,
       snoozeWakeLabelText,
       timeLabel: resolveThreadListV2ItemTimeLabel(item, snoozeWakeLabelText !== undefined, resolve),
       snoozePresetMinute,
@@ -727,12 +757,37 @@ export function buildThreadListV2ListItems(input: {
       projectKey: project.key,
       memberProjectRefs: project.projectRefs,
     }));
-    for (const { group, threads, roleSections } of groupSidebarThreadsByProject(
+    const groupedFolders = groupSidebarThreadsByProject(
       groups,
       input.items.flatMap((row) => (row.pinned ? [] : [row.thread])),
       folders.children,
       ({ project }) => folders.scoped || !project.archived,
+    );
+    const collapsedById = new Map([...folders.expanded].map(([key, expanded]) => [key, !expanded]));
+    const sectionLayouts =
+      folders.environmentId == null
+        ? folders.layouts
+        : new Map([...folders.layouts].filter(([id]) => id === folders.environmentId));
+    for (const row of projectSectionRows(
+      groupedFolders,
+      sectionLayouts,
+      collapsedById,
+      folders.scoped,
     )) {
+      const { depth } = row;
+      if (row.kind === "section") {
+        result.push({
+          type: "v2-project-section",
+          key: row.id,
+          environmentId: row.environmentId,
+          sectionId: row.section.id,
+          title: row.section.name,
+          depth,
+          expanded: !row.collapsed,
+        });
+        continue;
+      }
+      const { group, threads, roleSections } = row.folder;
       const key = `v2-project-folder:${group.projectKey}`;
       const savedExpansion = group.memberProjectRefs
         .map(
@@ -755,6 +810,7 @@ export function buildThreadListV2ListItems(input: {
       result.push({
         type: "v2-project-folder",
         key,
+        depth,
         title: group.project.title,
         project: group.project.representative,
         total: hiddenThreads.length,
@@ -765,7 +821,7 @@ export function buildThreadListV2ListItems(input: {
         if (content.kind === "threads") {
           for (const thread of content.rows) {
             const row = rowsByThread.get(thread);
-            if (row) result.push(buildThreadItem(row));
+            if (row) result.push(buildThreadItem(row, false, depth));
           }
           continue;
         }
@@ -775,6 +831,7 @@ export function buildThreadListV2ListItems(input: {
           result.push({
             type: "v2-agent-section",
             key: roleKey,
+            depth,
             role: section.role,
             total: section.threads.length,
             counts: countStates(section.threads),
@@ -795,6 +852,7 @@ export function buildThreadListV2ListItems(input: {
                   isLast: false,
                 },
                 true,
+                depth,
               ),
             );
           }

@@ -5719,5 +5719,6 @@
   "817047065121ef0c": "Artifacts",
   "653ccb5d1de8645c": "File access is required.",
   "4854d01a02b30f3b": "No saved artifacts.",
-  "ddbb7b9406af92ed": "Remove artifact {name}"
+  "ddbb7b9406af92ed": "Remove artifact {name}",
+  "54d9df5245fa49a7": "Could not save sidebar layout. Try again."
 }

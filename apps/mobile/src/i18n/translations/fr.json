@@ -5711,5 +5711,6 @@
   "817047065121ef0c": "Artefacts",
   "653ccb5d1de8645c": "L’accès aux fichiers est requis.",
   "4854d01a02b30f3b": "Aucun artefact enregistré.",
-  "ddbb7b9406af92ed": "Retirer l’artefact {name}"
+  "ddbb7b9406af92ed": "Retirer l’artefact {name}",
+  "54d9df5245fa49a7": "Impossible d’enregistrer la disposition de la barre latérale. Réessayez."
 }

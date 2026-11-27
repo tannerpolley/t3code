@@ -221,6 +221,7 @@ export function useThreadListV2(input: {
                 children,
                 projects,
                 layouts: input.projectLayouts,
+                environmentId: input.environmentId,
                 expanded,
                 scoped: input.projectRefs != null,
                 routeKey: input.openThreadKey ?? input.selectedThreadKey,
@@ -240,6 +241,7 @@ export function useThreadListV2(input: {
       children,
       projects,
       input.projectLayouts,
+      input.environmentId,
       expanded,
       input.projectRefs,
       input.openThreadKey,
@@ -253,8 +255,14 @@ export function useThreadListV2(input: {
     ],
   );
   const toggleSidebarRow = useCallback(
-    (key: string, expanded: boolean) =>
-      setExpanded((current) => new Map(current).set(key, !expanded)),
+    (key: string, expanded: boolean | null) =>
+      setExpanded((current) => {
+        if (expanded !== null) return new Map(current).set(key, !expanded);
+        if (!current.has(key)) return current;
+        const next = new Map(current);
+        next.delete(key);
+        return next;
+      }),
     [setExpanded],
   );
   const selectedRowKey = items.some((row) => row.key === `v2-thread:${input.openThreadKey}`)

@@ -5717,5 +5717,6 @@
   "817047065121ef0c": "Artefakter",
   "653ccb5d1de8645c": "Filåtkomst krävs.",
   "4854d01a02b30f3b": "Inga sparade artefakter.",
-  "ddbb7b9406af92ed": "Ta bort artefakten {name}"
+  "ddbb7b9406af92ed": "Ta bort artefakten {name}",
+  "54d9df5245fa49a7": "Det gick inte att spara sidopanelens layout. Försök igen."
 }
