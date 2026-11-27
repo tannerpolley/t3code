@@ -1,3 +1,4 @@
+import IconFolderOpen from "@tabler/icons-react-native/IconFolderOpen";
 import IconGitBranch from "@tabler/icons-react-native/IconGitBranch";
 import IconGitMerge from "@tabler/icons-react-native/IconGitMerge";
 import IconGitCommit from "@tabler/icons-react-native/IconGitCommit";
@@ -16,6 +17,7 @@ export type { SFSymbol } from "expo-symbols";
 export type { AppSymbolName, AppSymbolViewProps } from "./AppSymbol.android";
 
 const CUSTOM_ICONS = {
+  "folder.open": IconFolderOpen,
   "file.diff": IconFileDiff,
   "arrow.triangle.pull": IconGitPullRequest,
   "arrow.triangle.merge": IconGitMerge,

@@ -9,11 +9,13 @@ const lucideExports: Readonly<Record<string, unknown>> = Lucide;
 
 export default function ProjectLucideIcon(props: {
   readonly icon: Extract<ProjectIconOverride, { kind: "lucide" }>;
+  readonly open?: boolean;
   readonly size: number;
   readonly fallback: ReactNode;
 }) {
   const { color } = useResolveClassNames(projectIconColorClassNames(props.icon.color).text);
-  const name = props.icon.name
+  const iconName = props.open && props.icon.name === "folder" ? "folder-open" : props.icon.name;
+  const name = iconName
     .split("-")
     .map((part) => part.charAt(0).toUpperCase() + part.slice(1))
     .join("");

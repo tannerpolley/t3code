@@ -134,16 +134,25 @@ it("shows a plain folder for a project with no chosen icon and no favicon", asyn
     faviconPath: null,
     projectIcon: null,
   };
-  const view = (projectIcon: ProjectFaviconProject["projectIcon"]) => (
+  const view = (projectIcon: ProjectFaviconProject["projectIcon"], open = false) => (
     <RegistryContext value={registry}>
-      <ProjectFavicon project={{ ...project, projectIcon }} />
+      <ProjectFavicon project={{ ...project, projectIcon }} open={open} />
     </RegistryContext>
   );
   try {
     await using screen = await render(view(null));
     expect(screen.container.querySelector(".lucide-folder")).not.toBeNull();
     expect(screen.container.textContent).toBe("");
-    await screen.rerender(view({ kind: "monogram", text: "PR", color: "blue" }));
+    await screen.rerender(view(null, true));
+    expect(screen.container.querySelector(".lucide-folder-open")).toBeVisible();
+    const folder = { kind: "lucide", name: "folder", color: "blue" } as const;
+    await screen.rerender(view(folder, true));
+    await vi.waitFor(() =>
+      expect(screen.container.querySelector(".lucide-folder-open")).toBeVisible(),
+    );
+    await screen.rerender(view(folder));
+    expect(screen.container.querySelector(".lucide-folder")).toBeVisible();
+    await screen.rerender(view({ kind: "monogram", text: "PR", color: "blue" }, true));
     expect(screen.container.querySelector(".lucide-folder")).toBeNull();
     expect(screen.container.textContent).toBe("PR");
   } finally {

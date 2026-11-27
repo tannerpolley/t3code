@@ -67,7 +67,12 @@ export const ProjectFavicon = memo(function ProjectFavicon(props: {
     const fallback = <ProjectIconGlyphView glyph={glyph} size={size} />;
     return (
       <Suspense fallback={fallback}>
-        <ProjectLucideIcon icon={props.projectIcon} size={size} fallback={fallback} />
+        <ProjectLucideIcon
+          icon={props.projectIcon}
+          open={props.open}
+          size={size}
+          fallback={fallback}
+        />
       </Suspense>
     );
   }
@@ -184,7 +189,7 @@ function ProjectFaviconImage(props: {
     >
       {showImage ? null : (
         <SymbolView
-          name={{ ios: "folder.fill", android: props.open ? "folder_open" : "folder" }}
+          name={props.open ? "folder.open" : "folder.fill"}
           size={props.size}
           tintColorClassName={"accent-icon-subtle"}
           type="monochrome"

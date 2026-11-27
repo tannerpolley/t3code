@@ -647,6 +647,7 @@ export function ThreadListV2ProjectFolderHeader({
           projectIcon={project.projectIcon}
           projectTitle={item.title}
           workspaceRoot={project.workspaceRoot}
+          open={item.expanded}
           size={18}
         />
         <Text className="min-w-0 flex-1 text-sm font-t3-medium" numberOfLines={1}>
@@ -690,7 +691,7 @@ export function ThreadListV2AgentSectionHeader({
       className="min-h-11 flex-row items-center gap-2 pe-3 ps-6"
     >
       <SymbolView
-        name={item.expanded ? "chevron.down" : "chevron.right"}
+        name={item.expanded ? "folder.open" : "folder.fill"}
         size={12}
         tintColorClassName="foreground-muted"
       />
