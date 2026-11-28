@@ -585,16 +585,53 @@ export const layer: Layer.Layer<
                   nodeId: input.event.node.id,
                 }),
               ];
-            case "subagent.updated":
+            case "subagent.updated": {
+              const task = input.event.subagent;
+              const updated = yield* makeDomainEvent(input, {
+                type: "subagent.updated",
+                threadId: task.threadId,
+                payload: task,
+                runId: task.runId,
+                nodeId: task.id,
+              });
+              if (task.origin !== "provider_native") return [updated];
+              const thread = yield* projections.findThread(task.threadId);
+              const retirement = thread?.retirement;
+              if (
+                thread === null ||
+                thread.archivedAt !== null ||
+                thread.deletedAt !== null ||
+                retirement === undefined ||
+                retirement.completed === true ||
+                retirement.pendingTaskIds.includes(task.id)
+              ) {
+                return [updated];
+              }
+              const { subagents } = yield* projections.getThreadRecords(
+                task.threadId,
+                ["subagents"],
+                {
+                  subagentIds: [task.id],
+                },
+              );
+              if (subagents.length > 0) return [updated];
               return [
+                updated,
                 yield* makeDomainEvent(input, {
-                  type: "subagent.updated",
-                  threadId: input.event.subagent.threadId,
-                  payload: input.event.subagent,
-                  runId: input.event.subagent.runId,
-                  nodeId: input.event.subagent.id,
+                  type: "thread.metadata-updated",
+                  threadId: thread.id,
+                  payload: {
+                    ...thread,
+                    retirement: {
+                      ...retirement,
+                      pendingTaskIds: [...retirement.pendingTaskIds, task.id],
+                    },
+                    updatedAt: updated.occurredAt,
+                  },
+                  occurredAt: updated.occurredAt,
                 }),
               ];
+            }
             case "message.updated":
               return [
                 yield* makeDomainEvent(input, {
@@ -821,6 +858,12 @@ export const layer: Layer.Layer<
           },
           (effect, input) =>
             effect.pipe(
+              // A first registration and Start fresh must agree on which command records the task.
+              (effect) =>
+                input.event.type === "subagent.updated" &&
+                input.event.subagent.origin === "provider_native"
+                  ? threadCommands.withLock(input.event.subagent.threadId, effect)
+                  : effect,
               Effect.tap((storedEvents) =>
                 Effect.gen(function* () {
                   if (

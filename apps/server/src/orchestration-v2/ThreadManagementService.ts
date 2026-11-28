@@ -1672,6 +1672,14 @@ const make = Effect.gen(function* () {
           runId: run.id,
           timeoutMs: 300_000,
         });
+        if (outcome.timedOut && outcome.run?.id === run.id && outcome.run.status === "queued") {
+          yield* orchestrator.dispatch({
+            type: "queued-run.cancel",
+            commandId: CommandId.make(`start-fresh:cancel-draft:${id}`),
+            threadId,
+            runId: run.id,
+          });
+        }
         if (outcome.timedOut || outcome.run?.status !== "completed")
           return yield* new OrchestrationV2StartFreshError({ threadId, reason: "handoff" });
         const { messages } = yield* orchestrator.getThreadRecords(threadId, ["messages"], {

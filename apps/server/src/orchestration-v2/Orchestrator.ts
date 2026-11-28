@@ -7357,6 +7357,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     if (
       projection.thread.retirement !== undefined &&
       command.notification === undefined &&
+      command.delegatedCompletion === undefined &&
       command.restartContinuationOfRunId === undefined &&
       command.usageLimitContinuationOfRunId === undefined &&
       command.steerFollowUpOfRunId === undefined
@@ -17699,7 +17700,15 @@ ${(task.result ?? "").slice(0, 3200).trimEnd()}`.trimEnd(),
               threadHasUnfinishedWork({ runs, runtimeRequests }) ||
               hasRunningDelegatedTasks(subagents) ||
               (candidate.retirement !== undefined &&
-                subagents.some((task) => isOrchestrationV2WorkActive(task.status)))
+                (subagents.some((task) => isOrchestrationV2WorkActive(task.status)) ||
+                  runs.some((run) => {
+                    const delivery = run.delegatedCompletion?.delivery;
+                    return (
+                      run.delegatedCompletion?.disposition === "open" &&
+                      delivery != null &&
+                      !runs.some((candidate) => candidate.userMessageId === delivery.messageId)
+                    );
+                  })))
             )
               return;
             const latest = latestExecutedRun(runs);
