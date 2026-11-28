@@ -2,10 +2,11 @@ import {
   ProviderDriverKind,
   ProviderInstanceId,
   type ModelSelection,
+  type OrchestrationV2ThreadShell,
   type ServerProviderModel,
 } from "@t3tools/contracts";
 import { describe, expect, it } from "vite-plus/test";
-import { sidebarRowModel } from "./sidebarRowModel.ts";
+import { sidebarRowModel, threadLifeRing } from "./sidebarRowModel.ts";
 
 const selection = {
   instanceId: ProviderInstanceId.make("codex"),
@@ -52,5 +53,29 @@ describe("sidebar row speed", () => {
   it("keeps a saved tier visible before the provider catalog loads", () => {
     const options = [{ id: "serviceTier", value: "priority" }];
     expect(sidebarRowModel({ ...selection, options }, undefined, undefined).speed).toBe("fast");
+  });
+});
+
+describe("thread life ring", () => {
+  const shell = (compactionCount: number, contextFillPercent?: number) =>
+    ({
+      lineage: { parentThreadId: null },
+      compactionCount,
+      ...(contextFillPercent === undefined ? {} : { contextFillPercent }),
+    }) as unknown as OrchestrationV2ThreadShell;
+
+  it("fills with lifetime toward the compaction limit, not the context window", () => {
+    expect(threadLifeRing(shell(2, 90), 4)).toEqual({
+      count: 2,
+      context: 90,
+      fill: 73,
+      warning: false,
+    });
+    expect(threadLifeRing(shell(0, 50), 4)?.fill).toBe(13);
+  });
+
+  it("is full and warns once the compaction limit is reached", () => {
+    expect(threadLifeRing(shell(4, 10), 4)).toMatchObject({ fill: 100, warning: true });
+    expect(threadLifeRing(shell(1), 4)?.fill).toBe(25);
   });
 });

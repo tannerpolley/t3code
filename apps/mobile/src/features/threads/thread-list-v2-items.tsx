@@ -1594,7 +1594,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
                   strokeWidth={2}
                   fill="none"
                   strokeDasharray={2 * Math.PI * 4.5}
-                  strokeDashoffset={2 * Math.PI * 4.5 * (1 - (lifeRing.fill ?? 0) / 100)}
+                  strokeDashoffset={2 * Math.PI * 4.5 * (1 - lifeRing.fill / 100)}
                   rotation={-90}
                   origin="6, 6"
                 />

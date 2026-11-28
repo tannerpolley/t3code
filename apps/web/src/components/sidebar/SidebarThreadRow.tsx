@@ -272,9 +272,9 @@ function SidebarThreadTooltip({
         {lifeRing ? (
           <div className="flex flex-col items-start gap-1">
             <span>
-              {lifeRing.fill === undefined
+              {lifeRing.context === undefined
                 ? gt("Context usage unavailable")
-                : gt("{percent}% of context used", { percent: lifeRing.fill })}
+                : gt("{percent}% of context used", { percent: lifeRing.context })}
             </span>
             <span>
               {gt("{count, plural, one {{count} compaction} other {{count} compactions}}", {
@@ -1434,7 +1434,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
             <span
               className="size-3 rounded-full"
               style={{
-                background: `conic-gradient(currentColor ${lifeRing.fill ?? 0}%, color-mix(in srgb, currentColor 25%, transparent) 0)`,
+                background: `conic-gradient(currentColor ${lifeRing.fill}%, color-mix(in srgb, currentColor 25%, transparent) 0)`,
                 maskImage: "radial-gradient(transparent 43%, black 50%)",
               }}
             />

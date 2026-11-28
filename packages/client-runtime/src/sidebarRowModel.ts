@@ -169,9 +169,15 @@ export function shouldRecedeSidebarThread(input: {
 export function threadLifeRing(thread: OrchestrationV2ThreadShell, threshold: number) {
   if (thread.lineage.parentThreadId !== null || thread.delegatedFrom !== undefined) return null;
   const count = thread.compactionCount ?? 0;
+  const context = thread.contextFillPercent;
   return {
     count,
-    fill: thread.contextFillPercent,
+    context,
+    // Lifetime toward Start fresh: full when the compaction limit is reached.
+    fill: Math.min(
+      100,
+      Math.round(((count + Math.min(context ?? 0, 100) / 100) / threshold) * 100),
+    ),
     warning: count >= threshold,
   };
 }
