@@ -4,6 +4,7 @@ import {
   countSidebarAgentStates,
   formatSidebarAgentStates,
   sidebarRoleSectionLabels,
+  sidebarAgentsSectionLabel,
   type SidebarAgentRole,
 } from "@t3tools/client-runtime/state/sidebar-families";
 import type { ContextMenuSource } from "@t3tools/contracts";
@@ -25,6 +26,8 @@ import {
   DialogTitle,
 } from "../ui/dialog";
 import { Input } from "../ui/input";
+import { SidebarCollapsibleSection } from "./SidebarCollapsibleSection";
+import { TopStatusIcon } from "./SidebarThreadRow";
 
 export function SidebarProjectSectionHeader(props: {
   id: string;
@@ -89,42 +92,47 @@ export function useSidebarAgentStateSummary(
   return formatSidebarAgentStates(counts, messages, short);
 }
 
-export const SidebarRoleSectionHeader = memo(function SidebarRoleSectionHeader(props: {
+export const SidebarAgentSectionHeader = memo(function SidebarAgentSectionHeader(props: {
   id: string;
-  role: SidebarAgentRole;
+  role?: SidebarAgentRole;
   parent: string;
   depth: number;
   familyDepth: number;
   collapsed: boolean;
   threads: readonly EnvironmentThreadShell[];
-  onToggle: (sectionKey: string) => void;
+  onToggle: (id: string, all: boolean) => void;
 }) {
   const messages = useMessages();
-  const summary = useSidebarAgentStateSummary(props.threads);
+  const { working, details } = useSidebarAgentStateSummary(props.threads);
   return (
     <li className="list-none">
-      <button
-        type="button"
-        data-sidebar-row={props.id}
-        data-sidebar-parent={props.parent}
-        data-testid="sidebar-role-section"
-        aria-expanded={!props.collapsed}
-        onClick={() => props.onToggle(props.id)}
-        style={{
-          paddingInlineStart: `calc(var(--sidebar-row-content-inset) + 16px + ${Math.min(props.depth, 3) * 10 + props.familyDepth * 12}px)`,
-        }}
-        className="flex h-7 w-full cursor-pointer items-center gap-1.5 rounded-(--control-radius) pe-(--sidebar-row-content-inset) text-left text-xs text-sidebar-muted-foreground outline-none hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+      <SidebarCollapsibleSection
+        id={props.id}
+        parent={props.parent}
+        depth={props.depth}
+        familyDepth={props.familyDepth}
+        collapsed={props.collapsed}
+        onToggle={props.onToggle}
+        testId={props.role === undefined ? "sidebar-agents-section" : "sidebar-role-section"}
+        label={messages(
+          props.role === undefined
+            ? sidebarAgentsSectionLabel
+            : sidebarRoleSectionLabels[props.role],
+        )}
       >
-        <ChevronDownIcon
-          aria-hidden
-          className={cn("size-3 shrink-0", props.collapsed && "-rotate-90")}
-        />
-        <span className="shrink-0 font-medium">
-          {messages(sidebarRoleSectionLabels[props.role])}
-        </span>
         <span className="tabular-nums">{props.threads.length}</span>
-        <span className="min-w-0 flex-1 truncate text-end tabular-nums">{summary}</span>
-      </button>
+        <span className="ms-auto flex min-w-0 items-center gap-1 tabular-nums">
+          {working && (
+            <span className="flex shrink-0 items-center gap-1">
+              <span className="sr-only">{working.label}</span>
+              <TopStatusIcon icon="working" className="size-3.5 text-info-foreground" />
+              <span aria-hidden>{working.count}</span>
+            </span>
+          )}
+          {working && details && <span aria-hidden>·</span>}
+          {details && <span className="truncate">{details}</span>}
+        </span>
+      </SidebarCollapsibleSection>
     </li>
   );
 });

@@ -1,7 +1,7 @@
 import type { ProjectTask, ProjectTaskKind } from "@t3tools/client-runtime/state/project-tasks";
-import { ChevronDownIcon, MonitorIcon, TerminalIcon, WorkflowIcon } from "lucide-react";
+import { MonitorIcon, TerminalIcon, WorkflowIcon } from "lucide-react";
 import { msg, useGT, useMessages } from "gt-react";
-import { cn } from "../../lib/utils";
+import { SidebarCollapsibleSection } from "./SidebarCollapsibleSection";
 
 const sections: readonly { kind: ProjectTaskKind; label: string }[] = [
   { kind: "commands", label: msg("Commands", { $context: "project tasks subsection" }) },
@@ -17,7 +17,7 @@ export function SidebarProjectTasks(props: {
   readonly tasks: readonly ProjectTask[];
   readonly now: number;
   readonly collapsed: boolean;
-  readonly onToggle: () => void;
+  readonly onToggle: (id: string, all: boolean) => void;
   readonly onOpen: (task: ProjectTask) => void;
 }) {
   const gt = useGT();
@@ -26,21 +26,18 @@ export function SidebarProjectTasks(props: {
   const inset = `calc(var(--sidebar-row-content-inset) + 16px + ${Math.min(props.depth, 3) * 10}px)`;
   return (
     <li className="list-none">
-      <button
-        type="button"
-        data-sidebar-row={props.id}
-        data-sidebar-parent={props.parent}
-        aria-expanded={!props.collapsed}
-        onClick={props.onToggle}
-        style={{ paddingInlineStart: inset }}
-        className="flex h-7 w-full items-center gap-1.5 rounded-(--control-radius) pe-(--sidebar-row-content-inset) text-left text-xs text-sidebar-muted-foreground hover:bg-sidebar-row-hover focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
+      <SidebarCollapsibleSection
+        id={props.id}
+        parent={props.parent}
+        depth={props.depth}
+        collapsed={props.collapsed}
+        onToggle={props.onToggle}
+        label={gt("Tasks", { $context: "project sidebar section" })}
       >
-        <ChevronDownIcon aria-hidden className={cn("size-3", props.collapsed && "-rotate-90")} />
-        <span className="font-medium">{gt("Tasks", { $context: "project sidebar section" })}</span>
         <span className="tabular-nums">
           · {gt("{count} running", { count: props.tasks.length })}
         </span>
-      </button>
+      </SidebarCollapsibleSection>
       {!props.collapsed &&
         sections.map((section) => {
           const tasks = props.tasks.filter((task) => task.kind === section.kind);

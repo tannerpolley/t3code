@@ -565,7 +565,7 @@ const TOP_STATUS_ICONS = {
   woke: AlarmClockIcon,
 } as const;
 
-function TopStatusIcon(props: {
+export function TopStatusIcon(props: {
   icon: keyof typeof TOP_STATUS_ICONS | "working" | "done";
   className: string;
 }) {

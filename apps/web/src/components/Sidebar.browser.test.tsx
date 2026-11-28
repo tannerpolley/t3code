@@ -357,8 +357,12 @@ it("lists child agents in role sections under their orchestrator and keeps a clo
     sidebarAgentTextSize: 18,
   });
   const ROLE_SECTIONS_KEY = "t3code:sidebar:role-sections-collapsed";
-  localStorage.removeItem(ROLE_SECTIONS_KEY);
-  stack.defer(() => localStorage.removeItem(ROLE_SECTIONS_KEY));
+  const EXPANSION_KEY = "t3code:sidebar:agent-task-sections";
+  const TASK_SECTIONS_KEY = "t3code:sidebar:task-sections-expanded";
+  for (const key of [ROLE_SECTIONS_KEY, EXPANSION_KEY, TASK_SECTIONS_KEY]) {
+    localStorage.removeItem(key);
+    stack.defer(() => localStorage.removeItem(key));
+  }
 
   const { environmentId, id: projectId, ...rest } = project("T3 Code");
   const parent = threadShell(projectId, 1);
@@ -446,7 +450,23 @@ it("lists child agents in role sections under their orchestrator and keeps a clo
     delegatedRole: "design" as const,
     archivedAt: time,
   };
-  const owner = { ...threadShell(projectId, 5), title: "Release checklist" };
+  const owner = {
+    ...threadShell(projectId, 5),
+    title: "Release checklist",
+    pendingBackgroundTasks: [
+      {
+        taskId: "compile",
+        kind: "command" as const,
+        description: "Compile project",
+      },
+    ],
+  };
+  const orphan = {
+    ...threadShell(projectId, 6),
+    title: "Orphaned worker",
+    delegatedRole: "test" as const,
+    lineage: { ...child.lineage, parentThreadId: ThreadId.make("missing") },
+  };
   const rootRef = scopeThreadRef(environmentId, root.id);
   vi.mocked(useProjects).mockReturnValue([{ ...rest, environmentId, id: projectId }]);
   vi.mocked(useConnectedEnvironmentIds).mockReturnValue([environmentId]);
@@ -506,7 +526,7 @@ it("lists child agents in role sections under their orchestrator and keeps a clo
     </SidebarProvider>
   );
 
-  vi.mocked(useQuietThreadShells).mockReturnValue([child, reviewer, root, owner, archived]);
+  vi.mocked(useQuietThreadShells).mockReturnValue([child, reviewer, root, owner, archived, orphan]);
   await using screen = await render(tree(), { container });
   const parentRow = screen.getByRole("button", { name: /^Compact sidebar threads,/ });
   const implementor = screen.getByRole("button", {
@@ -519,7 +539,18 @@ it("lists child agents in role sections under their orchestrator and keeps a clo
   await expect.element(screen.getByText("Release checklist", { exact: true })).toBeVisible();
   await expect.element(implementor).toBeVisible();
   await expect.element(doneReviewer).toBeVisible();
-  await expect.element(implementors).toHaveTextContent("Implementors11 working");
+  const agents = parentRow.element().closest("li")!.nextElementSibling!;
+  const orchestratorAgents = screen.getByTestId("sidebar-agents-section").first();
+  const projectAgents = screen.getByTestId("sidebar-agents-section").nth(1);
+  const orphanWorker = screen.getByRole("button", { name: /^Orphaned worker,/ });
+  const tasks = screen.getByRole("button", { name: /^Tasks/ });
+  expect(agents).toBe(orchestratorAgents.element().closest("li"));
+  expect(orchestratorAgents.element().querySelector(".lucide-loader-circle")).toBeVisible();
+  expect(implementors.element().querySelector(".lucide-loader-circle")).toBeVisible();
+  await expect.element(orphanWorker).toBeVisible();
+  expect(projectAgents.element().getAttribute("data-sidebar-parent")).toBe(
+    tasks.element().getAttribute("data-sidebar-parent"),
+  );
   await expect.element(reviewers).toHaveTextContent("Reviewers1");
   // Archived children and empty roles stay out.
   await expect.element(screen.getByText("Designers", { exact: true })).not.toBeInTheDocument();
@@ -527,8 +558,11 @@ it("lists child agents in role sections under their orchestrator and keeps a clo
   expect(item(implementors)?.nextElementSibling).toBe(item(implementor));
   expect(item(implementor)?.nextElementSibling).toBe(item(reviewers));
   expect(item(reviewers)?.nextElementSibling).toBe(item(doneReviewer));
-  expect(item(parentRow)?.nextElementSibling).toBe(item(implementors));
+  expect(item(orchestratorAgents)?.nextElementSibling).toBe(item(implementors));
   expect(implementors.element().getAttribute("data-sidebar-parent")).toBe(
+    orchestratorAgents.element().getAttribute("data-sidebar-row"),
+  );
+  expect(orchestratorAgents.element().getAttribute("data-sidebar-parent")).toBe(
     parentRow.element().getAttribute("data-sidebar-row"),
   );
   expect(implementor.element().getAttribute("data-sidebar-parent")).toBe(
@@ -540,6 +574,35 @@ it("lists child agents in role sections under their orchestrator and keeps a clo
   await expect.element(implementors).not.toBeInTheDocument();
   await familyToggle.click();
   await expect.element(implementors).toBeVisible();
+
+  const altClick = (locator: { element: () => Element }) =>
+    act(() =>
+      locator
+        .element()
+        .querySelector("svg")!
+        .dispatchEvent(new MouseEvent("click", { bubbles: true, altKey: true })),
+    );
+  await altClick(implementors);
+  await expect.element(orchestratorAgents).toHaveAttribute("aria-expanded", "false");
+  await expect.element(projectAgents).toHaveAttribute("aria-expanded", "false");
+  await expect.element(implementors).not.toBeInTheDocument();
+  await expect.element(orphanWorker).not.toBeInTheDocument();
+  await altClick(tasks);
+  await expect.element(tasks).toHaveAttribute("aria-expanded", "true");
+  await expect.element(screen.getByText("Compile project")).toBeVisible();
+  await expect.element(implementor).toBeVisible();
+  await expect.element(orphanWorker).toBeVisible();
+
+  const menu = screen.getByRole("button", { name: "Sidebar options" });
+  await menu.click();
+  await screen.getByRole("menuitem", { name: "Collapse all agent and task sections" }).click();
+  await screen.rerender(tree("collapsed"));
+  await expect.element(orchestratorAgents).toHaveAttribute("aria-expanded", "false");
+  await expect.element(tasks).toHaveAttribute("aria-expanded", "false");
+  await menu.click();
+  await screen.getByRole("menuitem", { name: "Expand all agent and task sections" }).click();
+  await expect.element(implementor).toBeVisible();
+  await expect.element(screen.getByText("Compile project")).toBeVisible();
 
   await implementors.click();
   await expect.element(implementors).toHaveAttribute("aria-expanded", "false");
@@ -605,7 +668,7 @@ it("lists child agents in role sections under their orchestrator and keeps a clo
     { ...finished, hasPendingUserInput: true },
     reviewer,
     root,
-    owner,
+    { ...owner, pendingBackgroundTasks: [] },
     archived,
   ]);
   await screen.rerender(tree("remount"));

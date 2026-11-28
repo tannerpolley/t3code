@@ -69,6 +69,8 @@ import {
   ChartNoAxesColumnIcon,
   CheckIcon,
   ChevronRightIcon,
+  ChevronsDownUpIcon,
+  ChevronsUpDownIcon,
   CornerLeftUpIcon,
   FileSearchIcon,
   FolderGit2Icon,
@@ -89,6 +91,11 @@ import {
   UserPlusIcon,
   WorkflowIcon,
 } from "lucide-react";
+import {
+  collapseSidebarSectionsLabel,
+  expandSidebarSectionsLabel,
+  setAllSidebarSectionsExpanded,
+} from "./sidebar/sidebarSectionExpansion";
 import { openThreadFind } from "./chat/threadFindStore";
 import { dispatchPreviewAction } from "./preview/previewActionBus";
 import { previewBridge } from "./preview/previewBridge";
@@ -1958,6 +1965,18 @@ function OpenCommandPaletteDialog(props: {
           params: { projectKey: contextualProjectGroup.projectKey },
         });
       },
+    });
+  }
+
+  for (const expanded of [false, true]) {
+    const Icon = expanded ? ChevronsUpDownIcon : ChevronsDownUpIcon;
+    actionItems.push({
+      kind: "action",
+      value: expanded ? "action:sidebar-sections:expand" : "action:sidebar-sections:collapse",
+      searchTerms: ["sidebar", "agents", "tasks"],
+      title: messages(expanded ? expandSidebarSectionsLabel : collapseSidebarSectionsLabel),
+      icon: <Icon className={ITEM_ICON_CLASS} />,
+      run: async () => setAllSidebarSectionsExpanded(expanded),
     });
   }
 

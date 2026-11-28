@@ -1743,14 +1743,20 @@ describe("resolveSidebarAgentState", () => {
 });
 
 describe("formatSidebarAgentStates", () => {
-  it("joins the non-zero states in a fixed order", () => {
-    expect(formatSidebarAgentStates({ working: 2, attention: 1, failed: 1 })).toBe(
-      "2 working · 1 waiting on you · 1 failed",
-    );
-    expect(formatSidebarAgentStates({ working: 3, attention: 1, failed: 0 }, undefined, true)).toBe(
-      "3 working · 1 waiting",
-    );
-    expect(formatSidebarAgentStates({ working: 0, attention: 0, failed: 0 })).toBe("");
+  it("keeps the icon count and accessible label separate from waiting and failed text", () => {
+    expect(formatSidebarAgentStates({ working: 2, attention: 1, failed: 1 })).toEqual({
+      working: { count: 2, label: "2 working" },
+      details: "1 waiting on you · 1 failed",
+      text: "2 working · 1 waiting on you · 1 failed",
+    });
+    expect(
+      formatSidebarAgentStates({ working: 3, attention: 1, failed: 0 }, undefined, true).text,
+    ).toBe("3 working · 1 waiting");
+    expect(formatSidebarAgentStates({ working: 0, attention: 0, failed: 0 })).toEqual({
+      working: null,
+      details: "",
+      text: "",
+    });
   });
 });
 

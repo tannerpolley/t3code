@@ -422,7 +422,14 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
           />
         );
       case "v2-agent-section":
-        return <ThreadListV2AgentSectionHeader item={item} onToggle={toggleSidebarRow} />;
+        return (
+          <ThreadListV2AgentSectionHeader
+            item={item}
+            onToggle={toggleSidebarRow}
+            listVisible={props.visible}
+            sidebarPane
+          />
+        );
       case "v2-thread": {
         const thread = item.item.thread;
         const scopeKey = scopedProjectKey(thread.environmentId, thread.projectId);
