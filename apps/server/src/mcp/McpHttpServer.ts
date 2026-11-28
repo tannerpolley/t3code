@@ -112,6 +112,8 @@ import {
 import * as HtmlHandlers from "./toolkits/html/handlers.ts";
 import { MessageToolkit } from "./toolkits/message/tools.ts";
 import * as MessageHandlers from "./toolkits/message/handlers.ts";
+import { UsageToolkit } from "./toolkits/usage/tools.ts";
+import * as UsageHandlers from "./toolkits/usage/handlers.ts";
 import { HtmlPreviewTool, HtmlPreviewToolkit, HtmlRenderToolkit } from "./toolkits/html/tools.ts";
 import { MCP_HTTP_PATH } from "../httpCors.ts";
 import { requestUrl } from "../requestUrl.ts";
@@ -1632,6 +1634,12 @@ const layerDeferredListing = McpServer.visibility(
   { global: true },
 );
 
+/**
+ * Outside layerTools. Thread agents never list these (`hiddenFromThreads`), so they stay out of
+ * the context budget that set measures. Outside clients, including read-only ones, do list them.
+ */
+const layerUsageToolkit = toolkitRegistration(UsageToolkit, UsageHandlers.layer);
+
 /** Outside layerTools: the clients its budget measures never list `tool_search`. */
 export const layerToolSearch = Layer.mergeAll(
   toolkitRegistration(ToolSearchToolkit, ToolSearchHandlers.layer),
@@ -1700,5 +1708,5 @@ export const layerMilestoneEvents = Layer.effectDiscard(
 );
 
 export const layer = layerMcpTransport(
-  Layer.mergeAll(layerTools, layerToolSearch, layerMilestoneEvents),
+  Layer.mergeAll(layerTools, layerToolSearch, layerMilestoneEvents, layerUsageToolkit),
 );

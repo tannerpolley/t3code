@@ -242,6 +242,15 @@ Claude quotas. Tap it to open **Usage → Limits**; on Android this works while 
 the background, otherwise open the app from the launcher. On iOS, use **Edit Widget** to choose
 Session, Weekly, or both for each provider. Reopen T3 to refresh expired readings.
 
+## Read usage from another agent
+
+An agent connected through [outside access](./outside-agents.md) can read this
+environment's usage with `t3_usage_summary`, the threads and projects that used
+the most tokens with `t3_usage_threads`, and the cached limit windows with
+`t3_usage_limits`. **Read only** access is enough. The thread tool reports
+recorded turns and context pressure, not conversation text. Refresh Usage when
+a recent session or a new model's price is missing from what the agent reads.
+
 ## Keyboard shortcuts
 
 On web and desktop, open Usage from the command palette. While on Usage,
