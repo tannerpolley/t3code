@@ -174,7 +174,10 @@ export function threadLifeRing(thread: OrchestrationV2ThreadShell, threshold: nu
     count,
     context,
     // Lifetime toward Start fresh: full when the compaction limit is reached.
-    fill: Math.min(100, Math.round(((count + Math.min(context ?? 0, 100) / 100) / threshold) * 100)),
+    fill: Math.min(
+      100,
+      Math.round(((count + Math.min(context ?? 0, 100) / 100) / threshold) * 100),
+    ),
     warning: count >= threshold,
   };
 }
