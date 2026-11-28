@@ -2071,7 +2071,8 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const pendingTaskIds = tasks
         .filter(
           (task) =>
-            isOrchestrationV2WorkActive(task.status) ||
+            // Nothing here can finish or cancel a task in a linked environment.
+            (task.remoteChild === undefined && isOrchestrationV2WorkActive(task.status)) ||
             (task.childThreadId !== null && busyThreads.has(task.childThreadId)),
         )
         .map((task) => task.id);
