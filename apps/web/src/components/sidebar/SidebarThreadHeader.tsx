@@ -1,5 +1,5 @@
-import { useGT } from "gt-react";
-import { SearchIcon, SquarePenIcon, XIcon } from "lucide-react";
+import { useGT, useMessages } from "gt-react";
+import { EllipsisIcon, SearchIcon, SquarePenIcon, XIcon } from "lucide-react";
 import {
   type ComponentProps,
   type KeyboardEvent as ReactKeyboardEvent,
@@ -11,6 +11,12 @@ import {
 import { cn } from "~/lib/utils";
 import { Button } from "../ui/button";
 import { SidebarInput, SidebarMenuButton } from "../ui/sidebar";
+import { Menu, MenuItem, MenuPopup, MenuTrigger } from "../ui/menu";
+import {
+  collapseSidebarSectionsLabel,
+  expandSidebarSectionsLabel,
+  setAllSidebarSectionsExpanded,
+} from "./sidebarSectionExpansion";
 import { SharedTooltipTrigger } from "../ui/shared-tooltip";
 
 export interface SidebarThreadHeaderProps {
@@ -49,6 +55,7 @@ export function SidebarThreadHeader({
   onClearSearch,
 }: SidebarThreadHeaderProps) {
   const gt = useGT();
+  const messages = useMessages();
   const resultsVisible = isSearching && searchResultCount > 0;
   // Shrinking results can remove the active option; never leave aria-activedescendant pointing at it.
   const activeResultExists = resultsVisible && activeSearchResultIndex < searchResultCount;
@@ -98,6 +105,21 @@ export function SidebarThreadHeader({
       </div>
       <div className="flex shrink-0 items-center">
         {hasProjects ? projectScope : null}
+        {hasProjects ? (
+          <Menu>
+            <MenuTrigger render={<SidebarHeaderIconButton label={gt("Sidebar options")} />}>
+              <EllipsisIcon />
+            </MenuTrigger>
+            <MenuPopup align="end">
+              <MenuItem onClick={() => setAllSidebarSectionsExpanded(false)}>
+                {messages(collapseSidebarSectionsLabel)}
+              </MenuItem>
+              <MenuItem onClick={() => setAllSidebarSectionsExpanded(true)}>
+                {messages(expandSidebarSectionsLabel)}
+              </MenuItem>
+            </MenuPopup>
+          </Menu>
+        ) : null}
         <SidebarHeaderIconButton
           label={gt("New thread")}
           tooltip={

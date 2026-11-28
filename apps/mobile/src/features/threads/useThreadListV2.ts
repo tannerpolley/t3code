@@ -1,6 +1,9 @@
 import { useAtom } from "@effect/atom-react";
 import { Atom } from "effect/reactivity";
-import { indexSidebarChildren } from "@t3tools/client-runtime/state/sidebar-families";
+import {
+  indexSidebarChildren,
+  sidebarOrphanAgents,
+} from "@t3tools/client-runtime/state/sidebar-families";
 import type { OlderSettledScope } from "@t3tools/client-runtime/state/threads";
 import type { EnvironmentId } from "@t3tools/contracts";
 import { useCallback, useMemo } from "react";
@@ -70,6 +73,10 @@ export function useThreadListV2(input: {
   const { threads } = input;
   const [expanded, setExpanded] = useAtom(expandedSidebarRowsAtom);
   const children = useMemo(() => indexSidebarChildren(input.agentThreads), [input.agentThreads]);
+  const orphanAgents = useMemo(
+    () => sidebarOrphanAgents(input.agentThreads, children),
+    [input.agentThreads, children],
+  );
   const projects = useMemo(() => {
     const projectKeys =
       input.projectRefs == null
@@ -219,6 +226,7 @@ export function useThreadListV2(input: {
           ? {
               folders: {
                 children,
+                orphanAgents,
                 projects,
                 layouts: input.projectLayouts,
                 environmentId: input.environmentId,
@@ -239,6 +247,7 @@ export function useThreadListV2(input: {
     [
       layout,
       children,
+      orphanAgents,
       projects,
       input.projectLayouts,
       input.environmentId,

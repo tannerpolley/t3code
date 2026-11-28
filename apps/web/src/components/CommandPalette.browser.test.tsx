@@ -78,6 +78,26 @@ function makeProject(title: string): Project {
 }
 
 describe("CommandPalette open intents", () => {
+  it("collapses and expands agent and task sections from the palette", async () => {
+    setup();
+    const key = "t3code:sidebar:agent-task-sections";
+    using cleanup = new DisposableStack();
+    cleanup.defer(() => removeLocalStorageItem(key));
+    await using _screen = await render(<CommandPalette>{null}</CommandPalette>);
+
+    for (const [query, title, allExpanded] of [
+      ["collapse all agent", "Collapse all agent and task sections", false],
+      ["expand all agent", "Expand all agent and task sections", true],
+    ] as const) {
+      openCommandPalette({ query });
+      await page.getByRole("option", { name: title }).click();
+      expect(JSON.parse(localStorage.getItem(key) ?? "null")).toEqual({
+        allExpanded,
+        overrides: {},
+      });
+    }
+  });
+
   it("drags a searched thread into the current composer without navigating", async () => {
     const environmentId = EnvironmentId.make("remote");
     const threadId = ThreadId.make("dragged-thread");

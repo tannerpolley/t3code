@@ -4,6 +4,7 @@ import { IconButton } from "../../components/ui/IconButton";
 import {
   formatSidebarAgentStates,
   sidebarRoleSectionLabels,
+  sidebarAgentsSectionLabel,
 } from "@t3tools/client-runtime/state/sidebar-families";
 import { useViewability } from "@legendapp/list/react-native";
 import {
@@ -127,6 +128,8 @@ interface StatusLabel {
 }
 export const THREAD_ROW_VIEWABILITY = { itemVisiblePercentThreshold: 1 };
 
+const WORKING_STATUS_TINT = "accent-adaptive-sky-600-400";
+
 const STATUS_LABEL_BY_STATUS: Partial<Record<ThreadListV2Status, StatusLabel>> = {
   approval: {
     label: msg("Approval", { $context: "thread status, waiting for approval" }),
@@ -146,7 +149,7 @@ const STATUS_LABEL_BY_STATUS: Partial<Record<ThreadListV2Status, StatusLabel>> =
   working: {
     label: null,
     icon: "circle.dashed",
-    iconTintClassName: "accent-adaptive-sky-600-400",
+    iconTintClassName: WORKING_STATUS_TINT,
   },
   waiting: {
     label: null,
@@ -704,7 +707,7 @@ export function ThreadListV2ProjectFolderHeader({
 }) {
   const gt = useGT();
   const m = useMessages();
-  const summary = item.expanded ? "" : formatSidebarAgentStates(item.counts, m, true);
+  const summary = item.expanded ? "" : formatSidebarAgentStates(item.counts, m, true).text;
   const { project } = item;
 
   return (
@@ -753,12 +756,21 @@ export function ThreadListV2ProjectFolderHeader({
 export function ThreadListV2AgentSectionHeader({
   item,
   onToggle,
+  listVisible,
+  sidebarPane = false,
 }: {
   readonly item: ThreadListV2AgentSectionItem;
+  readonly listVisible: boolean;
+  readonly sidebarPane?: boolean;
   readonly onToggle: (key: string, expanded: boolean) => void;
 }) {
   const m = useMessages();
-  const summary = formatSidebarAgentStates(item.counts, m);
+  const { working, details } = formatSidebarAgentStates(item.counts, m);
+  const [visible, setVisible] = useState(false);
+  useViewability(useCallback((token) => setVisible(token.isViewable), []));
+  const appActive = useAppActive();
+  const focused = useIsFocused();
+  const animate = visible && listVisible && appActive && (focused || sidebarPane);
 
   return (
     <RowPressable
@@ -769,15 +781,36 @@ export function ThreadListV2AgentSectionHeader({
       style={{ paddingStart: 24 + sectionIndent(item.depth) }}
     >
       <SymbolView
-        name={item.expanded ? "folder.open" : "folder.fill"}
+        name={item.expanded ? "chevron.down" : "chevron.right"}
         size={12}
         tintColorClassName="foreground-muted"
       />
       <Text className="min-w-0 shrink text-sm font-t3-medium" numberOfLines={1}>
-        {m(sidebarRoleSectionLabels[item.role])}
+        {m(
+          item.role === undefined ? sidebarAgentsSectionLabel : sidebarRoleSectionLabels[item.role],
+        )}
       </Text>
       <Text className="text-xs text-foreground-muted">{item.total}</Text>
-      {summary ? <Text className="shrink text-xs text-foreground-muted">{summary}</Text> : null}
+      {working ? (
+        <View
+          accessible
+          accessibilityLabel={working.label}
+          className="shrink-0 flex-row items-center gap-1"
+        >
+          <ThreadRowSpinner animate={animate} tint={WORKING_STATUS_TINT} />
+          <Text className="text-xs text-foreground-muted">{working.count}</Text>
+        </View>
+      ) : null}
+      {working && details ? (
+        <Text aria-hidden className="text-xs text-foreground-muted">
+          ·
+        </Text>
+      ) : null}
+      {details ? (
+        <Text className="shrink text-xs text-foreground-muted" numberOfLines={1}>
+          {details}
+        </Text>
+      ) : null}
     </RowPressable>
   );
 }

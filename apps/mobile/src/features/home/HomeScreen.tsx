@@ -508,7 +508,13 @@ export function HomeScreen(props: HomeScreenProps) {
       );
     }
     if (item.type === "v2-agent-section") {
-      return <ThreadListV2AgentSectionHeader item={item} onToggle={toggleSidebarRow} />;
+      return (
+        <ThreadListV2AgentSectionHeader
+          item={item}
+          onToggle={toggleSidebarRow}
+          listVisible={props.visible}
+        />
+      );
     }
     if (item.type !== "v2-thread") return null;
     const thread = item.item.thread;

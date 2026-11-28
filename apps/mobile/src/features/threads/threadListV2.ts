@@ -5,6 +5,7 @@ import {
   groupSidebarThreadsByProject,
   projectSectionRows,
   sidebarFamilyRows,
+  type SidebarFamilyItem,
   type SidebarAgentRole,
   type SidebarAgentState,
 } from "@t3tools/client-runtime/state/sidebar-families";
@@ -504,7 +505,7 @@ export interface ThreadListV2AgentSectionItem {
   readonly type: "v2-agent-section";
   readonly key: string;
   readonly depth: number;
-  readonly role: SidebarAgentRole;
+  readonly role?: SidebarAgentRole;
   readonly total: number;
   readonly counts: Readonly<Record<SidebarAgentState, number>>;
   readonly expanded: boolean;
@@ -666,6 +667,7 @@ export function buildThreadListV2ListItems(input: {
   readonly pendingTasks: ReadonlyArray<PendingNewTask>;
   readonly folders?: {
     readonly children: ReadonlyMap<string, readonly EnvironmentThreadShell[]>;
+    readonly orphanAgents?: readonly EnvironmentThreadShell[];
     readonly projects: readonly HomeProjectScope[];
     readonly layouts: ProjectThreadLayouts;
     readonly environmentId?: EnvironmentId | null;
@@ -752,22 +754,61 @@ export function buildThreadListV2ListItems(input: {
         ),
       );
     const threadKey = (thread: EnvironmentThreadShell) => `${thread.environmentId}:${thread.id}`;
+    const pinnedKeys = new Set(
+      input.items.filter((row) => row.pinned).map((row) => threadKey(row.thread)),
+    );
+    const orphanAgents = (folders.orphanAgents ?? []).filter(
+      (thread) =>
+        !pinnedKeys.has(threadKey(thread)) &&
+        (folders.environmentId == null || folders.environmentId === thread.environmentId),
+    );
+    const orphanKeys = new Set(orphanAgents.map(threadKey));
+    const groups = folders.projects.map((project) => ({
+      project,
+      projectKey: project.key,
+      memberProjectRefs: project.projectRefs,
+    }));
+    const groupedFolders = groupSidebarThreadsByProject(
+      groups,
+      [
+        ...input.items.flatMap((row) =>
+          row.pinned || orphanKeys.has(threadKey(row.thread)) ? [] : [row.thread],
+        ),
+        ...orphanAgents,
+      ],
+      ({ project }) => folders.scoped || !project.archived,
+    );
+    const folderKey = (projectKey: string) => `v2-project-folder:${projectKey}`;
     const families = sidebarFamilyRows(
-      input.items.map((row) => row.thread),
+      [
+        ...input.items
+          .map((row) => row.thread)
+          .filter((thread) => !orphanKeys.has(threadKey(thread))),
+        ...orphanAgents,
+      ],
       folders.children,
       folders.expanded,
       folders.routeKey,
       (key) => folders.expanded.get(key) ?? true,
+      new Map(
+        groupedFolders.map(({ group, threads }) => [
+          folderKey(group.projectKey),
+          threads.filter((thread) => orphanKeys.has(threadKey(thread))),
+        ]),
+      ),
     );
-    const renderFamily = (thread: EnvironmentThreadShell, depth: number, showChildren = true) => {
-      const family = families.get(threadKey(thread)) ?? [];
+    const renderFamily = (
+      family: readonly SidebarFamilyItem[],
+      depth: number,
+      showChildren = true,
+    ) => {
       for (const item of showChildren ? family : family.slice(0, 1)) {
-        if (item.kind === "role") {
+        if (item.kind !== "thread") {
           result.push({
             type: "v2-agent-section",
             key: item.key,
             depth: depth + item.depth,
-            role: item.role,
+            ...(item.kind === "role" ? { role: item.role } : {}),
             total: item.threads.length,
             counts: countStates(item.threads),
             expanded: item.expanded,
@@ -796,18 +837,8 @@ export function buildThreadListV2ListItems(input: {
       }
     };
     for (const row of input.items) {
-      if (row.pinned) renderFamily(row.thread, 0);
+      if (row.pinned) renderFamily(families.get(threadKey(row.thread)) ?? [], 0);
     }
-    const groups = folders.projects.map((project) => ({
-      project,
-      projectKey: project.key,
-      memberProjectRefs: project.projectRefs,
-    }));
-    const groupedFolders = groupSidebarThreadsByProject(
-      groups,
-      input.items.flatMap((row) => (row.pinned ? [] : [row.thread])),
-      ({ project }) => folders.scoped || !project.archived,
-    );
     const collapsedById = new Map([...folders.expanded].map(([key, expanded]) => [key, !expanded]));
     const sectionLayouts =
       folders.environmentId == null
@@ -833,7 +864,7 @@ export function buildThreadListV2ListItems(input: {
         continue;
       }
       const { group, threads } = row.folder;
-      const key = `v2-project-folder:${group.projectKey}`;
+      const key = folderKey(group.projectKey);
       const savedExpansion = group.memberProjectRefs
         .map(
           ({ environmentId, projectId }) =>
@@ -864,7 +895,12 @@ export function buildThreadListV2ListItems(input: {
         counts: countStates(hiddenThreads),
         expanded,
       });
-      for (const thread of visibleThreads) renderFamily(thread, depth, expanded);
+      for (const thread of visibleThreads) {
+        if (!expanded || !orphanKeys.has(threadKey(thread))) {
+          renderFamily(families.get(threadKey(thread)) ?? [], depth, expanded);
+        }
+      }
+      if (expanded) renderFamily(families.get(key) ?? [], depth);
     }
   } else {
     const threadItems = input.items.map((item) => buildThreadItem(item));

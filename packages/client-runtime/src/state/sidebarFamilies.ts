@@ -40,6 +40,35 @@ export function indexSidebarChildren(
   return children;
 }
 
+function sidebarThreadKey(thread: EnvironmentThreadShell) {
+  return scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
+}
+
+export function sidebarOrphanAgents(
+  threads: readonly EnvironmentThreadShell[],
+  childrenByParent: ReadonlyMap<string, readonly EnvironmentThreadShell[]>,
+) {
+  const activeKeys = new Set(
+    threads.filter((thread) => thread.archivedAt === null).map(sidebarThreadKey),
+  );
+  const attached = new Set<string>();
+  for (const [parent, children] of childrenByParent) {
+    if (activeKeys.has(parent)) {
+      for (const child of children) attached.add(sidebarThreadKey(child));
+    }
+  }
+  return threads.filter(
+    (thread) =>
+      thread.archivedAt === null &&
+      !thread.lineage.sideChat &&
+      !thread.lineage.workflowStep &&
+      (thread.lineage.relationshipToParent === "subagent" ||
+        thread.delegatedFrom != null ||
+        thread.delegatedRole !== undefined) &&
+      !attached.has(sidebarThreadKey(thread)),
+  );
+}
+
 export interface SidebarFamilyRow {
   kind: "thread";
   thread: EnvironmentThreadShell;
@@ -55,7 +84,8 @@ export function sidebarFamilyRows(
   childrenByParent: ReadonlyMap<string, readonly EnvironmentThreadShell[]>,
   expansion: ReadonlyMap<string, boolean>,
   routeKey: string | null,
-  roleExpanded: (key: string) => boolean,
+  sectionExpanded: (key: string) => boolean,
+  projectAgents?: ReadonlyMap<string, readonly EnvironmentThreadShell[]>,
 ) {
   type FamilyNode = {
     row: SidebarFamilyRow;
@@ -64,18 +94,16 @@ export function sidebarFamilyRows(
     hasRoute: boolean;
   };
 
-  function build(thread: EnvironmentThreadShell, parentKey?: string): FamilyNode {
-    const key = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
-    const children: FamilyNode[] = (childrenByParent.get(key) ?? []).map((child) =>
-      build(child, key),
-    );
+  function build(thread: EnvironmentThreadShell): FamilyNode {
+    const key = sidebarThreadKey(thread);
+    const children = (childrenByParent.get(key) ?? []).map((child) => build(child));
     const hasLiveChildren = children.some((child) => child.live);
     const hasChildRoute = children.some((child) => child.hasRoute);
     const row: SidebarFamilyRow = {
       kind: "thread",
       thread,
       key,
-      parentKey,
+      parentKey: undefined,
       depth: 0,
       descendantCount: children.reduce((count, child) => count + 1 + child.row.descendantCount, 0),
       expanded: expansion.get(key) ?? (hasLiveChildren || hasChildRoute),
@@ -97,40 +125,66 @@ export function sidebarFamilyRows(
   function flatten(
     node: FamilyNode,
     depth = 0,
-    parentKey = node.row.parentKey,
+    parentKey?: string,
+    agent = false,
   ): SidebarFamilyItem[] {
     const { row, children } = node;
     const result: SidebarFamilyItem[] = [{ ...row, depth, parentKey }];
     if (!row.expanded) return result;
-    if (row.thread.lineage.parentThreadId !== null || row.thread.delegatedFrom != null) {
-      return result.concat(children.flatMap((child) => flatten(child, depth + 1)));
+    if (agent) {
+      return result.concat(children.flatMap((child) => flatten(child, depth + 1, row.key, true)));
     }
-    for (const section of sidebarRoleSections(row.key, children)) {
-      const expanded = roleExpanded(section.key);
+    return result.concat(flattenAgents(row.key, children, depth + 1));
+  }
+
+  function flattenAgents(parentKey: string, children: FamilyNode[], depth: number) {
+    if (children.length === 0) return [];
+    const key = `agents:${parentKey}`;
+    const expanded = sectionExpanded(key);
+    const result: SidebarFamilyItem[] = [
+      {
+        kind: "agents",
+        key,
+        parentKey,
+        depth,
+        threads: children.map((child) => child.row.thread),
+        expanded,
+      },
+    ];
+    for (const section of sidebarRoleSections(parentKey, children)) {
+      if (!expanded && !section.children.some((child) => child.hasRoute)) continue;
+      const roleExpanded = sectionExpanded(section.key);
       result.push({
         kind: "role",
         key: section.key,
-        parentKey: row.key,
+        parentKey: key,
         depth: depth + 1,
         role: section.role,
         threads: section.children.map((child) => child.row.thread),
-        expanded,
+        expanded: roleExpanded,
       });
       for (const child of section.children) {
-        if (expanded || child.hasRoute) {
-          result.push(...flatten(child, depth + 2, section.key));
+        if ((expanded && roleExpanded) || child.hasRoute) {
+          result.push(...flatten(child, depth + 2, section.key, true));
         }
       }
     }
     return result;
   }
 
-  return new Map(
+  const rows = new Map(
     roots.map((thread) => {
       const node = build(thread);
-      return [node.row.key, flatten(node)] as const;
+      const isAgent = thread.lineage.parentThreadId !== null || thread.delegatedFrom != null;
+      return [node.row.key, flatten(node, 0, undefined, isAgent)] as const;
     }),
   );
+  if (projectAgents) {
+    for (const [key, threads] of projectAgents) {
+      rows.set(key, flattenAgents(key, threads.map(build), 0));
+    }
+  }
+  return rows;
 }
 
 const SIDEBAR_AGENT_ROLES = [
@@ -151,15 +205,13 @@ function sidebarAgentRole(thread: Pick<EnvironmentThreadShell, "delegatedRole">)
 
 export type SidebarFamilyItem =
   | SidebarFamilyRow
-  | {
-      kind: "role";
+  | ({
       key: string;
       parentKey: string;
       depth: number;
-      role: SidebarAgentRole;
       threads: readonly EnvironmentThreadShell[];
       expanded: boolean;
-    };
+    } & ({ kind: "agents" } | { kind: "role"; role: SidebarAgentRole }));
 
 function sidebarRoleSections<T extends { row: SidebarFamilyRow }>(
   parentKey: string,
@@ -236,23 +288,31 @@ export function sidebarAgentState(
   }
 }
 
-/** "2 working · 1 waiting on you · 1 failed", leaving out zeros; `short` says "waiting". */
 export function formatSidebarAgentStates(
   counts: Readonly<Record<SidebarAgentState, number>>,
   resolve: MFunctionType = mFallback,
   short = false,
-): string {
-  const parts = [
-    counts.working > 0 ? resolve(msg("{count} working", { count: counts.working })) : null,
+) {
+  const working =
+    counts.working > 0
+      ? { count: counts.working, label: resolve(msg("{count} working", { count: counts.working })) }
+      : null;
+  const details = [
     counts.attention > 0
       ? short
         ? resolve(msg("{count} waiting", { count: counts.attention }))
         : resolve(msg("{count} waiting on you", { count: counts.attention }))
       : null,
     counts.failed > 0 ? resolve(msg("{count} failed", { count: counts.failed })) : null,
-  ];
-  return parts.filter((part) => part !== null).join(" · ");
+  ]
+    .filter((part) => part !== null)
+    .join(" · ");
+  return { working, details, text: [working?.label, details].filter(Boolean).join(" · ") };
 }
+
+export const sidebarAgentsSectionLabel = msg("Agents", {
+  $context: "sidebar section for agent threads",
+});
 
 /**
  * Boring sidebar folders. Folders follow `groups` order and threads keep their

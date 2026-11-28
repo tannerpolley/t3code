@@ -60,7 +60,7 @@ export const SidebarProjectFolderHeader = memo(function SidebarProjectFolderHead
   const { group, collapsed, hiddenThreads, hiddenAgents } = props;
   const hiddenWork =
     hiddenAgents.length === 0 ? hiddenThreads : [...hiddenThreads, ...hiddenAgents];
-  const summary = useSidebarAgentStateSummary(collapsed ? hiddenWork : [], true);
+  const { text: summary } = useSidebarAgentStateSummary(collapsed ? hiddenWork : [], true);
   const rowId = sidebarFolderRowId(group.projectKey);
   const localLastVisitedAtById = useUiStateStore((state) => state.threadLastVisitedAtById);
   const dot = collapsed

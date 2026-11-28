@@ -1415,7 +1415,7 @@ it("renders saved section names, nesting, and interleaved project order", () => 
   ]);
 });
 
-it("nests role sections under their orchestrator and summarizes collapsed folders", () => {
+it("groups orchestrator and orphan agents separately and summarizes collapsed folders", () => {
   const root = makeThread({ id: ThreadId.make("root"), title: "Root" });
   const working = makeThread({
     id: ThreadId.make("working"),
@@ -1447,7 +1447,17 @@ it("nests role sections under their orchestrator and summarizes collapsed folder
     title: "Settled",
     settledOverride: "settled",
   });
-  const threads = [root, working, waiting, settled];
+  const orphan = makeThread({
+    id: ThreadId.make("orphan"),
+    title: "Orphan agent",
+    delegatedRole: "test",
+    lineage: {
+      parentThreadId: ThreadId.make("missing"),
+      rootThreadId: ThreadId.make("missing"),
+      relationshipToParent: "subagent",
+    },
+  });
+  const threads = [root, working, waiting, settled, orphan];
   const children = indexSidebarChildren(threads);
   const projects = buildHomeProjectScopes({
     projects: [makeProjectFixture({ id: root.projectId, title: "Project", environmentId })],
@@ -1468,6 +1478,7 @@ it("nests role sections under their orchestrator and summarizes collapsed folder
       pendingTasks: [],
       folders: {
         children,
+        orphanAgents: [orphan],
         projects,
         layouts: new Map(),
         expanded: new Map(collapsed.map((key) => [key, false])),
@@ -1481,22 +1492,39 @@ it("nests role sections under their orchestrator and summarizes collapsed folder
   expect(expanded.map((item) => item.key)).toEqual([
     folderKey,
     `v2-thread:${environmentId}:root`,
+    `agents:${environmentId}:root`,
     roleKey("implementation"),
     `v2-thread:${environmentId}:working`,
     roleKey("review"),
     `v2-thread:${environmentId}:waiting`,
     `v2-thread:${environmentId}:settled`,
+    `agents:${folderKey}`,
+    `role:${folderKey}:test`,
+    `v2-thread:${environmentId}:orphan`,
   ]);
   expect(expanded[1]).toMatchObject({ agentCount: 2, agentRow: false, familyExpanded: true });
   expect(expanded[2]).toMatchObject({
+    total: 2,
+    counts: { working: 1, attention: 1, failed: 0 },
+  });
+  expect(expanded[3]).toMatchObject({
     role: "implementation",
     counts: { working: 1, attention: 0, failed: 0 },
   });
-  expect(expanded[4]).toMatchObject({
+  expect(expanded[5]).toMatchObject({
     role: "review",
     counts: { working: 0, attention: 1, failed: 0 },
   });
 
+  expect(rows([`agents:${environmentId}:root`]).map(({ key }) => key)).toEqual([
+    folderKey,
+    `v2-thread:${environmentId}:root`,
+    `agents:${environmentId}:root`,
+    `v2-thread:${environmentId}:settled`,
+    `agents:${folderKey}`,
+    `role:${folderKey}:test`,
+    `v2-thread:${environmentId}:orphan`,
+  ]);
   const collapsed = rows([folderKey]);
   expect(collapsed).toHaveLength(1);
   expect(

@@ -6,6 +6,7 @@ import {
   countSidebarAgentStates,
   groupSidebarThreadsByProject,
   sidebarFamilyRows,
+  sidebarOrphanAgents,
   indexSidebarChildren,
 } from "./sidebarFamilies.ts";
 
@@ -67,20 +68,22 @@ it("keeps each orchestrator's role sections and each worker's native children to
       "env:first",
       [
         ["env:first", undefined, 0],
-        ["role:env:first:implementation", "env:first", 1],
-        ["env:new-impl", "role:env:first:implementation", 2],
-        ["env:/root/native", "env:new-impl", 3],
-        ["env:old-impl", "role:env:first:implementation", 2],
-        ["role:env:first:review", "env:first", 1],
-        ["env:review", "role:env:first:review", 2],
+        ["agents:env:first", "env:first", 1],
+        ["role:env:first:implementation", "agents:env:first", 2],
+        ["env:new-impl", "role:env:first:implementation", 3],
+        ["env:/root/native", "env:new-impl", 4],
+        ["env:old-impl", "role:env:first:implementation", 3],
+        ["role:env:first:review", "agents:env:first", 2],
+        ["env:review", "role:env:first:review", 3],
       ],
     ],
     [
       "env:second",
       [
         ["env:second", undefined, 0],
-        ["role:env:second:implementation", "env:second", 1],
-        ["env:other-impl", "role:env:second:implementation", 2],
+        ["agents:env:second", "env:second", 1],
+        ["role:env:second:implementation", "agents:env:second", 2],
+        ["env:other-impl", "role:env:second:implementation", 3],
       ],
     ],
     ["env:owner", [["env:owner", undefined, 0]]],
@@ -88,10 +91,21 @@ it("keeps each orchestrator's role sections and each worker's native children to
   expect(rows(new Map(expanded).set("env:first", false))[0]?.[1]).toEqual([
     ["env:first", undefined, 0],
   ]);
-  expect(rows(expanded, "role:env:first:implementation")[1]).toEqual(rows()[1]);
+  expect(rows(expanded, "role:env:first:implementation")[0]?.[1]).toEqual([
+    ["env:first", undefined, 0],
+    ["agents:env:first", "env:first", 1],
+    ["role:env:first:implementation", "agents:env:first", 2],
+    ["role:env:first:review", "agents:env:first", 2],
+    ["env:review", "role:env:first:review", 3],
+  ]);
+  expect(rows(expanded, "agents:env:first")[0]?.[1]).toEqual([
+    ["env:first", undefined, 0],
+    ["agents:env:first", "env:first", 1],
+  ]);
+  expect(rows(expanded, "agents:env:first")[1]).toEqual(rows()[1]);
 });
 
-it("can group linked agents when the parent's environment is absent", () => {
+it("puts agents with missing or archived parents under the project Agents row", () => {
   const linked = {
     ...thread("linked", { role: "review" }),
     delegatedFrom: {
@@ -100,8 +114,29 @@ it("can group linked agents when the parent's environment is absent", () => {
       title: "Parent",
     },
   };
-  expect(indexSidebarChildren([linked]).get("remote:parent")).toEqual([linked]);
-  expect(indexSidebarChildren([linked], new Set()).size).toBe(0);
+  const owner = thread("owner");
+  const archived = thread("archived", { archived: true });
+  const orphan = thread("orphan", { parent: "archived", role: "implementation" });
+  const attached = thread("attached", { parent: "owner", role: "implementation" });
+  const threads = [owner, archived, orphan, linked, attached];
+  const children = indexSidebarChildren(threads);
+  const orphans = sidebarOrphanAgents(threads, children);
+  expect(orphans).toEqual([orphan, linked]);
+
+  const project = "folder:app";
+  const projectAgents = new Map([[project, orphans]]);
+  const keys = (expanded: boolean) =>
+    sidebarFamilyRows([], children, new Map(), null, () => expanded, projectAgents)
+      .get(project)
+      ?.map(({ key, parentKey }) => [key, parentKey]);
+  expect(keys(true)).toEqual([
+    ["agents:folder:app", project],
+    ["role:folder:app:implementation", "agents:folder:app"],
+    ["env:orphan", "role:folder:app:implementation"],
+    ["role:folder:app:review", "agents:folder:app"],
+    ["env:linked", "role:folder:app:review"],
+  ]);
+  expect(keys(false)).toEqual([["agents:folder:app", project]]);
 });
 
 describe("countSidebarAgentStates", () => {
