@@ -300,7 +300,7 @@ import {
   sidebarFamilyRows,
   groupSidebarThreadsByProject,
   projectSectionRows,
-  sidebarProjectContents,
+  type SidebarFamilyItem,
   type SidebarFamilyRow,
 } from "@t3tools/client-runtime/state/sidebar-families";
 import { setSidebarFamilyExpanded, sidebarFamilyExpansion } from "./sidebar/sidebarFamilies";
@@ -382,7 +382,6 @@ const ROLE_SECTIONS_COLLAPSED_KEY = "t3code:sidebar:role-sections-collapsed";
 const TASK_SECTIONS_EXPANDED_KEY = "t3code:sidebar:task-sections-expanded";
 const EMPTY_ROLE_SECTION_KEYS: readonly string[] = [];
 const ROLE_SECTION_KEYS_SCHEMA = Schema.Array(Schema.String);
-const NO_CHILDREN: ReadonlyMap<string, readonly EnvironmentThreadShell[]> = new Map();
 
 function sidebarTextSize(size: number | null) {
   return size === null ? undefined : `${size / 16}rem`;
@@ -601,7 +600,6 @@ function useSidebarThreads(input: {
           partition.visibleThreads.filter(
             (thread) => !pinnedThreadKeys.has(threadShellKey(thread)),
           ),
-          childrenByParent,
           keepEmpty,
         ).map((folder) => {
           const sharedExpansion = folder.group.memberProjectRefs.flatMap(
@@ -617,38 +615,11 @@ function useSidebarThreads(input: {
               resolveProjectExpanded(projectExpandedById, sidebarFolderExpansionKeys(folder.group))
             );
           const threads = sortProjectThreads(folder.threads, projectLayouts);
-          const folderRow = sidebarFolderRowId(folder.group.projectKey);
-          const roleSections = folder.roleSections;
           return {
             group: folder.group,
             collapsed,
-            roleSections: collapsed
-              ? []
-              : roleSections.map((section) => {
-                  const sectionCollapsed = collapsedRoleSections.includes(section.key);
-                  const rowId = `role:${section.key}`;
-                  return {
-                    ...section,
-                    rowId,
-                    parentRow: folderRow,
-                    collapsed: sectionCollapsed,
-                    // A closed section still shows the open thread, like a closed folder.
-                    rows: (sectionCollapsed
-                      ? routeThreadOnly(section.threads, routeThreadKey)
-                      : section.threads
-                    ).map((thread): SidebarFamilyRow => ({
-                      thread,
-                      key: threadShellKey(thread),
-                      parentKey: rowId,
-                      depth: 1,
-                      descendantCount: 0,
-                      expanded: false,
-                      children: [],
-                    })),
-                  };
-                }),
             hiddenAgents: collapsed
-              ? roleSections.flatMap((section) => section.threads)
+              ? threads.flatMap((thread) => childrenByParent.get(threadShellKey(thread)) ?? [])
               : EMPTY_THREADS,
             // A closed folder still shows the open thread, and hints at the rest.
             threads: collapsed ? routeThreadOnly(threads, routeRowThreadKey) : threads,
@@ -691,30 +662,23 @@ function useSidebarThreads(input: {
     sidebarFamilyExpansion.subscribe,
     sidebarFamilyExpansion.getState,
   );
-  // Folders list children in role sections, not under their parents.
+  const collapsedFolderRoots = new Set(
+    projectRows?.flatMap((row) =>
+      row.kind === "folder" && row.folder.collapsed ? row.folder.threads.map(threadShellKey) : [],
+    ),
+  );
+  const visibleChildren =
+    collapsedFolderRoots.size === 0
+      ? childrenByParent
+      : new Map([...childrenByParent].filter(([key]) => !collapsedFolderRoots.has(key)));
   const familyRows = sidebarFamilyRows(
     orderedThreads,
-    projectRows === null ? childrenByParent : NO_CHILDREN,
+    visibleChildren,
     familyExpansion,
     routeThreadKey,
+    (key) => !collapsedRoleSections.includes(key),
   );
-  const rootRows = (thread: EnvironmentThreadShell) => familyRows.get(threadShellKey(thread)) ?? [];
-  const visibleFamilyRows =
-    projectRows === null
-      ? [...familyRows.values()].flat()
-      : [
-          ...pinnedThreads.flatMap(rootRows),
-          ...projectRows.flatMap((row) =>
-            row.kind === "folder"
-              ? sidebarProjectContents(row.folder.threads, row.folder.roleSections).flatMap(
-                  (section) =>
-                    section.kind === "threads"
-                      ? section.rows.flatMap(rootRows)
-                      : section.rows.flatMap((role) => role.rows),
-                )
-              : [],
-          ),
-        ];
+  const visibleFamilyRows = [...familyRows.values()].flat().filter((row) => row.kind === "thread");
   const orderedThreadKeys = visibleFamilyRows.map((row) => row.key);
   const threadByKey = new Map(visibleFamilyRows.map((row) => [row.key, row.thread]));
   const settledThreadKeys = new Set(settledThreads.map(threadShellKey));
@@ -774,8 +738,7 @@ function useSidebarThreads(input: {
     visibleSnoozedThreads,
     visibleWorkingThreads,
     familyRows,
-    // Folder rows show how many agents they launched; the agents sit in role sections.
-    agentCountByKey: projectRows === null ? NO_CHILDREN : childrenByParent,
+    agentCountByKey: childrenByParent,
     toggleRoleSection: (key: string) =>
       setCollapsedRoleSections((current) =>
         current.includes(key) ? current.filter((entry) => entry !== key) : [...current, key],
@@ -3995,7 +3958,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                           familyDepth={depth}
                           childCount={family.descendantCount}
                           agentCount={agentCountByKey.get(threadKey)?.length ?? 0}
-                          titleIsThreadTitle={parentKey?.startsWith("role:") === true}
+                          titleIsThreadTitle={parentKey !== undefined}
                           familyExpanded={family.expanded}
                           onToggleFamily={setSidebarFamilyExpanded}
                           navigationParent={
@@ -4078,6 +4041,32 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                         />
                       );
                     };
+                    const renderFamilyItem = (
+                      item: SidebarFamilyItem,
+                      section: SidebarSection,
+                      folderRow?: string,
+                      folderDepth = 0,
+                    ) =>
+                      item.kind === "role" ? (
+                        <SidebarRoleSectionHeader
+                          key={item.key}
+                          id={item.key}
+                          role={item.role}
+                          parent={item.parentKey}
+                          depth={folderDepth}
+                          familyDepth={item.depth}
+                          collapsed={!item.expanded}
+                          threads={item.threads}
+                          onToggle={toggleRoleSection}
+                        />
+                      ) : (
+                        renderThreadRow(
+                          item,
+                          sectionByThreadKey.get(item.key) ?? section,
+                          folderRow,
+                          folderDepth,
+                        )
+                      );
                     const from =
                       isContextDrag || projectRows !== null
                         ? null
@@ -4101,9 +4090,7 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                         // Folders draw active rows in their own place below.
                         if (projectFolders !== null && item.section === "active") continue;
                         for (const row of familyRows.get(item.key) ?? []) {
-                          items.push(
-                            renderThreadRow(row, sectionByThreadKey.get(row.key) ?? item.section),
-                          );
+                          items.push(renderFamilyItem(row, item.section));
                         }
                         continue;
                       }
@@ -4173,49 +4160,17 @@ export default function Sidebar({ routeReveal }: { routeReveal: SidebarRouteReve
                               onNewThread={startThreadInProjectFolder}
                               onContextMenu={handleProjectFolderContextMenu}
                             />,
-                            ...sidebarProjectContents(folder.threads, folder.roleSections).flatMap(
-                              (content) =>
-                                content.kind === "threads" ? (
-                                  <SortableContext
-                                    key={`threads:${folderRow}`}
-                                    items={content.rows.map(threadShellKey)}
-                                    strategy={verticalListSortingStrategy}
-                                  >
-                                    {content.rows.flatMap((thread) =>
-                                      (familyRows.get(threadShellKey(thread)) ?? []).map((family) =>
-                                        renderThreadRow(
-                                          family,
-                                          sectionByThreadKey.get(family.key) ?? "active",
-                                          folderRow,
-                                          row.depth,
-                                        ),
-                                      ),
-                                    )}
-                                  </SortableContext>
-                                ) : (
-                                  content.rows.flatMap((section) => [
-                                    <SidebarRoleSectionHeader
-                                      key={section.rowId}
-                                      id={section.rowId}
-                                      sectionKey={section.key}
-                                      role={section.role}
-                                      parent={section.parentRow}
-                                      depth={row.depth}
-                                      collapsed={section.collapsed}
-                                      threads={section.threads}
-                                      onToggle={toggleRoleSection}
-                                    />,
-                                    ...section.rows.map((family) =>
-                                      renderThreadRow(
-                                        family,
-                                        sectionByThreadKey.get(family.key) ?? "active",
-                                        folderRow,
-                                        row.depth,
-                                      ),
-                                    ),
-                                  ])
+                            <SortableContext
+                              key={`threads:${folderRow}`}
+                              items={folder.threads.map(threadShellKey)}
+                              strategy={verticalListSortingStrategy}
+                            >
+                              {folder.threads.flatMap((thread) =>
+                                (familyRows.get(threadShellKey(thread)) ?? []).map((item) =>
+                                  renderFamilyItem(item, "active", folderRow, row.depth),
                                 ),
-                            ),
+                              )}
+                            </SortableContext>,
                             ...(!folder.collapsed && tasks.length > 0
                               ? [
                                   <SidebarProjectTasks

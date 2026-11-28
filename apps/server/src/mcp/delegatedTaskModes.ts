@@ -162,6 +162,29 @@ export const providerOptionDescriptors = (
 ): ReadonlyArray<ProviderOptionDescriptor> =>
   provider?.models.flatMap((model) => model.capabilities?.optionDescriptors ?? []) ?? [];
 
+export function delegatedTaskRole(
+  input: OrchestratorMcpDelegateTaskInput,
+): OrchestratorMcpDelegateTaskInput["role"] {
+  if (input.role !== undefined && input.role !== "general") return input.role;
+  const openingLine = input.task.trimStart().split(/\r?\n/, 1)[0];
+  switch (
+    /^Use the role-(implementor|reviewer|designer|writer) skill\b/i
+      .exec(openingLine ?? "")?.[1]
+      ?.toLowerCase()
+  ) {
+    case "implementor":
+      return "implementation";
+    case "reviewer":
+      return "review";
+    case "designer":
+      return "design";
+    case "writer":
+      return "writer";
+    default:
+      return input.role;
+  }
+}
+
 /** The task as its child receives it, with the role the caller asked for. */
 export function taskPrompt(input: OrchestratorMcpDelegateTaskInput): string {
   return input.role === undefined || input.role === "general"

@@ -151,6 +151,7 @@ import {
   roleModelTarget,
   runtimeModeRank,
   taskPrompt,
+  delegatedTaskRole,
 } from "./delegatedTaskModes.ts";
 import { assertTargetWithinLimits, isLiveCallerShell, threadNotFound } from "./threadAccess.ts";
 import { WITHHELD, withoutWebhookUrlToken } from "../scheduledTasks/webhookUrlToken.ts";
@@ -3047,6 +3048,7 @@ const make = Effect.gen(function* () {
       });
       const isRetryOfAcceptedDelegation = yield* threadManagement.hasReceipt(commandId);
       const role = isDelegationModelRole(input.role) ? input.role : undefined;
+      const delegatedRole = delegatedTaskRole(input);
       // An accepted task keeps its model even if its role pick changes before a retry.
       if (role !== undefined && isRetryOfAcceptedDelegation) {
         const taskId = derive.delegatedTaskNode({ commandId });
@@ -3154,7 +3156,7 @@ const make = Effect.gen(function* () {
               parentRunId: parentRun.id,
               parentNodeId,
               task: taskPrompt(input),
-              ...(input.role === undefined ? {} : { role: input.role }),
+              ...(delegatedRole === undefined ? {} : { role: delegatedRole }),
               ...(input.title === undefined ? {} : { title: input.title }),
               modelSelection: target.modelSelection,
               runtimeMode,

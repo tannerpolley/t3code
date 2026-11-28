@@ -5,7 +5,15 @@ import type {
   ProviderOptionDescriptor,
   ServerProvider,
 } from "@t3tools/contracts";
-import { getProviderOptionStatedValue } from "@t3tools/shared/model";
+import type { ServerSettings } from "@t3tools/contracts/settings";
+import {
+  codexSpeedForTier,
+  getCodexServiceTierDescriptor,
+  getCodexServiceTierOptionValue,
+  getProviderOptionCurrentValue,
+  getProviderOptionStatedValue,
+  resolveCodexServiceTier,
+} from "@t3tools/shared/model";
 import { msg } from "gt-i18n";
 import { getDescriptorStringValue, isReasoningSelect } from "./modelTraits.ts";
 import { getTriggerDisplayModelName } from "./providerModelDisplay.ts";
@@ -78,6 +86,7 @@ export function sidebarRowModel(
   selection: ModelSelection,
   selectedModel: ServerProvider["models"][number] | undefined,
   driver: ProviderDriverKind | null | undefined,
+  codexDefaultSpeed?: ServerSettings["codexDefaultSpeed"],
 ) {
   const modelLabel = selectedModel
     ? getTriggerDisplayModelName(selectedModel, driver)
@@ -94,7 +103,41 @@ export function sidebarRowModel(
           : getDescriptorStringValue(reasoning, selection),
       )
     : null;
-  return { modelLabel, modelParts: sidebarModelParts(modelLabel), effort };
+  const tierDescriptor = getCodexServiceTierDescriptor(selectedModel?.capabilities);
+  const explicitTier = getCodexServiceTierOptionValue(selection);
+  const tier =
+    driver === "codex" && tierDescriptor && codexDefaultSpeed != null
+      ? resolveCodexServiceTier(tierDescriptor, explicitTier, codexDefaultSpeed)
+      : (explicitTier ?? getProviderOptionCurrentValue(tierDescriptor));
+  const tierLabel = tierDescriptor?.options.find(({ id }) => id === tier)?.label;
+  const speed =
+    tierLabel === "Fast"
+      ? "fast"
+      : tierLabel === "Ultrafast"
+        ? "ultrafast"
+        : codexSpeedForTier(tier);
+  return { modelLabel, modelParts: sidebarModelParts(modelLabel), effort, speed };
+}
+
+export function sidebarCodexDefaultSpeed(
+  settings: Pick<ServerSettings, "codexDefaultSpeed" | "providerInstances"> | null,
+  selection: ModelSelection,
+  driver: ProviderDriverKind | null | undefined,
+) {
+  if (!settings || driver !== "codex") return undefined;
+  const config = settings.providerInstances[selection.instanceId]?.config;
+  return typeof config === "object" &&
+    config &&
+    "setupMode" in config &&
+    config.setupMode === "managed"
+    ? undefined
+    : settings.codexDefaultSpeed;
+}
+
+export function sidebarRowBranchPullRequest(
+  thread: Pick<OrchestrationV2ThreadShell, "branchPullRequest" | "lineage">,
+) {
+  return thread.lineage.relationshipToParent === "subagent" ? null : thread.branchPullRequest;
 }
 
 export type SidebarThreadStatus =
@@ -141,6 +184,7 @@ export function canStartFresh(thread: OrchestrationV2ThreadShell) {
     thread.deletedAt === null &&
     thread.linkOrigin == null &&
     thread.workflowRun === undefined &&
-    thread.successorThreadId === undefined
+    thread.successorThreadId === undefined &&
+    thread.retiringWorkerCount === undefined
   );
 }

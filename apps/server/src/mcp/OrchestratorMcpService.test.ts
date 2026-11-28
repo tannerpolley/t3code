@@ -4927,6 +4927,29 @@ describe("OrchestratorMcpService provider resolution", () => {
             expected: { instanceId: peerId, model: inherited.model, options: override },
           },
           {
+            name: "an opening role line labels a default-role task without applying the role's model",
+            task: "Use the role-reviewer skill.\n\nReview the change.",
+            expectedRole: "review",
+            roleModels,
+            target: { providerInstanceId: peerId, model: inherited.model },
+            expected: { instanceId: peerId, model: inherited.model },
+          },
+          {
+            name: "an opening role line also labels a general task",
+            task: "Use the role-implementor skill\nImplement the change.",
+            role: "general",
+            expectedRole: "implementation",
+            target: { model: "other-model" },
+            expected: { instanceId: codexInstanceId, model: "other-model" },
+          },
+          {
+            name: "an opening role sentence labels the task when the brief continues on that line",
+            task: "Use the role-reviewer skill. Reply with the single word done.",
+            expectedRole: "review",
+            target: { model: "other-model" },
+            expected: { instanceId: codexInstanceId, model: "other-model" },
+          },
+          {
             name: "the owner pick replaces the delegate provider, model, and effort",
             role: "review",
             roleModels,
@@ -5178,7 +5201,7 @@ describe("OrchestratorMcpService provider resolution", () => {
               .pipe(Effect.flip);
             assert.include(rejected.message, "serviceTier must be one of");
             const request = {
-              task: "Review the change.",
+              task: "task" in testCase ? testCase.task : "Review the change.",
               ...("role" in testCase ? { role: testCase.role } : {}),
               ...("complexity" in testCase ? { complexity: testCase.complexity } : {}),
               target: yield* decodeTarget(testCase.target),
@@ -5191,6 +5214,12 @@ describe("OrchestratorMcpService provider resolution", () => {
               testCase.expected,
               testCase.name,
             );
+            if ("expectedRole" in testCase) {
+              assert.include(commands[0] as object, {
+                role: testCase.expectedRole,
+                task: testCase.task,
+              });
+            }
             if ("roleModels" in testCase) {
               assert.deepEqual(
                 capabilities.roleModels,
@@ -5199,6 +5228,7 @@ describe("OrchestratorMcpService provider resolution", () => {
                   : testCase.roleModels,
               );
               assert.equal(result.model, testCase.expected.model);
+              if ("expectedRole" in testCase) return;
               const settings = yield* ServerSettings.ServerSettingsService;
               yield* settings.updateSettings({ roleModels: { review: null } });
               const retried = yield* service.delegateTask(scope, request);

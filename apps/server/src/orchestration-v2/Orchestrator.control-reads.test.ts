@@ -5,6 +5,7 @@ import {
   CommandId,
   MessageId,
   EventId,
+  IssueTrackerKind,
   NodeId,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2ProviderTurn,
@@ -1210,7 +1211,7 @@ it.effect("settles only the stopped run's background work, once", () =>
   }).pipe(Effect.provide(layerTest)),
 );
 
-it.effect("keeps delegated child pull-request links independent of the parent", () =>
+it.effect("keeps delegated child issue and pull-request links independent of the parent", () =>
   Effect.gen(function* () {
     const orchestrator = yield* Orchestrator.OrchestratorV2;
     const projections = yield* ProjectionStore.ProjectionStoreV2;
@@ -1222,6 +1223,14 @@ it.effect("keeps delegated child pull-request links independent of the parent", 
       number: 123,
       url: "https://github.com/pingdotgg/t3code/pull/123",
     };
+    const issueLink = {
+      type: "thread.issue.link",
+      tracker: IssueTrackerKind.make("github"),
+      host: "github.com",
+      scope: "pingdotgg/t3code",
+      projectId,
+      source: "manual",
+    } as const;
     yield* orchestrator.dispatch({
       type: "thread.create",
       commandId: CommandId.make("create-parent-pr"),
@@ -1241,6 +1250,15 @@ it.effect("keeps delegated child pull-request links independent of the parent", 
       commandId: CommandId.make("link-parent-pr"),
       threadId: parentThreadId,
       linkedPullRequest: parentPullRequest,
+    });
+    yield* orchestrator.dispatch({
+      ...issueLink,
+      commandId: CommandId.make("link-parent-issue"),
+      threadId: parentThreadId,
+      key: "42",
+      url: "https://github.com/pingdotgg/t3code/issues/42",
+      displayKey: "#42",
+      title: "Parent issue",
     });
     yield* orchestrator.dispatch({
       type: "message.dispatch",
@@ -1290,6 +1308,7 @@ it.effect("keeps delegated child pull-request links independent of the parent", 
     const child = yield* projections.getThreadProjection(childThreadId);
     assert.isNull(child.thread.linkedPullRequest);
     assert.deepEqual(child.thread.pullRequests, []);
+    assert.deepEqual((yield* orchestrator.getThreadShell(childThreadId))?.issues ?? [], []);
     assert.equal(child.thread.branch, parent.thread.branch);
     assert.equal(child.thread.worktreePath, parent.thread.worktreePath);
     assert.equal(child.thread.lineage.parentThreadId, parentThreadId);
@@ -1305,6 +1324,15 @@ it.effect("keeps delegated child pull-request links independent of the parent", 
       threadId: childThreadId,
       linkedPullRequest: childPullRequest,
     });
+    yield* orchestrator.dispatch({
+      ...issueLink,
+      commandId: CommandId.make("link-child-issue"),
+      threadId: childThreadId,
+      key: "43",
+      url: "https://github.com/pingdotgg/t3code/issues/43",
+      displayKey: "#43",
+      title: "Child issue",
+    });
     const linkedChild = yield* projections.getThreadProjection(childThreadId);
     assert.deepEqual(linkedChild.thread.linkedPullRequest, childPullRequest);
     assert.deepEqual(
@@ -1314,6 +1342,14 @@ it.effect("keeps delegated child pull-request links independent of the parent", 
     const parentAfterChildLink = yield* projections.getThreadProjection(parentThreadId);
     assert.deepEqual(parentAfterChildLink.thread.linkedPullRequest, parentPullRequest);
     assert.deepEqual(parentAfterChildLink.thread.pullRequests, parent.thread.pullRequests);
+    assert.deepEqual(
+      (yield* orchestrator.getThreadShell(childThreadId))?.issues?.map(({ key }) => key),
+      ["43"],
+    );
+    assert.deepEqual(
+      (yield* orchestrator.getThreadShell(parentThreadId))?.issues?.map(({ key }) => key),
+      ["42"],
+    );
   }).pipe(Effect.provide(layerTest)),
 );
 
@@ -1402,6 +1438,34 @@ it.effect("wakes the parent once when its delegated task asks a question", () =>
     yield* eventSink.write({
       events: [question, asyncQuestion, answered, approval],
     });
+
+    const childProjection = yield* projections.getThreadProjection(task.childThreadId!);
+    assert.isTrue(
+      childProjection.runtimeRequests.some((request) => request.id === question.payload.id),
+    );
+    for (const shell of [
+      yield* projections.getThreadShell(task.childThreadId!),
+      ProjectionStore.threadShellFromProjection(childProjection),
+    ]) {
+      assert.equal(shell?.pendingRuntimeRequest?.id, approval.payload.id);
+    }
+    yield* eventSink.write({
+      events: [
+        {
+          ...approval,
+          id: EventId.make("event:approval-resolved"),
+          payload: { ...approval.payload, status: "resolved", resolvedAt: now },
+        },
+      ],
+    });
+    for (const shell of [
+      yield* projections.getThreadShell(task.childThreadId!),
+      ProjectionStore.threadShellFromProjection(
+        yield* projections.getThreadProjection(task.childThreadId!),
+      ),
+    ]) {
+      assert.isTrue(shell?.pendingRuntimeRequest?.orchestratorOwned);
+    }
 
     yield* reactor.handle(question);
     assert.isFalse(

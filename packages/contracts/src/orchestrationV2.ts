@@ -501,13 +501,14 @@ const OrchestrationV2LastTitleRegeneration = Schema.Struct({
 });
 
 const ThreadRetirement = Schema.Struct({
-  successorThreadId: ThreadId,
+  successorThreadId: Schema.optionalKey(ThreadId),
   pendingTaskIds: Schema.Array(NodeId),
   completed: Schema.optionalKey(Schema.Literal(true)),
 });
 
 export const OrchestrationV2AppThread = Schema.Struct({
   retirement: Schema.optionalKey(ThreadRetirement),
+  archivedWithThreadId: Schema.optionalKey(ThreadId),
   ...OrchestrationV2CreationFields,
   id: ThreadId,
   projectId: ProjectId,
@@ -630,6 +631,16 @@ export function isProviderNativeSubagentThread(
   thread: Pick<OrchestrationV2AppThread, "lineage" | "creationSource">,
 ): boolean {
   return thread.lineage.relationshipToParent === "subagent" && thread.creationSource === "provider";
+}
+
+export function hasQuestionOrchestrator(
+  thread: Pick<OrchestrationV2AppThread, "lineage" | "creationSource">,
+): boolean {
+  return (
+    thread.lineage.parentThreadId !== null &&
+    thread.lineage.relationshipToParent === "subagent" &&
+    !isProviderNativeSubagentThread(thread)
+  );
 }
 
 export const IDLE_COMPACTION_TEXT = "/compact";
@@ -2410,9 +2421,22 @@ export const OrchestrationV2PendingRuntimeRequestSummary = Schema.Struct({
   blocking: Schema.optional(Schema.Boolean),
   /** Secret and link cards: only the user can answer them, never a coordinating agent. */
   userOnly: Schema.optional(Schema.Boolean),
+  /** The question is pending for the orchestrator and does not need owner attention. */
+  orchestratorOwned: Schema.optional(Schema.Boolean),
 });
 export type OrchestrationV2PendingRuntimeRequestSummary =
   typeof OrchestrationV2PendingRuntimeRequestSummary.Type;
+
+export function isOrchestratorOwnedQuestion(
+  thread: Pick<OrchestrationV2ThreadShell, "lineage" | "creationSource" | "pendingRuntimeRequest">,
+): boolean {
+  const request = thread.pendingRuntimeRequest;
+  return (
+    request?.kind === "user_input" &&
+    request.userOnly !== true &&
+    (request.orchestratorOwned ?? hasQuestionOrchestrator(thread))
+  );
+}
 
 export const OrchestrationV2LatestVisibleMessageSummary = Schema.Struct({
   id: MessageId,
@@ -4264,6 +4288,7 @@ export type OrchestrationV2ThreadLaunchResult = typeof OrchestrationV2ThreadLaun
 
 export const OrchestrationV2DispatchCommandResult = Schema.Struct({
   sequence: NonNegativeInt,
+  retiring: Schema.optionalKey(Schema.Literal(true)),
 });
 export type OrchestrationV2DispatchCommandResult = typeof OrchestrationV2DispatchCommandResult.Type;
 

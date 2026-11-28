@@ -1,5 +1,6 @@
 import { EnvironmentId, ThreadId } from "@t3tools/contracts";
 import * as Cause from "effect/Cause";
+import { AsyncResult } from "effect/reactivity";
 import { afterEach, beforeEach, describe, expect, it, vi } from "vite-plus/test";
 
 import { useThreadActions } from "./useThreadActions";
@@ -218,6 +219,20 @@ describe("unpin Undo", () => {
 });
 
 describe("archive Undo", () => {
+  it("keeps the current thread open while its agents retire", async () => {
+    router.state.location.href = "/undo-env/thread";
+    router.state.matches[0]!.params = {
+      environmentId: target.environmentId,
+      threadId: target.threadId,
+    };
+    commands.archive.mockResolvedValueOnce(AsyncResult.success({ sequence: 1, retiring: true }));
+    const onArchived = vi.fn();
+    await useThreadActions().archiveThread(target, { onArchived });
+    expect(router.state.location.href).toBe("/undo-env/thread");
+    expect(onArchived).not.toHaveBeenCalled();
+    expect(useThreadUndoNotice.getState().notice).toBeNull();
+  });
+
   it("unarchives and returns to the thread when archiving left it", async () => {
     const add = vi.spyOn(toastManager, "add").mockReturnValue("toast");
     router.state.matches[0]!.params = {

@@ -1415,13 +1415,8 @@ it("renders saved section names, nesting, and interleaved project order", () => 
   ]);
 });
 
-it("keeps active and settled threads above role sections and summarizes collapsed folders", () => {
+it("nests role sections under their orchestrator and summarizes collapsed folders", () => {
   const root = makeThread({ id: ThreadId.make("root"), title: "Root" });
-  const archived = makeThread({
-    id: ThreadId.make("archived"),
-    title: "Archived",
-    archivedAt: NOW,
-  });
   const working = makeThread({
     id: ThreadId.make("working"),
     title: "Working agent",
@@ -1442,8 +1437,8 @@ it("keeps active and settled threads above role sections and summarizes collapse
     delegatedRole: "review",
     hasPendingUserInput: true,
     lineage: {
-      parentThreadId: archived.id,
-      rootThreadId: archived.id,
+      parentThreadId: root.id,
+      rootThreadId: root.id,
       relationshipToParent: "subagent",
     },
   });
@@ -1452,7 +1447,7 @@ it("keeps active and settled threads above role sections and summarizes collapse
     title: "Settled",
     settledOverride: "settled",
   });
-  const threads = [root, archived, working, waiting, settled];
+  const threads = [root, working, waiting, settled];
   const children = indexSidebarChildren(threads);
   const projects = buildHomeProjectScopes({
     projects: [makeProjectFixture({ id: root.projectId, title: "Project", environmentId })],
@@ -1460,7 +1455,7 @@ it("keeps active and settled threads above role sections and summarizes collapse
     projectGroupingMode: "separate",
   });
   const folderKey = `v2-project-folder:${projects[0]!.key}`;
-  const roleKey = (role: string) => `v2-agent-role:${projects[0]!.key}:${role}`;
+  const roleKey = (role: string) => `role:${environmentId}:root:${role}`;
   const { items } = buildThreadListV2Items({
     threads,
     environmentId: null,
@@ -1486,28 +1481,27 @@ it("keeps active and settled threads above role sections and summarizes collapse
   expect(expanded.map((item) => item.key)).toEqual([
     folderKey,
     `v2-thread:${environmentId}:root`,
-    `v2-thread:${environmentId}:settled`,
     roleKey("implementation"),
     `v2-thread:${environmentId}:working`,
     roleKey("review"),
     `v2-thread:${environmentId}:waiting`,
+    `v2-thread:${environmentId}:settled`,
   ]);
-  expect(expanded[1]).toMatchObject({ agentCount: 1, agentRow: false });
-  expect(expanded[3]).toMatchObject({
+  expect(expanded[1]).toMatchObject({ agentCount: 2, agentRow: false, familyExpanded: true });
+  expect(expanded[2]).toMatchObject({
     role: "implementation",
     counts: { working: 1, attention: 0, failed: 0 },
   });
-  expect(expanded[5]).toMatchObject({
+  expect(expanded[4]).toMatchObject({
     role: "review",
     counts: { working: 0, attention: 1, failed: 0 },
   });
 
   const collapsed = rows([folderKey]);
   expect(collapsed).toHaveLength(1);
-  expect(rows([folderKey], `${environmentId}:root`).map((row) => row.key)).toEqual([
-    folderKey,
-    `v2-thread:${environmentId}:root`,
-  ]);
+  expect(
+    rows([folderKey, `${environmentId}:root`], `${environmentId}:root`).map((row) => row.key),
+  ).toEqual([folderKey, `v2-thread:${environmentId}:root`]);
   expect(collapsed[0]).toMatchObject({
     expanded: false,
     counts: { working: 1, attention: 1, failed: 0 },
@@ -1516,9 +1510,11 @@ it("keeps active and settled threads above role sections and summarizes collapse
   expect(
     rows([roleKey("review")]).some((item) => item.key === `v2-thread:${environmentId}:waiting`),
   ).toBe(false);
-  expect(rows([roleKey("review")], `${environmentId}:waiting`).at(-1)?.key).toBe(
-    `v2-thread:${environmentId}:waiting`,
-  );
+  expect(
+    rows([roleKey("review")], `${environmentId}:waiting`).some(
+      (row) => row.key === `v2-thread:${environmentId}:waiting`,
+    ),
+  ).toBe(true);
   expect(
     getThreadListV2OrderedSection({ threads, section: "active", now: NOW }).map(
       (thread) => thread.id,

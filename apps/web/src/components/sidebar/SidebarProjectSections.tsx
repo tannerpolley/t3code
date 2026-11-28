@@ -89,13 +89,12 @@ export function useSidebarAgentStateSummary(
   return formatSidebarAgentStates(counts, messages, short);
 }
 
-/** A project's child agents in one role. Its rows name it as their parent. */
 export const SidebarRoleSectionHeader = memo(function SidebarRoleSectionHeader(props: {
   id: string;
-  sectionKey: string;
   role: SidebarAgentRole;
   parent: string;
   depth: number;
+  familyDepth: number;
   collapsed: boolean;
   threads: readonly EnvironmentThreadShell[];
   onToggle: (sectionKey: string) => void;
@@ -110,9 +109,9 @@ export const SidebarRoleSectionHeader = memo(function SidebarRoleSectionHeader(p
         data-sidebar-parent={props.parent}
         data-testid="sidebar-role-section"
         aria-expanded={!props.collapsed}
-        onClick={() => props.onToggle(props.sectionKey)}
+        onClick={() => props.onToggle(props.id)}
         style={{
-          paddingInlineStart: `calc(var(--sidebar-row-content-inset) + 16px + ${Math.min(props.depth, 3) * 10}px)`,
+          paddingInlineStart: `calc(var(--sidebar-row-content-inset) + 16px + ${Math.min(props.depth, 3) * 10 + props.familyDepth * 12}px)`,
         }}
         className="flex h-7 w-full cursor-pointer items-center gap-1.5 rounded-(--control-radius) pe-(--sidebar-row-content-inset) text-left text-xs text-sidebar-muted-foreground outline-none hover:bg-sidebar-row-hover hover:text-sidebar-foreground focus-visible:ring-2 focus-visible:ring-inset focus-visible:ring-ring"
       >

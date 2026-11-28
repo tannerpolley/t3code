@@ -41,13 +41,13 @@ export function indexSidebarChildren(
 }
 
 export interface SidebarFamilyRow {
+  kind: "thread";
   thread: EnvironmentThreadShell;
   key: string;
   parentKey: string | undefined;
   depth: number;
   descendantCount: number;
   expanded: boolean;
-  children: readonly SidebarFamilyRow[];
 }
 
 export function sidebarFamilyRows(
@@ -55,29 +55,34 @@ export function sidebarFamilyRows(
   childrenByParent: ReadonlyMap<string, readonly EnvironmentThreadShell[]>,
   expansion: ReadonlyMap<string, boolean>,
   routeKey: string | null,
+  roleExpanded: (key: string) => boolean,
 ) {
-  function build(
-    thread: EnvironmentThreadShell,
-    depth: number,
-    parentKey?: string,
-  ): { row: SidebarFamilyRow; live: boolean; hasRoute: boolean } {
+  type FamilyNode = {
+    row: SidebarFamilyRow;
+    children: FamilyNode[];
+    live: boolean;
+    hasRoute: boolean;
+  };
+
+  function build(thread: EnvironmentThreadShell, parentKey?: string): FamilyNode {
     const key = scopedThreadKey(scopeThreadRef(thread.environmentId, thread.id));
-    const children = (childrenByParent.get(key) ?? []).map((child) => build(child, depth + 1, key));
+    const children: FamilyNode[] = (childrenByParent.get(key) ?? []).map((child) =>
+      build(child, key),
+    );
     const hasLiveChildren = children.some((child) => child.live);
     const hasChildRoute = children.some((child) => child.hasRoute);
+    const row: SidebarFamilyRow = {
+      kind: "thread",
+      thread,
+      key,
+      parentKey,
+      depth: 0,
+      descendantCount: children.reduce((count, child) => count + 1 + child.row.descendantCount, 0),
+      expanded: expansion.get(key) ?? (hasLiveChildren || hasChildRoute),
+    };
     return {
-      row: {
-        thread,
-        key,
-        parentKey,
-        depth,
-        descendantCount: children.reduce(
-          (count, child) => count + 1 + child.row.descendantCount,
-          0,
-        ),
-        expanded: expansion.get(key) ?? (hasLiveChildren || hasChildRoute),
-        children: children.map((child) => child.row),
-      },
+      row,
+      children,
       live:
         hasLiveChildren ||
         threadRuntimeIsActive(thread.runtime) ||
@@ -89,14 +94,41 @@ export function sidebarFamilyRows(
     };
   }
 
-  function flatten(row: SidebarFamilyRow): SidebarFamilyRow[] {
-    return row.expanded ? [row, ...row.children.flatMap(flatten)] : [row];
+  function flatten(
+    node: FamilyNode,
+    depth = 0,
+    parentKey = node.row.parentKey,
+  ): SidebarFamilyItem[] {
+    const { row, children } = node;
+    const result: SidebarFamilyItem[] = [{ ...row, depth, parentKey }];
+    if (!row.expanded) return result;
+    if (row.thread.lineage.parentThreadId !== null || row.thread.delegatedFrom != null) {
+      return result.concat(children.flatMap((child) => flatten(child, depth + 1)));
+    }
+    for (const section of sidebarRoleSections(row.key, children)) {
+      const expanded = roleExpanded(section.key);
+      result.push({
+        kind: "role",
+        key: section.key,
+        parentKey: row.key,
+        depth: depth + 1,
+        role: section.role,
+        threads: section.children.map((child) => child.row.thread),
+        expanded,
+      });
+      for (const child of section.children) {
+        if (expanded || child.hasRoute) {
+          result.push(...flatten(child, depth + 2, section.key));
+        }
+      }
+    }
+    return result;
   }
 
   return new Map(
     roots.map((thread) => {
-      const { row } = build(thread, 0);
-      return [row.key, flatten(row)] as const;
+      const node = build(thread);
+      return [node.row.key, flatten(node)] as const;
     }),
   );
 }
@@ -117,51 +149,43 @@ function sidebarAgentRole(thread: Pick<EnvironmentThreadShell, "delegatedRole">)
   return isDelegationModelRole(role) ? role : "other";
 }
 
-export interface SidebarRoleSection {
-  /** Names the project and role; collapse state is saved under it. */
-  key: string;
-  role: SidebarAgentRole;
-  threads: readonly EnvironmentThreadShell[];
-}
+export type SidebarFamilyItem =
+  | SidebarFamilyRow
+  | {
+      kind: "role";
+      key: string;
+      parentKey: string;
+      depth: number;
+      role: SidebarAgentRole;
+      threads: readonly EnvironmentThreadShell[];
+      expanded: boolean;
+    };
 
-/**
- * Child agents by project, then by role in `SIDEBAR_AGENT_ROLES` order, newest first.
- * Roles with no children are left out, and so are children whose project has no folder.
- */
-export function sidebarRoleSections(
-  childrenByParent: ReadonlyMap<string, readonly EnvironmentThreadShell[]>,
-  folderKeyOf: (thread: EnvironmentThreadShell) => string | undefined,
+function sidebarRoleSections<T extends { row: SidebarFamilyRow }>(
+  parentKey: string,
+  children: readonly T[],
 ) {
-  const byFolder = new Map<string, Map<SidebarAgentRole, EnvironmentThreadShell[]>>();
-  for (const children of childrenByParent.values()) {
-    for (const child of children) {
-      const folderKey = folderKeyOf(child);
-      if (folderKey === undefined) continue;
-      const roles = byFolder.get(folderKey) ?? new Map();
-      byFolder.set(folderKey, roles);
-      const role = sidebarAgentRole(child);
-      const threads = roles.get(role);
-      if (threads === undefined) roles.set(role, [child]);
-      else threads.push(child);
-    }
+  const byRole = new Map<SidebarAgentRole, T[]>();
+  for (const child of children) {
+    const role = sidebarAgentRole(child.row.thread);
+    const siblings = byRole.get(role);
+    if (siblings === undefined) byRole.set(role, [child]);
+    else siblings.push(child);
   }
-  return new Map(
-    [...byFolder].map(([folderKey, roles]) => [
-      folderKey,
-      SIDEBAR_AGENT_ROLES.flatMap((role): SidebarRoleSection[] => {
-        const threads = roles.get(role);
-        return threads === undefined
-          ? []
-          : [
-              {
-                key: `${folderKey}:${role}`,
-                role,
-                threads: [...threads].sort((a, b) => b.createdAt.localeCompare(a.createdAt)),
-              },
-            ];
-      }),
-    ]),
-  );
+  return SIDEBAR_AGENT_ROLES.flatMap((role) => {
+    const children = byRole.get(role);
+    return children === undefined
+      ? []
+      : [
+          {
+            key: `role:${parentKey}:${role}`,
+            role,
+            children: children.sort((a, b) =>
+              b.row.thread.createdAt.localeCompare(a.row.thread.createdAt),
+            ),
+          },
+        ];
+  });
 }
 
 export type SidebarAgentState = "working" | "attention" | "failed";
@@ -244,12 +268,7 @@ export function groupSidebarThreadsByProject<
     }>;
   },
   TThread extends { readonly environmentId: string; readonly projectId: string },
->(
-  groups: readonly TGroup[],
-  threads: readonly TThread[],
-  children: ReadonlyMap<string, readonly EnvironmentThreadShell[]>,
-  keepEmpty: (group: TGroup) => boolean,
-) {
+>(groups: readonly TGroup[], threads: readonly TThread[], keepEmpty: (group: TGroup) => boolean) {
   const folders = groups.map((group) => ({ group, threads: [] as TThread[] }));
   const folderByProject = new Map<string, (typeof folders)[number]>();
   for (const folder of folders) {
@@ -260,24 +279,7 @@ export function groupSidebarThreadsByProject<
   for (const thread of threads) {
     folderByProject.get(`${thread.environmentId}:${thread.projectId}`)?.threads.push(thread);
   }
-  const rolesByFolder = sidebarRoleSections(
-    children,
-    (thread) =>
-      folderByProject.get(`${thread.environmentId}:${thread.projectId}`)?.group.projectKey,
-  );
-  return folders.flatMap((folder) => {
-    const roleSections = rolesByFolder.get(folder.group.projectKey) ?? [];
-    return folder.threads.length > 0 || roleSections.length > 0 || keepEmpty(folder.group)
-      ? [{ ...folder, roleSections }]
-      : [];
-  });
-}
-
-export function sidebarProjectContents<T, R>(threads: readonly T[], roles: readonly R[]) {
-  return [
-    { kind: "threads", rows: threads },
-    { kind: "roles", rows: roles },
-  ] as const;
+  return folders.filter((folder) => folder.threads.length > 0 || keepEmpty(folder.group));
 }
 
 export type ProjectSectionRow<F> =

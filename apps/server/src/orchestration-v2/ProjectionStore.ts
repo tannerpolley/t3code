@@ -56,6 +56,7 @@ import type {
 } from "@t3tools/contracts";
 import {
   IDLE_COMPACTION_TEXT,
+  hasQuestionOrchestrator,
   idleCompactionOf,
   isQueuedProviderThreadPlaceholder,
   OrchestrationV2AppThreadJson as OrchestrationV2AppThreadJsonSchema,
@@ -1838,6 +1839,7 @@ function buildVisibleTurnItems(input: {
 
 function pendingRuntimeRequestSummary(
   request: OrchestrationV2ThreadProjection["runtimeRequests"][number] | null,
+  thread: OrchestrationV2AppThread,
 ): OrchestrationV2PendingRuntimeRequestSummary | null {
   if (request === null) return null;
   return {
@@ -1845,6 +1847,9 @@ function pendingRuntimeRequestSummary(
     kind: request.kind,
     createdAt: request.createdAt,
     blocking: request.responseCapability.type !== "message",
+    ...(request.kind === "user_input" && hasQuestionOrchestrator(thread)
+      ? { orchestratorOwned: true }
+      : {}),
   };
 }
 
@@ -1917,6 +1922,7 @@ export function threadShellFromProjection(
           Number(left.kind === "user_input") - Number(right.kind === "user_input") ||
           DateTime.toEpochMillis(right.createdAt) - DateTime.toEpochMillis(left.createdAt),
       )[0] ?? null,
+    projection.thread,
   );
 
   const userMessages = projection.messages
@@ -1942,6 +1948,7 @@ export function threadShellFromProjection(
     if (
       waitingCard !== null &&
       (pendingRuntimeRequest === null ||
+        pendingRuntimeRequest.orchestratorOwned === true ||
         DateTime.toEpochMillis(waitingCard.createdAt) >=
           DateTime.toEpochMillis(pendingRuntimeRequest.createdAt))
     ) {
@@ -2294,7 +2301,9 @@ function shellFromState(input: {
     ...(input.state.thread.retirement === undefined
       ? {}
       : {
-          successorThreadId: input.state.thread.retirement.successorThreadId,
+          ...(input.state.thread.retirement.successorThreadId === undefined
+            ? {}
+            : { successorThreadId: input.state.thread.retirement.successorThreadId }),
           ...(input.state.thread.retirement.completed === true
             ? {}
             : { retiringWorkerCount: input.state.retiringWorkerCount ?? 0 }),
@@ -2423,9 +2432,17 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
     const LIVE_NODES_INDEX = sql.literal("INDEXED BY orchestration_v2_projection_nodes_live_idx");
 
     // An ended task whose completion was acknowledged, delivered or disposed, outside an active run.
-    const settledSubagent = (row: Statement.Fragment) => sql`(
+    // A provider-native task reports its result through the provider instead of T3's delivery queue.
+    const settledSubagent = (row: Statement.Fragment, includeNativeResults = false) => sql`(
       ${row}.status IN ('completed', 'failed', 'cancelled', 'interrupted')
-      AND COALESCE(${row}.completion_delivery_state, '') IN ('acknowledged', 'delivered', 'disposed')
+      AND (
+        COALESCE(${row}.completion_delivery_state, '') IN ('acknowledged', 'delivered', 'disposed')
+        ${
+          includeNativeResults
+            ? sql`OR (${row}.origin = 'provider_native' AND ${row}.completion_delivery_state IS NULL)`
+            : sql``
+        }
+      )
       AND NOT EXISTS (
         SELECT 1 FROM orchestration_v2_projection_runs AS run
           INDEXED BY orchestration_v2_projection_runs_run_status_idx
@@ -8559,6 +8576,14 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 SELECT COUNT(*) FROM json_each(t.payload_json, '$.retirement.pendingTaskIds') pending
                 JOIN orchestration_v2_projection_subagents task ON task.subagent_id = pending.value
                 WHERE task.status IN ('pending', 'idle', 'running', 'waiting')
+                  OR (
+                    json_extract(t.payload_json, '$.retirement.successorThreadId') IS NULL
+                    AND EXISTS (
+                      SELECT 1 FROM orchestration_v2_projection_runs active
+                      WHERE active.thread_id = task.child_thread_id
+                        AND active.status IN ('preparing', 'queued', 'starting', 'running', 'waiting')
+                    )
+                  )
               ) END AS retiring_worker_count,
               `
                   : sql`
@@ -9098,31 +9123,72 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 (
                   json_extract(t.payload_json, '$.settledOverride') IS NULL
                   AND json_extract(t.payload_json, '$.autoSettleDisabledAt') IS NULL
-                  AND (
-                    json_extract(t.payload_json, '$.lineage.relationshipToParent') IS NOT 'subagent'
-                    OR NOT EXISTS (
-                      SELECT 1 FROM orchestration_v2_projection_threads parent
-                      WHERE parent.thread_id = json_extract(t.payload_json, '$.lineage.parentThreadId')
-                        AND parent.deleted_at IS NULL
-                        AND json_extract(parent.payload_json, '$.archivedAt') IS NULL
-                        AND json_extract(parent.payload_json, '$.settledOverride') IS NOT 'settled'
-                    )
-                  )
                 )
                 ${
                   options?.includeSettledChildren === true
                     ? sql`OR json_type(t.payload_json, '$.retirement') = 'object' OR (
-                  json_extract(t.payload_json, '$.settledOverride') = 'settled'
-                  AND json_extract(t.payload_json, '$.lineage.relationshipToParent') = 'subagent'
-                  AND json_type(t.payload_json, '$.autoArchiveDisabled') IS NOT 'true'
-                )`
+                    json_extract(t.payload_json, '$.settledOverride') = 'settled'
+                    AND json_extract(t.payload_json, '$.lineage.relationshipToParent') = 'subagent'
+                  )`
                     : sql``
                 }
+              )
+              AND (
+                json_extract(t.payload_json, '$.lineage.relationshipToParent') IS NOT 'subagent'
+                ${
+                  options?.includeSettledChildren === true
+                    ? sql`OR json_type(t.payload_json, '$.retirement') = 'object'`
+                    : sql``
+                }
+                OR (
+                  json_type(t.payload_json, '$.autoArchiveDisabled') IS NOT 'true'
+                  AND NOT EXISTS (
+                    SELECT 1 FROM orchestration_v2_projection_subagents task
+                    WHERE task.child_thread_id = t.thread_id
+                      AND task.thread_id = json_extract(t.payload_json, '$.lineage.parentThreadId')
+                      AND NOT ${settledSubagent(sql.literal("task"), true)}
+                  )
+                  AND NOT EXISTS (
+                    SELECT 1 FROM orchestration_v2_projection_threads parent
+                    WHERE parent.thread_id = json_extract(t.payload_json, '$.lineage.parentThreadId')
+                      AND parent.deleted_at IS NULL
+                      AND json_extract(parent.payload_json, '$.archivedAt') IS NULL
+                      AND json_extract(parent.payload_json, '$.settledOverride') IS NOT 'settled'
+                      AND (
+                        (
+                          json_extract(t.payload_json, '$.settledOverride') IS NOT 'settled'
+                          AND NOT EXISTS (
+                            SELECT 1 FROM orchestration_v2_projection_subagents task
+                            WHERE task.child_thread_id = t.thread_id AND task.thread_id = parent.thread_id
+                          )
+                        )
+                        OR EXISTS (
+                          SELECT 1 FROM orchestration_v2_projection_runs active
+                          WHERE active.thread_id = parent.thread_id
+                            AND active.status IN ('preparing', 'queued', 'starting', 'running', 'waiting')
+                        )
+                        OR EXISTS (
+                          SELECT 1 FROM orchestration_v2_projection_runtime_requests request
+                          WHERE request.thread_id = parent.thread_id AND request.status = 'pending'
+                        )
+                        OR (
+                          json_extract(parent.payload_json, '$.creationSource') = 'provider'
+                          AND EXISTS (
+                            SELECT 1 FROM orchestration_v2_projection_provider_turns turn
+                            WHERE turn.thread_id = parent.thread_id AND turn.run_attempt_id IS NULL
+                              AND turn.status IN ('pending', 'running')
+                          )
+                        )
+                      )
+                  )
+                )
               )
               AND NOT EXISTS (
                 SELECT 1 FROM orchestration_v2_projection_runs active
                 WHERE active.thread_id = t.thread_id
-                  AND active.status IN ('preparing', 'starting', 'running', 'waiting')
+                  AND active.status IN ('preparing', 'queued', 'starting', 'running', 'waiting')
+                  AND (active.status <> 'queued'
+                    OR json_extract(t.payload_json, '$.lineage.relationshipToParent') = 'subagent')
               )
               AND NOT EXISTS (
                 SELECT 1 FROM orchestration_v2_projection_runtime_requests request
@@ -9329,6 +9395,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           row.pending_request_payload_json !== null
             ? pendingRuntimeRequestSummary(
                 yield* decodeRuntimeRequestPayload(row.pending_request_payload_json),
+                thread,
               )
             : null;
         if (
@@ -9344,6 +9411,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           if (
             waitingCard !== null &&
             (pendingRuntimeRequest === null ||
+              pendingRuntimeRequest.orchestratorOwned === true ||
               DateTime.toEpochMillis(waitingCard.createdAt) >=
                 DateTime.toEpochMillis(pendingRuntimeRequest.createdAt))
           ) {

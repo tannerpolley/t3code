@@ -5,9 +5,12 @@ import { expect, it } from "vite-plus/test";
 import { collectPendingQuestions, deferQuestions, visibleQuestionQueue } from "./questionQueue.ts";
 
 function shell(id: string, minute: number, requestId = id) {
+  const threadId = ThreadId.make(id);
   return {
-    id: ThreadId.make(id),
+    id: threadId,
     archivedAt: null,
+    creationSource: "web" as const,
+    lineage: { parentThreadId: null, relationshipToParent: null, rootThreadId: threadId },
     pendingRuntimeRequest: {
       id: RuntimeRequestId.make(requestId),
       kind: "user_input" as const,
@@ -26,6 +29,8 @@ it("defers the head with Later and the visible queue with Close across environme
   const archived = shell("archived", 0);
   const secret = shell("secret", 0);
   const approval = shell("approval", 0);
+  const child = shell("delegated-child", 0);
+  const legacyChild = shell("legacy-child", 0);
   const questions = collectPendingQuestions([
     {
       environmentId: local,
@@ -35,6 +40,19 @@ it("defers the head with Later and the visible queue with Close across environme
         sideChat,
         { ...archived, archivedAt: archived.pendingRuntimeRequest.createdAt },
         { ...secret, pendingRuntimeRequest: { ...secret.pendingRuntimeRequest, userOnly: true } },
+        {
+          ...child,
+          pendingRuntimeRequest: { ...child.pendingRuntimeRequest, orchestratorOwned: true },
+        },
+        {
+          ...legacyChild,
+          creationSource: "mcp",
+          lineage: {
+            parentThreadId: viewed.id,
+            relationshipToParent: "subagent",
+            rootThreadId: viewed.id,
+          },
+        },
         {
           ...approval,
           pendingRuntimeRequest: { ...approval.pendingRuntimeRequest, kind: "command" },

@@ -43,6 +43,7 @@ import {
   resolveRuntimeMode,
   roleModelTarget,
   taskPrompt,
+  delegatedTaskRole,
   withoutAgentModePicks,
 } from "../mcp/delegatedTaskModes.ts";
 import { followUpOwnerRun } from "../orchestration-v2/CommandPolicy.ts";
@@ -306,6 +307,7 @@ const make = Effect.gen(function* () {
       // provider there has no model to inherit, so the caller names one.
       const inherited = parent.thread.modelSelection;
       const role = isDelegationModelRole(input.role) ? input.role : undefined;
+      const delegatedRole = delegatedTaskRole(input);
       // The same key identifies the launch there and the recorded task here.
       const key = input.clientRequestId ?? (yield* random.uuidV4());
       const commandId = CommandId.make(
@@ -401,7 +403,7 @@ const make = Effect.gen(function* () {
           clientRequestId: `delegate:${scope.thread.threadId}:${key}`,
           // The thread there shows it is this thread's subagent, with a way back.
           delegatedFrom: {
-            ...(input.role === undefined ? {} : { role: input.role }),
+            ...(delegatedRole === undefined ? {} : { role: delegatedRole }),
             environmentId: hereId,
             threadId: parent.thread.id,
             title: parent.thread.title,

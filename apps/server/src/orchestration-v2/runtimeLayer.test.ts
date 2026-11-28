@@ -62,6 +62,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import { createAttachmentId } from "../attachmentStore.ts";
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
+import * as GitManager from "../git/GitManager.ts";
 import * as ServerConfig from "../config.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as OrchestrationEventStore from "../persistence/OrchestrationEventStore.ts";
@@ -98,6 +99,7 @@ import * as RuntimeLayer from "./runtimeLayer.ts";
 import { shellStreamItemFromThreadShell } from "./ShellStream.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
+import * as ThreadSettlementService from "./ThreadSettlementService.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as ScratchThreadPromotion from "../project/ScratchThreadPromotion.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
@@ -3791,6 +3793,208 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         CommandId.make("auto-archive-child-next-sweep"),
       );
       assert.isNull((yield* orchestrator.getThreadProjection(childId)).thread.archivedAt);
+    }),
+  );
+
+  it.effect("the settlement sweep archives only finished children whose results were handled", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const sink = yield* EventSink.EventSinkV2;
+      const parentId = ThreadId.make("finished-children-parent");
+      const projectId = ProjectId.make("finished-children-project");
+      yield* seedProject({
+        projectId,
+        title: "Finished children",
+        workspaceRoot: "/workspace/finished-children",
+        defaultModelSelection: null,
+        createdAt: "2026-09-07T00:00:00.000Z",
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("finished-children-parent-create"),
+        createdBy: "user",
+        creationSource: "web",
+        threadId: parentId,
+        projectId,
+        title: "Open orchestrator",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+      });
+      const { thread: parent } = yield* orchestrator.getThreadProjection(parentId);
+      const now = parent.updatedAt;
+      const children = [
+        "acknowledged",
+        "native",
+        "pending",
+        "queued",
+        "open-pr",
+        "unarchived",
+      ] as const;
+      const childId = (name: (typeof children)[number]) => ThreadId.make(`finished-child:${name}`);
+      for (const name of children) {
+        const id = childId(name);
+        const taskId = NodeId.make(`task:${id}`);
+        const task: OrchestrationV2Subagent = {
+          id: taskId,
+          threadId: parentId,
+          runId: null,
+          parentNodeId: NodeId.make("finished-children-root"),
+          origin: name === "native" ? "provider_native" : "app_owned",
+          createdBy: "agent",
+          driver: ProviderDriverKind.make("codex"),
+          providerInstanceId: parent.providerInstanceId,
+          providerThreadId: null,
+          childThreadId: id,
+          nativeTaskRef: null,
+          prompt: "Do the work",
+          title: name,
+          model: null,
+          status: "completed",
+          result: "Done",
+          startedAt: now,
+          completedAt: now,
+          updatedAt: now,
+          ...(name === "native"
+            ? {}
+            : {
+                completionDelivery: {
+                  state: name === "pending" ? "pending" : "acknowledged",
+                  observedByRunId: null,
+                },
+              }),
+        };
+        yield* sink.write({
+          events: [
+            {
+              type: "thread.created",
+              id: EventId.make(`created:${id}`),
+              threadId: id,
+              occurredAt: now,
+              payload: {
+                ...parent,
+                id,
+                title: name,
+                createdBy: "agent",
+                creationSource: name === "native" ? "provider" : "mcp",
+                lineage: {
+                  parentThreadId: parentId,
+                  rootThreadId: parentId,
+                  relationshipToParent: "subagent",
+                },
+                ...(name === "open-pr"
+                  ? {
+                      pullRequests: [
+                        {
+                          host: "github.com",
+                          repository: "owner/repo",
+                          number: 1,
+                          url: "https://github.com/owner/repo/pull/1",
+                          source: "agent",
+                          linkedAt: DateTime.formatIso(now),
+                          snapshot: {
+                            state: "open",
+                            title: "PR under review",
+                            headBranch: "feature",
+                            baseBranch: "main",
+                            isDraft: false,
+                            updatedAt: null,
+                            syncedAt: DateTime.formatIso(now),
+                          },
+                          stack: null,
+                        },
+                      ],
+                    }
+                  : {}),
+              },
+            },
+            {
+              type: "subagent.updated",
+              id: EventId.make(`updated:${taskId}`),
+              threadId: parentId,
+              occurredAt: now,
+              payload: task,
+            },
+          ],
+        });
+      }
+      const unarchived = childId("unarchived");
+      yield* orchestrator.dispatch({
+        type: "thread.archive",
+        threadId: unarchived,
+        commandId: CommandId.make("finished-child-archive"),
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.unarchive",
+        threadId: unarchived,
+        commandId: CommandId.make("finished-child-unarchive"),
+      });
+
+      const queued = childId("queued");
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        createdBy: "agent",
+        creationSource: "mcp",
+        commandId: CommandId.make("finished-child-follow-up"),
+        threadId: queued,
+        messageId: MessageId.make("finished-child-follow-up"),
+        text: "Follow up",
+        attachments: [],
+        modelSelection,
+        dispatchMode: { type: "start_immediately" },
+      });
+      const [run] = (yield* orchestrator.getThreadProjection(queued)).runs;
+      yield* sink.write({
+        events: [
+          {
+            type: "run.updated",
+            id: EventId.make("held-follow-up"),
+            threadId: queued,
+            occurredAt: now,
+            payload: { ...run!, status: "queued", queueHeld: true },
+          },
+        ],
+      });
+
+      yield* Effect.gen(function* () {
+        const service = yield* ThreadSettlementService.make;
+        yield* service.start();
+        yield* TestClock.adjust("1 minute");
+        yield* service.drain;
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            NodeServices.layer,
+            NodeCrypto.layer,
+            ServerSettings.layerTest(),
+            Layer.mock(GitManager.GitManager)({}),
+            Layer.mock(PullRequestService.PullRequestService)({
+              subscribeMerges: Effect.succeed(Stream.empty),
+              subscribeRefreshes: Stream.empty,
+            }),
+            Layer.mock(TerminalManager.TerminalManager)({
+              hasActiveSubprocess: () => Effect.succeed(false),
+              closeOnSettle: () => Effect.void,
+            }),
+            Layer.mock(ProjectSetupScriptRunner.ProjectSetupScriptRunner)({}),
+          ),
+        ),
+      );
+      const saved = yield* Effect.forEach(children, (name) =>
+        orchestrator.getThreadShell(childId(name)),
+      );
+      assert.deepEqual(
+        saved.filter((thread) => thread?.archivedAt != null).map((thread) => thread?.id),
+        [childId("acknowledged"), childId("native")],
+      );
+      assert.deepEqual(
+        saved.filter((thread) => thread?.settledOverride === "settled").map((thread) => thread?.id),
+        [childId("acknowledged"), childId("native")],
+      );
+      assert.isNull((yield* orchestrator.getThreadShell(parentId))?.settledOverride);
+      assert.equal((yield* orchestrator.getThreadProjection(queued)).runs[0]?.status, "queued");
     }),
   );
 
@@ -8773,125 +8977,147 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
     }),
   );
 
-  it.effect("rejects archiving an idle parent until its delegated child completes", () =>
-    Effect.gen(function* () {
-      const orchestrator = yield* Orchestrator.OrchestratorV2;
-      const sink = yield* EventSink.EventSinkV2;
-      const threadId = ThreadId.make("archive-delegated-parent");
-      const projectId = ProjectId.make("archive-delegated-project");
-      yield* seedProject({
-        projectId,
-        title: "Delegated archive",
-        workspaceRoot: "/workspace/archive-delegated",
-        defaultModelSelection: null,
-        createdAt: "2026-09-07T00:00:00.000Z",
-      });
-      yield* orchestrator.dispatch({
-        type: "thread.create",
-        createdBy: "user",
-        creationSource: "web",
-        commandId: CommandId.make("archive-delegated-create"),
-        threadId,
-        projectId,
-        title: "Delegated archive",
-        modelSelection,
-        runtimeMode: "full-access",
-        interactionMode: "default",
-        branch: null,
-        worktreePath: null,
-      });
-      yield* orchestrator.dispatch({
-        type: "message.dispatch",
-        createdBy: "user",
-        creationSource: "web",
-        commandId: CommandId.make("archive-delegated-message"),
-        threadId,
-        messageId: MessageId.make("archive-delegated-message"),
-        text: "Delegate the work, then finish your turn.",
-        attachments: [],
-        modelSelection,
-        dispatchMode: { type: "start_immediately" },
-      });
-      const parentRun = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
-      yield* orchestrator.dispatch({
-        type: "delegated_task.request",
-        createdBy: "agent",
-        creationSource: "mcp",
-        commandId: CommandId.make("archive-delegated-request"),
-        parentThreadId: threadId,
-        parentRunId: parentRun.id,
-        parentNodeId: parentRun.rootNodeId!,
-        task: "Keep working after the parent finishes.",
-        modelSelection,
-        runtimeMode: "full-access",
-        interactionMode: "default",
-        completionWake: "always",
-      });
-      const delegatedParentRun = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
-      const now = yield* DateTime.now;
-      yield* sink.write({
-        events: [
-          {
-            id: EventId.make("archive-delegated-parent-completed"),
-            type: "run.updated",
-            threadId,
-            runId: parentRun.id,
-            occurredAt: now,
-            payload: { ...delegatedParentRun, status: "completed", completedAt: now },
-          },
-        ],
-      });
-      const parent = yield* orchestrator.getThreadProjection(threadId);
-      const task = parent.subagents[0]!;
-      assert.equal(parent.runs[0]?.status, "completed");
-      assert.equal(task.origin, "app_owned");
-      assert.equal(task.status, "running");
-      assert.isNotNull(task.childThreadId);
-
-      // Archive must preserve the idle parent's path for receiving this child's result.
-      const error = yield* orchestrator
-        .dispatch({
-          type: "thread.archive",
-          commandId: CommandId.make("archive-delegated-blocked"),
+  it.effect.each([false, true])(
+    "archives and restores an orchestrator set (worker running: %s)",
+    (running) =>
+      Effect.gen(function* () {
+        const orchestrator = yield* Orchestrator.OrchestratorV2;
+        const sink = yield* EventSink.EventSinkV2;
+        const threadId = ThreadId.make(`archive-delegated-parent-${running}`);
+        const projectId = ProjectId.make(`archive-delegated-project-${running}`);
+        yield* seedProject({
+          projectId,
+          title: "Delegated archive",
+          workspaceRoot: "/workspace/archive-delegated",
+          defaultModelSelection: null,
+          createdAt: "2026-09-07T00:00:00.000Z",
+        });
+        yield* orchestrator.dispatch({
+          type: "thread.create",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`archive-delegated-create-${running}`),
           threadId,
-        })
-        .pipe(Effect.flip);
-      assert.instanceOf(error, Orchestrator.OrchestratorDispatchError);
-      assert.equal(
-        error.cause,
-        `Thread ${threadId} has running delegated tasks. Wait for them or cancel them before archiving.`,
-      );
-      assert.isNull((yield* orchestrator.getThreadProjection(threadId)).thread.archivedAt);
+          projectId,
+          title: "Delegated archive",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          branch: null,
+          worktreePath: null,
+        });
+        yield* orchestrator.dispatch({
+          type: "message.dispatch",
+          createdBy: "user",
+          creationSource: "web",
+          commandId: CommandId.make(`archive-delegated-message-${running}`),
+          threadId,
+          messageId: MessageId.make(`archive-delegated-message-${running}`),
+          text: "Delegate the work, then finish your turn.",
+          attachments: [],
+          modelSelection,
+          dispatchMode: { type: "start_immediately" },
+        });
+        const parentRun = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
+        yield* orchestrator.dispatch({
+          type: "delegated_task.request",
+          createdBy: "agent",
+          creationSource: "mcp",
+          commandId: CommandId.make(`archive-delegated-request-${running}`),
+          parentThreadId: threadId,
+          parentRunId: parentRun.id,
+          parentNodeId: parentRun.rootNodeId!,
+          task: "Keep working after the parent finishes.",
+          modelSelection,
+          runtimeMode: "full-access",
+          interactionMode: "default",
+          completionWake: "settled_only",
+        });
+        const delegatedParentRun = (yield* orchestrator.getThreadProjection(threadId)).runs[0]!;
+        const now = yield* DateTime.now;
+        yield* sink.write({
+          events: [
+            {
+              id: EventId.make(`archive-delegated-parent-completed-${running}`),
+              type: "run.updated",
+              threadId,
+              runId: parentRun.id,
+              occurredAt: now,
+              payload: {
+                ...delegatedParentRun,
+                status: "completed",
+                completedAt: now,
+                delegatedCompletion: { disposition: "disposed", nextGeneration: 1, delivery: null },
+              },
+            },
+          ],
+        });
+        const parent = yield* orchestrator.getThreadProjection(threadId);
+        const task = parent.subagents[0]!;
+        assert.equal(parent.runs[0]?.status, "completed");
+        assert.equal(task.origin, "app_owned");
+        assert.equal(task.status, "running");
+        assert.isNotNull(task.childThreadId);
 
-      const childThreadId = task.childThreadId!;
-      const childRun = (yield* orchestrator.getThreadProjection(childThreadId)).runs[0]!;
-      yield* sink.write({
-        events: [
-          {
-            id: EventId.make("archive-delegated-child-run-completed"),
-            type: "run.updated",
-            threadId: childThreadId,
-            runId: childRun.id,
-            occurredAt: now,
-            payload: { ...childRun, status: "completed", completedAt: now },
-          },
-          {
-            id: EventId.make("archive-delegated-child-completed"),
-            type: "subagent.updated",
+        const childThreadId = task.childThreadId!;
+        const archive = (key: string) =>
+          orchestrator.dispatch({
+            type: "thread.archive",
+            commandId: CommandId.make(key),
             threadId,
-            nodeId: task.id,
-            occurredAt: now,
-            payload: { ...task, status: "completed", result: "Done", completedAt: now },
-          },
-        ],
-      });
-      yield* orchestrator.dispatch({
-        type: "thread.archive",
-        commandId: CommandId.make("archive-delegated-allowed"),
-        threadId,
-      });
-      assert.isNotNull((yield* orchestrator.getThreadProjection(threadId)).thread.archivedAt);
-    }),
+          });
+        if (running) {
+          yield* archive("archive-delegated-retire");
+          assert.equal((yield* orchestrator.getThreadShell(threadId))?.retiringWorkerCount, 1);
+          yield* orchestrator.autoArchiveSettledChild(
+            threadId,
+            CommandId.make(`archive-delegated-still-running-${running}`),
+          );
+          assert.isNull((yield* orchestrator.getThreadProjection(threadId)).thread.archivedAt);
+          assert.isNull((yield* orchestrator.getThreadProjection(childThreadId)).thread.archivedAt);
+        }
+        const childRun = (yield* orchestrator.getThreadProjection(childThreadId)).runs[0]!;
+        yield* sink.write({
+          events: [
+            {
+              id: EventId.make(`archive-delegated-child-run-completed-${running}`),
+              type: "run.updated",
+              threadId: childThreadId,
+              runId: childRun.id,
+              occurredAt: now,
+              payload: { ...childRun, status: "completed", completedAt: now },
+            },
+            {
+              id: EventId.make(`archive-delegated-child-completed-${running}`),
+              type: "subagent.updated",
+              threadId,
+              nodeId: task.id,
+              occurredAt: now,
+              payload: { ...task, status: "completed", result: "Done", completedAt: now },
+            },
+          ],
+        });
+        if (running) {
+          yield* orchestrator.autoArchiveSettledChild(
+            threadId,
+            CommandId.make(`archive-delegated-drained-${running}`),
+          );
+        } else {
+          yield* archive("archive-delegated-idle");
+        }
+        assert.isNotNull((yield* orchestrator.getThreadProjection(threadId)).thread.archivedAt);
+        assert.isNotNull(
+          (yield* orchestrator.getThreadProjection(childThreadId)).thread.archivedAt,
+        );
+        yield* orchestrator.dispatch({
+          type: "thread.unarchive",
+          commandId: CommandId.make(`archive-delegated-restore-${running}`),
+          threadId,
+        });
+        assert.isNull((yield* orchestrator.getThreadProjection(threadId)).thread.archivedAt);
+        assert.isNull((yield* orchestrator.getThreadProjection(childThreadId)).thread.archivedAt);
+        assert.isUndefined((yield* orchestrator.getThreadShell(threadId))?.retiringWorkerCount);
+      }),
   );
 
   it.effect(
@@ -9149,6 +9375,12 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
           CommandId.make("retire-after-result"),
         );
         assert.isNotNull((yield* orchestrator.getThreadProjection(threadId)).thread.archivedAt);
+        assert.isNotNull(
+          (yield* orchestrator.getThreadProjection(childThreadId)).thread.archivedAt,
+        );
+        assert.isNull(
+          (yield* orchestrator.getThreadProjection(successorThreadId)).thread.archivedAt,
+        );
       }),
   );
 

@@ -95,6 +95,12 @@ it("resets a subagent child's snooze, title job and remote delegation but keeps 
       threadId: ThreadId.make("linked-parent"),
       title: "Linked parent",
     },
+    branchPullRequest: {
+      projectId: ProjectId.make("project:subagent-snooze"),
+      repository: "pingdotgg/t3code",
+      number: 24,
+      url: "https://github.com/pingdotgg/t3code/pull/24",
+    },
   };
   const childProviderThreadId = ProviderThreadId.make("provider-thread:subagent-awake-child");
   const parentNodeId = NodeId.make("node:subagent-parent");
@@ -115,6 +121,7 @@ it("resets a subagent child's snooze, title job and remote delegation but keeps 
   assert.isNull(childThread.snoozedAt);
   assert.isNull(childThread.titleRegeneration);
   assert.isUndefined(childThread.delegatedFrom);
+  assert.isNull(childThread.branchPullRequest);
   assert.equal(childThread.projectId, parentThread.projectId);
   assert.equal(childThread.runtimeMode, parentThread.runtimeMode);
   assert.equal(childThread.interactionMode, parentThread.interactionMode);

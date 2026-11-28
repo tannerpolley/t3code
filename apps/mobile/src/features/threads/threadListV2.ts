@@ -4,7 +4,7 @@ import {
   sidebarAgentState,
   groupSidebarThreadsByProject,
   projectSectionRows,
-  sidebarProjectContents,
+  sidebarFamilyRows,
   type SidebarAgentRole,
   type SidebarAgentState,
 } from "@t3tools/client-runtime/state/sidebar-families";
@@ -452,6 +452,7 @@ export interface ThreadListV2ThreadListItem {
   readonly hasQueuedMessages: boolean;
   readonly agentCount: number;
   readonly agentRow: boolean;
+  readonly familyExpanded?: boolean | undefined;
   readonly canMoveUp: boolean;
   readonly canMoveDown: boolean;
 }
@@ -568,6 +569,7 @@ export function threadListV2ListItemsAreEqual(
         previous.hasQueuedMessages === item.hasQueuedMessages &&
         previous.agentCount === item.agentCount &&
         previous.agentRow === item.agentRow &&
+        previous.familyExpanded === item.familyExpanded &&
         previous.canMoveUp === item.canMoveUp &&
         previous.canMoveDown === item.canMoveDown
       );
@@ -694,6 +696,7 @@ export function buildThreadListV2ListItems(input: {
     item: ThreadListV2Item,
     agentRow = false,
     depth = 0,
+    familyExpanded?: boolean,
   ): ThreadListV2ThreadListItem => {
     const snoozeWakeLabelText =
       item.snoozed && item.thread.snoozedUntil != null && input.snoozeLabelNow !== undefined
@@ -725,6 +728,7 @@ export function buildThreadListV2ListItems(input: {
       agentCount:
         input.folders?.children.get(`${item.thread.environmentId}:${item.thread.id}`)?.length ?? 0,
       agentRow,
+      familyExpanded,
       canMoveUp: move?.canMoveUp === true,
       canMoveDown: move?.canMoveDown === true,
     };
@@ -747,10 +751,52 @@ export function buildThreadListV2ListItems(input: {
           thread.runtime?.status === "running",
         ),
       );
-    const routeOnly = (threads: readonly EnvironmentThreadShell[]) =>
-      threads.filter((thread) => `${thread.environmentId}:${thread.id}` === folders.routeKey);
+    const threadKey = (thread: EnvironmentThreadShell) => `${thread.environmentId}:${thread.id}`;
+    const families = sidebarFamilyRows(
+      input.items.map((row) => row.thread),
+      folders.children,
+      folders.expanded,
+      folders.routeKey,
+      (key) => folders.expanded.get(key) ?? true,
+    );
+    const renderFamily = (thread: EnvironmentThreadShell, depth: number, showChildren = true) => {
+      const family = families.get(threadKey(thread)) ?? [];
+      for (const item of showChildren ? family : family.slice(0, 1)) {
+        if (item.kind === "role") {
+          result.push({
+            type: "v2-agent-section",
+            key: item.key,
+            depth: depth + item.depth,
+            role: item.role,
+            total: item.threads.length,
+            counts: countStates(item.threads),
+            expanded: item.expanded,
+          });
+          continue;
+        }
+        const child = item.thread;
+        const snoozed =
+          (input.snoozeEnvironmentIds?.has(child.environmentId) ?? true) &&
+          effectiveSnoozed(child, { now: folders.now });
+        result.push(
+          buildThreadItem(
+            rowsByThread.get(child) ?? {
+              thread: child,
+              variant: snoozed || child.settledOverride === "settled" ? "slim" : "card",
+              pinned: false,
+              snoozed,
+              wokeAt: resolveThreadListV2WokeAt(child, { now: folders.now }),
+              isLast: false,
+            },
+            item.parentKey !== undefined,
+            depth + item.depth,
+            showChildren && item.descendantCount > 0 ? item.expanded : undefined,
+          ),
+        );
+      }
+    };
     for (const row of input.items) {
-      if (row.pinned) result.push(buildThreadItem(row));
+      if (row.pinned) renderFamily(row.thread, 0);
     }
     const groups = folders.projects.map((project) => ({
       project,
@@ -760,7 +806,6 @@ export function buildThreadListV2ListItems(input: {
     const groupedFolders = groupSidebarThreadsByProject(
       groups,
       input.items.flatMap((row) => (row.pinned ? [] : [row.thread])),
-      folders.children,
       ({ project }) => folders.scoped || !project.archived,
     );
     const collapsedById = new Map([...folders.expanded].map(([key, expanded]) => [key, !expanded]));
@@ -787,7 +832,7 @@ export function buildThreadListV2ListItems(input: {
         });
         continue;
       }
-      const { group, threads, roleSections } = row.folder;
+      const { group, threads } = row.folder;
       const key = `v2-project-folder:${group.projectKey}`;
       const savedExpansion = group.memberProjectRefs
         .map(
@@ -800,12 +845,14 @@ export function buildThreadListV2ListItems(input: {
         ? threads.some((thread) => folders.layouts.has(thread.environmentId))
           ? sortProjectThreads(threads, folders.layouts)
           : threads
-        : routeOnly(threads);
+        : threads.filter((thread) =>
+            families.get(threadKey(thread))?.some((item) => item.key === folders.routeKey),
+          );
       const hiddenThreads = expanded
         ? []
         : [
             ...threads.filter((thread) => !visibleThreads.includes(thread)),
-            ...roleSections.flatMap((section) => section.threads),
+            ...threads.flatMap((thread) => folders.children.get(threadKey(thread)) ?? []),
           ];
       result.push({
         type: "v2-project-folder",
@@ -817,47 +864,7 @@ export function buildThreadListV2ListItems(input: {
         counts: countStates(hiddenThreads),
         expanded,
       });
-      for (const content of sidebarProjectContents(visibleThreads, expanded ? roleSections : [])) {
-        if (content.kind === "threads") {
-          for (const thread of content.rows) {
-            const row = rowsByThread.get(thread);
-            if (row) result.push(buildThreadItem(row, false, depth));
-          }
-          continue;
-        }
-        for (const section of content.rows) {
-          const roleKey = `v2-agent-role:${section.key}`;
-          const roleExpanded = folders.expanded.get(roleKey) ?? true;
-          result.push({
-            type: "v2-agent-section",
-            key: roleKey,
-            depth,
-            role: section.role,
-            total: section.threads.length,
-            counts: countStates(section.threads),
-            expanded: roleExpanded,
-          });
-          for (const thread of roleExpanded ? section.threads : routeOnly(section.threads)) {
-            const snoozed =
-              (input.snoozeEnvironmentIds?.has(thread.environmentId) ?? true) &&
-              effectiveSnoozed(thread, { now: folders.now });
-            result.push(
-              buildThreadItem(
-                {
-                  thread,
-                  variant: snoozed || thread.settledOverride === "settled" ? "slim" : "card",
-                  pinned: thread.pinnedAt != null,
-                  snoozed,
-                  wokeAt: resolveThreadListV2WokeAt(thread, { now: folders.now }),
-                  isLast: false,
-                },
-                true,
-                depth,
-              ),
-            );
-          }
-        }
-      }
+      for (const thread of visibleThreads) renderFamily(thread, depth, expanded);
     }
   } else {
     const threadItems = input.items.map((item) => buildThreadItem(item));
