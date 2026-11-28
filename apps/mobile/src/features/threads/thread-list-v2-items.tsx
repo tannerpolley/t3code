@@ -1,6 +1,5 @@
 import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspaceDetail";
 import Svg, { Circle } from "react-native-svg";
-import { threadLifeRing } from "@t3tools/client-runtime/sidebar-row-model";
 import { IconButton } from "../../components/ui/IconButton";
 import {
   formatSidebarAgentStates,
@@ -8,11 +7,14 @@ import {
 } from "@t3tools/client-runtime/state/sidebar-families";
 import { useViewability } from "@legendapp/list/react-native";
 import {
+  canStartFresh,
   effortBarHeights,
   sidebarRoleLabels,
   sidebarRowModel,
   shouldRecedeSidebarThread,
+  threadLifeRing,
 } from "@t3tools/client-runtime/sidebar-row-model";
+import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
 import { isDelegationModelRole, isProviderDriverKind } from "@t3tools/contracts";
 import { ThreadRowSpinner } from "./ThreadRowSpinner";
 import { useAppActive } from "../../lib/appState";
@@ -33,6 +35,7 @@ import { RowPressable } from "../../components/ui/RowPressable";
 import { CustomSnoozeSheet } from "./CustomSnoozeSheet";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { threadArrangementOpenAtom } from "../../state/thread-order";
+import { orchestrationEnvironment } from "../../state/orchestration";
 import { serverEnvironment } from "../../state/server";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -991,6 +994,29 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const navigation = useNavigation();
   const selectDetail = useSelectWorkspaceDetail();
   const successorThreadId = thread.source.successorThreadId;
+  const threshold = useAtomValue(
+    serverEnvironment.threadRetirementThresholdAtom(thread.environmentId),
+  );
+  const canStartFreshHere =
+    threshold !== null &&
+    canOperateThread &&
+    !props.hasQueuedMessages &&
+    canStartFresh(thread.source);
+  const startFresh = useAtomCommand(orchestrationEnvironment.startFresh, { reportFailure: false });
+  const handleStartFresh = useCallback(async () => {
+    const result = await startFresh({
+      environmentId: thread.environmentId,
+      input: { threadId: thread.id },
+    });
+    if (result._tag === "Success") {
+      selectDetail({
+        name: "Thread",
+        params: { environmentId: thread.environmentId, threadId: result.value.successorThreadId },
+      });
+    } else if (!isAtomCommandInterrupted(result)) {
+      Dialog.alert(gt("Could not start fresh"));
+    }
+  }, [gt, selectDetail, startFresh, thread.environmentId, thread.id]);
   const handleRegenerateTitle = useCallback(
     () => onRegenerateThreadTitle(thread),
     [onRegenerateThreadTitle, thread],
@@ -1173,6 +1199,9 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       ...(successorThreadId === undefined
         ? []
         : [{ id: "open-successor", title: gt("Open successor"), image: "arrow.right.circle" }]),
+      ...(canStartFreshHere
+        ? [{ id: "start-fresh", title: gt("Start fresh"), image: "arrow.clockwise" }]
+        : []),
       ...(thread.branch
         ? [
             {
@@ -1267,6 +1296,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   }, [
     autoSettleMenuItems,
     canShareWithGuest,
+    canStartFreshHere,
     canUnsettle,
     pinMenuItems,
     props.settlementSupported,
@@ -1287,6 +1317,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
           name: "Thread",
           params: { environmentId: thread.environmentId, threadId: successorThreadId },
         });
+      if (nativeEvent.event === "start-fresh" && canStartFreshHere) void handleStartFresh();
       if (nativeEvent.event === "new-thread-on-branch") onNewThreadOnBranch(thread);
       if (nativeEvent.event === "settle") handleSettle();
       if (nativeEvent.event === "unsettle") handleUnsettle();
@@ -1356,6 +1387,8 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       navigation,
       selectDetail,
       successorThreadId,
+      canStartFreshHere,
+      handleStartFresh,
       handleArchive,
       handleDelete,
       handleRegenerateTitle,
@@ -1464,9 +1497,6 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const issue = thread.issues?.[0];
   const issueCount = thread.issues?.length ?? 0;
 
-  const threshold = useAtomValue(
-    serverEnvironment.threadRetirementThresholdAtom(thread.environmentId),
-  );
   const lifeRing = threshold === null ? null : threadLifeRing(thread.source, threshold);
   const lifeColor = lifeRing?.warning === true ? "#d97706" : "#787882";
   const retiringLabel =

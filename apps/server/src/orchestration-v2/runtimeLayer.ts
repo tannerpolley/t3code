@@ -123,7 +123,7 @@ export const layerProjectService = ProjectService.layer.pipe(
   ),
 );
 
-const layerProviderEventIngestorProvided = ProviderEventIngestor.layer.pipe(
+export const layerProviderEventIngestorProvided = ProviderEventIngestor.layer.pipe(
   Layer.provide(
     Layer.mergeAll(
       layerEventSink,
