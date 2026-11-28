@@ -385,6 +385,8 @@
   "24d802debbab31e0": "{rerun, plural, one {Перезапущено {rerun} проверку, отклонено: {refused}} few {Перезапущено {rerun} проверки, отклонено: {refused}} many {Перезапущено {rerun} проверок, отклонено: {refused}} other {Перезапущено {rerun} проверки, отклонено: {refused}}}",
   "8146ee71f7426683": "{count, plural, one {Проверено {count} пул-реквест} few {Проверено {count} пул-реквеста} many {Проверено {count} пул-реквестов} other {Проверено {count} пул-реквеста}}",
   "638678077ba2e050": "{count, plural, one {Не удалось проверить {count} пул-реквест} few {Не удалось проверить {count} пул-реквеста} many {Не удалось проверить {count} пул-реквестов} other {Не удалось проверить {count} пул-реквеста}}",
+  "dff22785f720f267": "{count, plural, one {Read usage} other {Read usage {count} times}}",
+  "e0219ec66e258228": "{count, plural, one {Tried to read usage} other {Tried to read usage {count} times}}",
   "420bea546d5f8802": "Тред скопирован",
   "2efb2dd3bf170f67": "Не удалось скопировать тред",
   "6c03545936b55e0b": "Ссылка на PR скопирована",

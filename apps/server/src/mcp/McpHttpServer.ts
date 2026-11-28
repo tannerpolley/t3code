@@ -71,6 +71,8 @@ import { FeedbackToolkit } from "./toolkits/feedback/tools.ts";
 import * as Feedback from "../feedback/FeedbackService.ts";
 import { EnvironmentToolkit } from "./toolkits/environment/tools.ts";
 import * as EnvironmentHandlers from "./toolkits/environment/handlers.ts";
+import { UsageToolkit } from "./toolkits/usage/tools.ts";
+import * as UsageHandlers from "./toolkits/usage/handlers.ts";
 import { ThemeToolkit } from "./toolkits/theme/tools.ts";
 import * as ThemeHandlers from "./toolkits/theme/handlers.ts";
 import { ProjectArtifactsToolkit } from "./toolkits/projectArtifacts/tools.ts";
@@ -1569,6 +1571,7 @@ export const layerTools = Layer.mergeAll(
   toolkitRegistration(ProjectArtifactsToolkit, ProjectArtifactsHandlers.layer),
   layerFeedbackToolkit,
   layerEnvironmentToolkit,
+  toolkitRegistration(UsageToolkit, UsageHandlers.layer),
   layerThemeToolkit,
   layerPreviewControlsRegistration,
   layerWorktreeToolkitRegistration,

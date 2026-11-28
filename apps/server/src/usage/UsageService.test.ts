@@ -3036,6 +3036,30 @@ describe("UsageService", () => {
       }),
   );
 
+  it.effect("reads a covered window from the saved scan and does not see later transcripts", () =>
+    Effect.gen(function* () {
+      const { transcript, settings, home } = yield* setup;
+      yield* Effect.promise(() => NodeFSP.writeFile(transcript, claudeLine(1, 5)));
+      const wider = { ...WINDOW, sinceDay: UsageDay.make("2026-07-01") };
+      yield* Effect.gen(function* () {
+        const service = yield* UsageService.make;
+        assert.isUndefined(yield* service.readCachedSummary(WINDOW));
+        assert.strictEqual(totalOutputTokens(yield* service.readSummary(WINDOW)), 5);
+        yield* service.awaitPersisted;
+
+        yield* Effect.promise(() => NodeFSP.appendFile(transcript, claudeLine(2, 100)));
+        const restarted = yield* UsageService.make;
+        const saved = yield* restarted.readCachedSummary(WINDOW);
+        assert.strictEqual(saved === undefined ? undefined : totalOutputTokens(saved), 5);
+        assert.isUndefined(yield* restarted.readCachedSummary(wider));
+        assert.strictEqual(totalOutputTokens(yield* restarted.readSummary(WINDOW)), 105);
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(layerService({ prefix: "usage-service-cached-only", home, settings })),
+      );
+    }),
+  );
+
   it.effect("filters original model IDs before aliases, pricing, buckets and session counts", () =>
     Effect.gen(function* () {
       const { transcript, settings, home } = yield* setup;

@@ -165,6 +165,10 @@ export class UsageService extends Context.Service<
   UsageService,
   {
     readonly readSummary: (input: UsageSummaryInput) => Effect.Effect<UsageSummary, UsageReadError>;
+    /** Saved scan only. A window the last scan did not cover is `undefined`; nothing is walked. */
+    readonly readCachedSummary: (
+      input: UsageSummaryInput,
+    ) => Effect.Effect<UsageSummary | undefined, UsageReadError>;
     readonly refreshRates: Effect.Effect<UsagePricing>;
   }
 >()("t3/usage/UsageService") {}
@@ -832,6 +836,7 @@ export const make = Effect.gen(function* () {
     input: UsageSummaryInput,
     settings: ServerSettingsValue,
     provisional: boolean,
+    cachedOnly: boolean,
   ) {
     if (input.sinceDay > input.untilDay) {
       return yield* new UsageReadError({
@@ -894,13 +899,17 @@ export const make = Effect.gen(function* () {
       );
       // A window no complete scan has read would show partial totals, so every directory must cover it.
       // Saved files are keyed by path, so two providers reading one directory keep only one parse.
-      const fromMemory =
-        provisional &&
-        resolved.dirs.length > 0 &&
-        new Set(resolved.dirs.map((source) => source.dir)).size === resolved.dirs.length &&
-        resolved.dirs.every(
-          (source) => (coveredSince.get(coverageKey(source)) ?? Infinity) <= windowStartMs,
-        );
+      const unique =
+        new Set(resolved.dirs.map((source) => source.dir)).size === resolved.dirs.length;
+      const everyCovered = resolved.dirs.every(
+        (source) => (coveredSince.get(coverageKey(source)) ?? Infinity) <= windowStartMs,
+      );
+      const fromMemory = provisional && resolved.dirs.length > 0 && unique && everyCovered;
+      // A window the last scan did not cover would walk transcripts and resolve service
+      // tiers in the turn table. A cached read stops here instead of stalling that database.
+      if (cachedOnly && !(resolved.dirs.length === 0 || (unique && everyCovered))) {
+        return { cacheMiss: true as const };
+      }
       const [, scanned] = yield* Effect.all(
         [
           fromMemory ? loadSavedRates : provisional ? ensureRates(false) : Effect.void,
@@ -915,12 +924,14 @@ export const make = Effect.gen(function* () {
         ],
         { concurrency: 2 },
       );
-      return { scannedDirs: scanned, fromMemory };
+      return { cacheMiss: false as const, scannedDirs: scanned, fromMemory };
     });
-    const [{ scannedDirs, fromMemory }] = yield* Effect.all(
+    const [collected] = yield* Effect.all(
       [collect, provisional ? Effect.void : ensureRates(false)],
       { concurrency: 2 },
     );
+    if (collected.cacheMiss) return { cacheMiss: true as const };
+    const { scannedDirs, fromMemory } = collected;
 
     const priceOverrides = createOverrideRateTable(settings.usagePriceOverrides);
     const modelAliases = resolveModelAliases(settings.usageModelAliases);
@@ -1200,7 +1211,7 @@ export const make = Effect.gen(function* () {
       scanDurationMs: Math.max(0, finishedAtMs - startedAtMs),
       ...(input.modelFilter === undefined ? {} : { modelFilter: input.modelFilter }),
     } satisfies UsageSummary;
-    return { summary, fromMemory };
+    return { cacheMiss: false as const, summary, fromMemory };
   });
 
   const readWindow = Effect.fn("UsageService.readWindow")(function* (
@@ -1208,11 +1219,26 @@ export const make = Effect.gen(function* () {
     settings: ServerSettingsValue,
     provisional: boolean,
   ) {
-    const { summary, fromMemory } = yield* scanSummary(input, settings, provisional);
+    const scanned = yield* scanSummary(input, settings, provisional, false);
+    if (scanned.cacheMiss) {
+      return yield* new UsageReadError({
+        reason: "scanFailed",
+        detail: "The usage cache does not cover this window.",
+      });
+    }
+    const { summary, fromMemory } = scanned;
     // With nothing marked refreshing the client would keep a saved answer as final.
-    return fromMemory && !summary.sources.some((source) => source.refreshing === true)
-      ? (yield* scanSummary(input, settings, false)).summary
-      : summary;
+    if (!(fromMemory && !summary.sources.some((source) => source.refreshing === true))) {
+      return summary;
+    }
+    const refreshed = yield* scanSummary(input, settings, false, false);
+    if (refreshed.cacheMiss) {
+      return yield* new UsageReadError({
+        reason: "scanFailed",
+        detail: "The usage cache does not cover this window.",
+      });
+    }
+    return refreshed.summary;
   });
 
   const inflightScans = new Map<string, Deferred.Deferred<UsageSummary, UsageReadError>>();
@@ -1269,7 +1295,25 @@ export const make = Effect.gen(function* () {
     return yield* Deferred.await(deferred);
   });
 
-  return { readSummary, refreshRates, awaitPersisted } as const;
+  const readCachedSummary = Effect.fn("UsageService.readCachedSummary")(function* (
+    requested: UsageSummaryInput,
+  ) {
+    const modelFilter = canonicalModelFilter(requested.modelFilter);
+    const input = {
+      sinceDay: requested.sinceDay,
+      untilDay: requested.untilDay,
+      timeZone: requested.timeZone,
+      ...(requested.resolution === undefined ? {} : { resolution: requested.resolution }),
+      ...(requested.sinceTime === undefined ? {} : { sinceTime: requested.sinceTime }),
+      ...(requested.untilTime === undefined ? {} : { untilTime: requested.untilTime }),
+      ...(modelFilter === undefined ? {} : { modelFilter }),
+    };
+    const settings = yield* readSettings;
+    const scanned = yield* scanSummary(input, settings, true, true);
+    return scanned.cacheMiss ? undefined : scanned.summary;
+  });
+
+  return { readSummary, readCachedSummary, refreshRates, awaitPersisted } as const;
 });
 
 export const layer = Layer.effect(UsageService, make);

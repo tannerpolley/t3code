@@ -385,6 +385,8 @@
   "24d802debbab31e0": "{rerun, plural, one {{rerun} vérification relancée, {refused} refusées} other {{rerun} vérifications relancées, {refused} refusées}}",
   "8146ee71f7426683": "{count, plural, one {{count} pull request relue} other {{count} pull requests relues}}",
   "638678077ba2e050": "{count, plural, one {Tentative de revue de {count} pull request} other {Tentative de revue de {count} pull requests}}",
+  "dff22785f720f267": "{count, plural, one {Read usage} other {Read usage {count} times}}",
+  "e0219ec66e258228": "{count, plural, one {Tried to read usage} other {Tried to read usage {count} times}}",
   "420bea546d5f8802": "Fil copié",
   "2efb2dd3bf170f67": "Échec de la copie du fil",
   "6c03545936b55e0b": "Lien de la PR copié",

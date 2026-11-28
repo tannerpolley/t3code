@@ -100,6 +100,29 @@ T3 Code.
   `projectId` or `threadId`.
 - To list threads across projects, call `t3_thread_list` with
   `allProjects: true`, or use `t3_thread_search`.
+- To read token, cost, and limit analytics, use the usage tools below. **Read
+  only** is enough. They never change the environment.
+
+## Read usage
+
+`t3_usage_summary`, `t3_usage_threads`, and `t3_usage_limits` are read-only.
+They do not return prompts, messages, secrets, account emails, credential ids,
+or file paths. Pass `environmentId` to read a linked environment, as with the
+other tools.
+
+- `t3_usage_summary` returns token, cache, and estimated cost totals for 1–90
+  days (7 by default), with breakdowns by provider, model, and day, plus cache
+  hit rate and cost per million tokens. It reads the scan **Usage** already
+  saved. If that scan does not cover the range, the result is `not_cached` and
+  no new scan starts. Open **Usage** for that range, then call it again. Cost
+  is an API-equivalent estimate, not the subscription bill.
+- `t3_usage_threads` names recent threads and projects that used the most
+  tokens, and threads close to automatic compaction. It looks at the 40 most
+  recently updated threads and the latest 8 turns of each, so it is a bounded
+  sample, not a complete history. Use `t3_usage_summary` for period totals.
+- `t3_usage_limits` returns the latest limit snapshot: how full each window is,
+  when it resets, and how many reset credits are banked. It does not refresh
+  limits or redeem credits.
 
 ## Claude Code
 

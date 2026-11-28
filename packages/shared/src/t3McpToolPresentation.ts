@@ -88,7 +88,8 @@ export type T3McpToolSummaryAction =
   | "device"
   | "html-preview"
   | "html-render"
-  | "send-to-user";
+  | "send-to-user"
+  | "usage";
 
 export interface T3McpToolDefinition {
   readonly displayName: string;
@@ -404,6 +405,9 @@ const T3_MCP_TOOLS: Readonly<Record<string, T3McpToolDefinition>> = {
     ["Read", "Reading", "Read", "environment preferences"],
     "environment-read",
   ),
+  t3_usage_summary: tool(["Read", "Reading", "Read", "usage totals"], "usage"),
+  t3_usage_threads: tool(["Read", "Reading", "Read", "thread usage"], "usage"),
+  t3_usage_limits: tool(["Read", "Reading", "Read", "usage limits"], "usage"),
   t3_environment_links: tool(
     ["List", "Listing", "Listed", "linked environments"],
     "environment-links",

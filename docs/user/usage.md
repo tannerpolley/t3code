@@ -242,6 +242,17 @@ Claude quotas. Tap it to open **Usage → Limits**; on Android this works while 
 the background, otherwise open the app from the launcher. On iOS, use **Edit Widget** to choose
 Session, Weekly, or both for each provider. Reopen T3 to refresh expired readings.
 
+## Read usage from another agent
+
+An outside agent signed in at **Read only** or above can read usage through the
+environment's MCP server. `t3_usage_summary` returns the saved token, cache, and
+cost totals. `t3_usage_threads` names recent threads and projects using the most
+tokens, and threads close to automatic compaction. `t3_usage_limits` returns the
+latest limit snapshot, including reset times and banked reset credits. None of
+them include conversation text, and they do not refresh limits or redeem
+credits. If a date range is not in the saved scan yet, open **Usage** for that
+range and ask again. See [Outside agents](./outside-agents.md#read-usage).
+
 ## Keyboard shortcuts
 
 On web and desktop, open Usage from the command palette. While on Usage,

@@ -393,6 +393,8 @@
   "24d802debbab31e0": "{rerun, plural, other {검사 {rerun}개를 재실행하고 {refused}개는 거부됨}}",
   "8146ee71f7426683": "{count, plural, other {풀 리퀘스트 {count}개를 검토함}}",
   "638678077ba2e050": "{count, plural, other {풀 리퀘스트 {count}개 검토를 시도함}}",
+  "dff22785f720f267": "{count, plural, one {Read usage} other {Read usage {count} times}}",
+  "e0219ec66e258228": "{count, plural, one {Tried to read usage} other {Tried to read usage {count} times}}",
   "420bea546d5f8802": "스레드 복사됨",
   "2efb2dd3bf170f67": "스레드를 복사하지 못했습니다",
   "6c03545936b55e0b": "PR 링크 복사됨",

@@ -385,6 +385,8 @@
   "24d802debbab31e0": "{rerun, plural, other {{rerun} 件のチェックを再実行し、{refused} 件は拒否されました}}",
   "8146ee71f7426683": "{count, plural, other {{count} 件のプルリクエストをレビューしました}}",
   "638678077ba2e050": "{count, plural, other {{count} 件のプルリクエストのレビューを試みました}}",
+  "dff22785f720f267": "{count, plural, one {Read usage} other {Read usage {count} times}}",
+  "e0219ec66e258228": "{count, plural, one {Tried to read usage} other {Tried to read usage {count} times}}",
   "420bea546d5f8802": "スレッドをコピーしました",
   "2efb2dd3bf170f67": "スレッドをコピーできませんでした",
   "6c03545936b55e0b": "PR のリンクをコピーしました",
