@@ -1,3 +1,5 @@
+import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspaceDetail";
+import Svg, { Circle } from "react-native-svg";
 import { IconButton } from "../../components/ui/IconButton";
 import {
   formatSidebarAgentStates,
@@ -5,12 +7,15 @@ import {
 } from "@t3tools/client-runtime/state/sidebar-families";
 import { useViewability } from "@legendapp/list/react-native";
 import {
+  canStartFresh,
   effortBarHeights,
   sidebarRoleLabels,
   sidebarRowModel,
   shouldRecedeSidebarThread,
+  threadLifeRing,
 } from "@t3tools/client-runtime/sidebar-row-model";
-import { isProviderDriverKind } from "@t3tools/contracts";
+import { isAtomCommandInterrupted } from "@t3tools/client-runtime/state/runtime";
+import { isDelegationModelRole, isProviderDriverKind } from "@t3tools/contracts";
 import { ThreadRowSpinner } from "./ThreadRowSpinner";
 import { useAppActive } from "../../lib/appState";
 import { useIsFocused } from "@react-navigation/native";
@@ -30,6 +35,7 @@ import { RowPressable } from "../../components/ui/RowPressable";
 import { CustomSnoozeSheet } from "./CustomSnoozeSheet";
 import { appAtomRegistry } from "../../state/atom-registry";
 import { threadArrangementOpenAtom } from "../../state/thread-order";
+import { orchestrationEnvironment } from "../../state/orchestration";
 import { serverEnvironment } from "../../state/server";
 import { threadEnvironment } from "../../state/threads";
 import { useAtomCommand } from "../../state/use-atom-command";
@@ -875,9 +881,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   );
   const role = thread.delegatedRole;
   const rowTitle =
-    props.agentRow || role === undefined || role === "general"
-      ? thread.title
-      : m(sidebarRoleLabels[role]);
+    props.agentRow || !isDelegationModelRole(role) ? thread.title : m(sidebarRoleLabels[role]);
   const [visible, setVisible] = useState(false);
   useViewability(useCallback((token) => setVisible(token.isViewable), []));
   const appActive = useAppActive();
@@ -988,6 +992,31 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     !canOperateThread;
   const canShareWithGuest = useCanShareWithGuest(thread.environmentId);
   const navigation = useNavigation();
+  const selectDetail = useSelectWorkspaceDetail();
+  const successorThreadId = thread.source.successorThreadId;
+  const threshold = useAtomValue(
+    serverEnvironment.threadRetirementThresholdAtom(thread.environmentId),
+  );
+  const canStartFreshHere =
+    threshold !== null &&
+    canOperateThread &&
+    !props.hasQueuedMessages &&
+    canStartFresh(thread.source);
+  const startFresh = useAtomCommand(orchestrationEnvironment.startFresh, { reportFailure: false });
+  const handleStartFresh = useCallback(async () => {
+    const result = await startFresh({
+      environmentId: thread.environmentId,
+      input: { threadId: thread.id },
+    });
+    if (result._tag === "Success") {
+      selectDetail({
+        name: "Thread",
+        params: { environmentId: thread.environmentId, threadId: result.value.successorThreadId },
+      });
+    } else if (!isAtomCommandInterrupted(result)) {
+      Dialog.alert(gt("Could not start fresh"));
+    }
+  }, [gt, selectDetail, startFresh, thread.environmentId, thread.id]);
   const handleRegenerateTitle = useCallback(
     () => onRegenerateThreadTitle(thread),
     [onRegenerateThreadTitle, thread],
@@ -1167,6 +1196,12 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     const nested = Platform.OS === "ios";
     const localized = (action: MenuAction): MenuAction => ({ ...action, title: m(action.title) });
     const direct: MenuAction[] = [
+      ...(successorThreadId === undefined
+        ? []
+        : [{ id: "open-successor", title: gt("Open successor"), image: "arrow.right.circle" }]),
+      ...(canStartFreshHere
+        ? [{ id: "start-fresh", title: gt("Start fresh"), image: "arrow.clockwise" }]
+        : []),
       ...(thread.branch
         ? [
             {
@@ -1261,6 +1296,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   }, [
     autoSettleMenuItems,
     canShareWithGuest,
+    canStartFreshHere,
     canUnsettle,
     pinMenuItems,
     props.settlementSupported,
@@ -1270,11 +1306,18 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
     gt,
     m,
     swipeActions.secondary,
+    successorThreadId,
     thread.branch,
     titleMenuItems,
   ]);
   const handleMenuAction = useCallback(
     ({ nativeEvent }: { readonly nativeEvent: { readonly event: string } }) => {
+      if (nativeEvent.event === "open-successor" && successorThreadId !== undefined)
+        selectDetail({
+          name: "Thread",
+          params: { environmentId: thread.environmentId, threadId: successorThreadId },
+        });
+      if (nativeEvent.event === "start-fresh" && canStartFreshHere) void handleStartFresh();
       if (nativeEvent.event === "new-thread-on-branch") onNewThreadOnBranch(thread);
       if (nativeEvent.event === "settle") handleSettle();
       if (nativeEvent.event === "unsettle") handleUnsettle();
@@ -1342,6 +1385,10 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       onNewThreadOnBranch,
       thread,
       navigation,
+      selectDetail,
+      successorThreadId,
+      canStartFreshHere,
+      handleStartFresh,
       handleArchive,
       handleDelete,
       handleRegenerateTitle,
@@ -1450,6 +1497,16 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const issue = thread.issues?.[0];
   const issueCount = thread.issues?.length ?? 0;
 
+  const lifeRing = threshold === null ? null : threadLifeRing(thread.source, threshold);
+  const lifeColor = lifeRing?.warning === true ? "#d97706" : "#787882";
+  const retiringLabel =
+    thread.source.retiringWorkerCount === undefined
+      ? null
+      : gt(
+          "{count, plural, one {Retiring · {count} agent running} other {Retiring · {count} agents running}}",
+          { count: thread.source.retiringWorkerCount ?? 0 },
+        );
+
   const rowContent = (close: () => void) => (
     <RowPressable
       key={`${thread.environmentId}:${thread.id}`}
@@ -1457,11 +1514,9 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       interactionOpacity={rowAppearance.interactionOpacity}
       className={rowAppearance.className}
       accessibilityHint={swipeAccessibilityHint}
-      accessibilityLabel={
-        agentCountLabel === null
-          ? rowAccessibilityLabel
-          : `${rowAccessibilityLabel}, ${agentCountLabel}`
-      }
+      accessibilityLabel={[rowAccessibilityLabel, agentCountLabel, retiringLabel]
+        .filter(Boolean)
+        .join(", ")}
       accessibilityRole="button"
       accessibilityState={{ selected }}
       accessibilityActions={rowAccessibilityActions}
@@ -1480,9 +1535,45 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
           className="min-h-11 flex-row items-center gap-1"
           style={{
             marginStart: props.agentRow ? 16 : 0,
-            opacity: recede ? 0.65 : 1,
+            opacity: recede || retiringLabel !== null ? 0.65 : 1,
           }}
         >
+          {lifeRing ? (
+            <View
+              className="shrink-0 flex-row items-center gap-0.5"
+              accessibilityLabel={gt(
+                "{count, plural, one {{count} compaction} other {{count} compactions}}",
+                { count: lifeRing.count },
+              )}
+            >
+              <Svg width={12} height={12} viewBox="0 0 12 12">
+                <Circle
+                  cx={6}
+                  cy={6}
+                  r={4.5}
+                  stroke={lifeColor}
+                  strokeOpacity={0.3}
+                  strokeWidth={2}
+                  fill="none"
+                />
+                <Circle
+                  cx={6}
+                  cy={6}
+                  r={4.5}
+                  stroke={lifeColor}
+                  strokeWidth={2}
+                  fill="none"
+                  strokeDasharray={2 * Math.PI * 4.5}
+                  strokeDashoffset={2 * Math.PI * 4.5 * (1 - (lifeRing.fill ?? 0) / 100)}
+                  rotation={-90}
+                  origin="6, 6"
+                />
+              </Svg>
+              <Text className="text-2xs tabular-nums" style={{ color: lifeColor }}>
+                {lifeRing.count}
+              </Text>
+            </View>
+          ) : null}
           {props.project ? (
             <ProjectFavicon
               environmentId={thread.environmentId}
@@ -1552,6 +1643,11 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
               />
             ) : null}
           </View>
+          {retiringLabel === null ? null : (
+            <Text className={cn("max-w-28 shrink text-2xs", muted)} numberOfLines={1}>
+              {retiringLabel}
+            </Text>
+          )}
           {agentCountLabel ? (
             <Text className={cn("shrink-0 text-2xs", muted)}>{agentCountLabel}</Text>
           ) : null}

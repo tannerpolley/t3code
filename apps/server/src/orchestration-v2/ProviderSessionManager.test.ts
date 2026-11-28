@@ -2756,11 +2756,12 @@ it.effect(
 );
 
 it.effect.each([
-  { relationshipToParent: null, subagent: false },
-  { relationshipToParent: "subagent", subagent: true },
+  { relationshipToParent: null, role: undefined, subagent: false, leafWorker: false },
+  { relationshipToParent: "subagent", role: "orchestrator", subagent: true, leafWorker: false },
+  { relationshipToParent: "subagent", role: "review", subagent: true, leafWorker: true },
 ] as const)(
-  "ProviderSessionManagerV2 marks MCP credentials of delegated children ($relationshipToParent)",
-  ({ relationshipToParent, subagent }) =>
+  "ProviderSessionManagerV2 marks MCP credentials of delegated children ($role)",
+  ({ relationshipToParent, role, subagent, leafWorker }) =>
     Effect.gen(function* () {
       const state = yield* Ref.make(emptyState);
       const mcpConfigs = yield* Ref.make<
@@ -2785,6 +2786,7 @@ it.effect.each([
               ...created,
               payload: {
                 ...created.payload,
+                ...(role === undefined ? {} : { delegatedRole: role }),
                 lineage:
                   relationshipToParent === null
                     ? created.payload.lineage
@@ -2800,7 +2802,9 @@ it.effect.each([
           "",
         );
         assert.isDefined(token);
-        assert.equal((yield* registry.resolve(token!))?.thread.subagent, subagent);
+        const caller = yield* registry.resolve(token!);
+        assert.equal(caller?.thread.subagent, subagent);
+        assert.equal(caller?.thread.leafWorker === true, leafWorker);
         yield* manager.close(providerSessionId);
       });
 

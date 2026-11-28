@@ -1,3 +1,5 @@
+import { MAX_THREAD_RETIREMENT_COMPACTIONS } from "@t3tools/contracts";
+import { NumberField, NumberFieldGroup, NumberFieldInput } from "../ui/number-field";
 import { thrownErrorMessage } from "@t3tools/client-runtime/errors";
 import { m as resolveMessage } from "~/i18n/messages";
 import { useAtomValue } from "@effect/atom-react";
@@ -2172,6 +2174,35 @@ export function ThreadsSettingsPanel() {
         />
       </SettingsSection>
 
+      {!isProjectScope &&
+      hasServerTargets &&
+      connectedEnvironments.every(
+        (entry) => entry.serverConfig?.environment.capabilities.threadStartFresh === true,
+      ) ? (
+        <SettingsSection id="thread-retirement" title={gt("Thread retirement")}>
+          <SettingsRow
+            serverScoped
+            settingKeys={["threadRetirementCompactions"]}
+            title={gt("Compactions before the ring turns amber")}
+            control={
+              <NumberField
+                size="sm"
+                min={1}
+                max={MAX_THREAD_RETIREMENT_COMPACTIONS}
+                value={settings.threadRetirementCompactions}
+                onValueCommitted={(value) => {
+                  if (value !== null && Number.isSafeInteger(value) && value >= 1)
+                    updateSettings({ threadRetirementCompactions: value });
+                }}
+              >
+                <NumberFieldGroup>
+                  <NumberFieldInput aria-label={gt("Compactions before the ring turns amber")} />
+                </NumberFieldGroup>
+              </NumberField>
+            }
+          />
+        </SettingsSection>
+      ) : null}
       {hasServerTargets ? (
         <SettingsSection id="auto-settle" title={gt("Auto-settle")}>
           <SettingsRow

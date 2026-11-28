@@ -1650,6 +1650,7 @@ export const layer: Layer.Layer<
           });
           const loaded = yield* loadFromProvider(
             session.ensureThread({
+              delegatedRole: projection.thread.delegatedRole,
               threadId: projection.thread.id,
               title: projection.thread.title,
               modelSelection: run.modelSelection,
@@ -1739,6 +1740,7 @@ export const layer: Layer.Layer<
           // Pass the stored provider row for adoption; adapter-minted duplicates make activeProviderThreadId flap.
           return yield* loadFromProvider(
             session.ensureThread({
+              delegatedRole: projection.thread.delegatedRole,
               threadId: projection.thread.id,
               title: projection.thread.title,
               modelSelection: run.modelSelection,
@@ -1852,6 +1854,7 @@ export const layer: Layer.Layer<
                 }),
               )
             : session.resumeThread({
+                delegatedRole: projection.thread.delegatedRole,
                 providerThread,
                 threadId: projection.thread.id,
                 modelSelection: run.modelSelection,
@@ -1922,6 +1925,7 @@ export const layer: Layer.Layer<
         });
         const replacement = yield* loadFromProvider(
           session.ensureThread({
+            delegatedRole: projection.thread.delegatedRole,
             threadId: projection.thread.id,
             title: projection.thread.title,
             modelSelection: run.modelSelection,

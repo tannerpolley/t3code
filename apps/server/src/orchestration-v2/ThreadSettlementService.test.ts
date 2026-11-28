@@ -710,6 +710,7 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
               .map((thread) => ({ ...thread, pullRequests: thread.pullRequests ?? [] })),
           ),
         ),
+      listRetiringThreadIds: () => Effect.succeed([]),
       ...options.projections,
       getSettlementCandidates: (threadId, readOptions) =>
         Ref.update(candidateReads, (reads) => [...reads, threadId]).pipe(

@@ -391,6 +391,18 @@ export const make = Effect.gen(function* () {
     if (mergedPullRequest !== null) yield* pauseQuietReads();
     const settings = yield* settingsService.getSettings;
     const automaticSettlementEnabled = autoSettlementConfigured(settings);
+    yield* Effect.forEach(
+      yield* projections.listRetiringThreadIds(threadId),
+      (id) =>
+        orchestrator
+          .drainRetiringThread(id)
+          .pipe(
+            Effect.catch((cause) =>
+              Effect.logWarning("Retiring thread result relay failed", { threadId: id, cause }),
+            ),
+          ),
+      { concurrency: 8, discard: true },
+    );
     const threads = yield* projections.getSettlementCandidates(threadId, {
       includeSettledChildren: true,
     });
@@ -398,8 +410,9 @@ export const make = Effect.gen(function* () {
     yield* Effect.forEach(
       threads.filter(
         (thread) =>
-          thread.settledOverride === "settled" &&
-          thread.lineage.relationshipToParent === "subagent",
+          thread.retirement !== undefined ||
+          (thread.settledOverride === "settled" &&
+            thread.lineage.relationshipToParent === "subagent"),
       ),
       (thread) => archiveSettledChild(thread.id),
       { concurrency: 8, discard: true },
@@ -413,6 +426,7 @@ export const make = Effect.gen(function* () {
     // Merge events resweep all candidates because unlinked threads settle through branch lookup.
     const candidates = threads.filter(
       (thread) =>
+        thread.retirement === undefined &&
         (automaticSettlementEnabled || isDelegatedAppThread(thread)) &&
         isAutoSettlementCandidate(thread, nowMs),
     );
@@ -906,6 +920,10 @@ export const make = Effect.gen(function* () {
 
   const processEvent = (event: OrchestrationV2DomainEvent) => {
     switch (event.type) {
+      case "thread.metadata-updated":
+        return event.payload.retirement === undefined ? Effect.void : enqueueThread(event.threadId);
+      case "runtime-request.updated":
+        return event.payload.status === "pending" ? Effect.void : enqueueThread(event.threadId);
       case "thread.settled":
         return finishSettlement(
           event.threadId,

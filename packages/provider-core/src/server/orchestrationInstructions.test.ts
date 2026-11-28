@@ -1,6 +1,13 @@
+import * as NodeServices from "@effect/platform-node/NodeServices";
 import { assert, describe, it } from "@effect/vitest";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as Effect from "effect/Effect";
+import * as FileSystem from "effect/FileSystem";
+import * as Path from "effect/Path";
 
 import {
+  delegatedLeafInstructions,
+  resolveDelegatedLeafSkillPath,
   T3_CODE_DEVICE_TOOL_INSTRUCTIONS,
   T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH,
   T3_CODE_ORCHESTRATION_INSTRUCTIONS,
@@ -8,6 +15,33 @@ import {
   t3OrchestrationPrompt,
   t3OrchestrationSystemPrompt,
 } from "./orchestrationInstructions.ts";
+
+it.effect("only directs a leaf worker to a role skill that exists on its host", () =>
+  Effect.gen(function* () {
+    const fileSystem = yield* FileSystem.FileSystem;
+    const path = yield* Path.Path;
+    const home = yield* fileSystem.makeTempDirectoryScoped();
+    const providerHome = path.join(home, ".claude");
+    const resolveSkill = resolveDelegatedLeafSkillPath("review", providerHome, {
+      fileSystem,
+      path,
+    }).pipe(Effect.provideService(HostProcess.HomeDirectory, home));
+
+    const missingSkill = yield* resolveSkill;
+    assert.isUndefined(missingSkill);
+    const fallback = delegatedLeafInstructions("role-reviewer", missingSkill);
+    assert.notInclude(fallback, "SKILL.md");
+    assert.include(fallback, "without editing files");
+    assert.include(fallback, "evidence");
+
+    const skillDirectory = path.join(home, ".agents", "skills", "role-reviewer");
+    const skillPath = path.join(skillDirectory, "SKILL.md");
+    yield* fileSystem.makeDirectory(skillDirectory, { recursive: true });
+    yield* fileSystem.writeFileString(skillPath, "---\nname: role-reviewer\n---\n");
+
+    assert.include(delegatedLeafInstructions("role-reviewer", yield* resolveSkill), skillPath);
+  }).pipe(Effect.provide(NodeServices.layer)),
+);
 
 describe("T3 device instructions", () => {
   it("route device work through device_open and give Claude the line that loads the tools", () => {

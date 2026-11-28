@@ -500,7 +500,14 @@ const OrchestrationV2LastTitleRegeneration = Schema.Struct({
   completedAt: Schema.DateTimeUtc,
 });
 
+const ThreadRetirement = Schema.Struct({
+  successorThreadId: ThreadId,
+  pendingTaskIds: Schema.Array(NodeId),
+  completed: Schema.optionalKey(Schema.Literal(true)),
+});
+
 export const OrchestrationV2AppThread = Schema.Struct({
+  retirement: Schema.optionalKey(ThreadRetirement),
   ...OrchestrationV2CreationFields,
   id: ThreadId,
   projectId: ProjectId,
@@ -2417,6 +2424,10 @@ export type OrchestrationV2LatestVisibleMessageSummary =
   typeof OrchestrationV2LatestVisibleMessageSummary.Type;
 
 export const OrchestrationV2ThreadShell = Schema.Struct({
+  contextFillPercent: Schema.optionalKey(NonNegativeInt),
+  compactionCount: Schema.optionalKey(NonNegativeInt),
+  successorThreadId: Schema.optionalKey(ThreadId),
+  retiringWorkerCount: Schema.optionalKey(NonNegativeInt),
   ...OrchestrationV2CreationFields,
   id: ThreadId,
   projectId: ProjectId,
@@ -3853,6 +3864,22 @@ export type OrchestrationV2Command = typeof OrchestrationV2Command.Type;
 
 // Excluded from dispatchCommand so only the server can send these.
 const OrchestrationV2InternalCommand = Schema.Union([
+  Schema.Struct({
+    type: Schema.Literal("thread.start-fresh"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    successorThreadId: ThreadId,
+    messageId: MessageId,
+    handoff: TrimmedNonEmptyString.check(Schema.isMaxLength(8000)),
+  }),
+  Schema.Struct({
+    type: Schema.Literal("thread.retirement.relay"),
+    commandId: CommandId,
+    threadId: ThreadId,
+    successorThreadId: ThreadId,
+    taskId: NodeId,
+    messageId: MessageId,
+  }),
   // The server issues this after checking the value against the run's declared schema.
   Schema.Struct({
     type: Schema.Literal("run.output.submit"),
@@ -4129,6 +4156,7 @@ export const ORCHESTRATION_V2_WS_METHODS = {
   forceStopThread: "orchestration.forceStopThread",
   getTurnItem: "orchestration.getTurnItem",
   launchThread: "orchestration.launchThread",
+  startFresh: "orchestration.startFresh",
   subscribeShell: "orchestration.subscribeShell",
   subscribeThread: "orchestration.subscribeThread",
   subscribeCommandOutput: "orchestration.subscribeCommandOutput",
@@ -4179,6 +4207,28 @@ export const OrchestrationV2ArchivedShellSnapshot = Schema.Struct({
   threads: Schema.Array(OrchestrationV2ThreadShell),
 });
 export type OrchestrationV2ArchivedShellSnapshot = typeof OrchestrationV2ArchivedShellSnapshot.Type;
+
+export const OrchestrationV2StartFreshInput = Schema.Struct({ threadId: ThreadId });
+export const OrchestrationV2StartFreshResult = Schema.Struct({ successorThreadId: ThreadId });
+export class OrchestrationV2StartFreshError extends Schema.TaggedError<OrchestrationV2StartFreshError>()(
+  "OrchestrationV2StartFreshError",
+  {
+    threadId: ThreadId,
+    reason: Schema.Literals(["unavailable", "handoff", "launch"]),
+    cause: Schema.optional(Schema.Defect()),
+  },
+) {
+  override get message(): string {
+    switch (this.reason) {
+      case "unavailable":
+        return "Start fresh requires an open main thread with an empty message queue.";
+      case "handoff":
+        return "The source thread could not write its handoff.";
+      case "launch":
+        return "The successor thread could not start.";
+    }
+  }
+}
 
 export const OrchestrationV2ThreadLaunchInput = Schema.Struct({
   commandId: CommandId,

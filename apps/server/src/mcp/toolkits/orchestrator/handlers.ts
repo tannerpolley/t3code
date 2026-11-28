@@ -27,6 +27,30 @@ const handlers = {
       return yield* service.delegateTask(scope, input);
     }),
   ),
+  t3_thread_start_fresh: McpToolAccess.writesThreads(
+    () => [],
+    ({ handoff }) =>
+      Effect.gen(function* () {
+        const { scope, threads } = yield* readCaller();
+        const caller = yield* McpInvocationContext.requireThreadScope(
+          scope,
+          "t3_thread_start_fresh",
+        );
+        return yield* threads.startFresh({ threadId: caller.thread.threadId, handoff }).pipe(
+          Effect.map((result) => ({
+            ...result,
+            link: McpInvocationContext.threadLinkFor(scope, result.successorThreadId),
+          })),
+          Effect.mapError(
+            (cause) =>
+              new OrchestratorMcpFailure({
+                code: "orchestration_error",
+                message: cause.message,
+              }),
+          ),
+        );
+      }),
+  ),
   task_status: McpToolAccess.actsAsCaller(({ taskId }) =>
     Effect.gen(function* () {
       const scope = yield* McpInvocationContext.McpInvocationContext;

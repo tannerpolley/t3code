@@ -291,6 +291,9 @@ import {
   OrchestrationV2RpcSchemas,
   OrchestrationV2ThreadHistoryPage,
   OrchestrationV2ThreadLaunchError,
+  OrchestrationV2StartFreshInput,
+  OrchestrationV2StartFreshResult,
+  OrchestrationV2StartFreshError,
 } from "./orchestrationV2.ts";
 import {
   ProjectCreateNewInput,
@@ -2292,6 +2295,12 @@ const WsOrchestrationV2GetTurnItemRpc = Rpc.make(ORCHESTRATION_V2_WS_METHODS.get
   error: Schema.Union([OrchestrationV2GetThreadProjectionError, EnvironmentAuthorizationError]),
 });
 
+const WsOrchestrationV2StartFreshRpc = Rpc.make(ORCHESTRATION_V2_WS_METHODS.startFresh, {
+  payload: OrchestrationV2StartFreshInput,
+  success: OrchestrationV2StartFreshResult,
+  error: Schema.Union([OrchestrationV2StartFreshError, EnvironmentAuthorizationError]),
+});
+
 const WsOrchestrationV2LaunchThreadRpc = Rpc.make(ORCHESTRATION_V2_WS_METHODS.launchThread, {
   payload: OrchestrationV2RpcSchemas.launchThread.input,
   success: OrchestrationV2RpcSchemas.launchThread.output,
@@ -2798,6 +2807,7 @@ export const WsRpcGroup = RpcGroup.make(
   WsOrchestrationV2GetOlderSettledThreadsRpc,
   WsOrchestrationV2GetThreadProjectionRpc,
   WsOrchestrationV2LaunchThreadRpc,
+  WsOrchestrationV2StartFreshRpc,
   WsOrchestrationV2SubscribeShellRpc,
   WsOrchestrationV2SubscribeThreadRpc,
   WsOrchestrationV2SubscribeCommandOutputRpc,

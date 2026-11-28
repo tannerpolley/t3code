@@ -577,6 +577,7 @@ export interface ProviderAdapterV2OpenSessionInput {
 }
 
 export interface ProviderAdapterV2EnsureThreadInput {
+  readonly delegatedRole?: OrchestrationV2AppThread["delegatedRole"];
   readonly threadId: ThreadId;
   readonly title?: string;
   readonly modelSelection: ModelSelection;
@@ -808,6 +809,7 @@ export interface ProviderAdapterV2SessionRuntime {
     input: ProviderAdapterV2EnsureThreadInput,
   ) => Effect.Effect<OrchestrationV2ProviderThread, ProviderAdapterV2Error>;
   readonly resumeThread: (input: {
+    readonly delegatedRole?: OrchestrationV2AppThread["delegatedRole"];
     readonly providerThread: OrchestrationV2ProviderThread;
     readonly threadId?: ThreadId;
     readonly modelSelection?: ModelSelection;

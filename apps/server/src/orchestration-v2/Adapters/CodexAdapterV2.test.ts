@@ -945,6 +945,7 @@ function withConfigReads(
 function makeCodexReplayTranscript(input: {
   readonly scenario: string;
   readonly entries: ReadonlyArray<CodexReplay.CodexAppServerReplayEntry>;
+  readonly metadata?: CodexReplay.CodexAppServerReplayTranscript["metadata"];
 }): CodexReplay.CodexAppServerReplayTranscript {
   return {
     provider: "codex",
@@ -952,6 +953,7 @@ function makeCodexReplayTranscript(input: {
     version: "0.144.0",
     scenario: input.scenario,
     entries: input.entries,
+    ...(input.metadata === undefined ? {} : { metadata: input.metadata }),
   };
 }
 
@@ -3062,66 +3064,149 @@ describe("CodexAdapterV2 post-settle continuation", () => {
     ),
   );
 
-  // regression: #36520 MCP servers can tell a delegate_task child from a user thread
-  it.effect("starts delegate_task children with the subagent thread source", () =>
-    Effect.gen(function* () {
-      const scenario = "delegated-thread-source";
-      const preamble = codexReplayPreamble({
-        nativeThreadId: "delegated-parent-thread",
-        nativeTurnId: "unused",
-        prompt: "unused",
-      }).slice(0, 5);
-      const childStart = codexReplayPreamble({
-        nativeThreadId: "delegated-child-thread",
-        nativeTurnId: "unused",
-        prompt: "unused",
-      })
-        .slice(3, 5)
-        .map((entry) => withReplayRequestId(entry, 3))
-        .map((entry) =>
-          entry.type === "expect_outbound" &&
-          Predicate.isObject(entry.frame) &&
-          Predicate.isObject(entry.frame["params"])
-            ? {
-                ...entry,
+  it.effect.each(["orchestrator", "review"] as const)(
+    "applies the %s preset to Codex child start and resume",
+    (delegatedRole) =>
+      Effect.gen(function* () {
+        const scenario = `delegated-thread-${delegatedRole}`;
+        const childNativeId = "delegated-child-thread";
+        const config = CodexAdapterV2.CODEX_THREAD_CONFIG;
+        const leafConfig = {
+          "features.apps": false,
+          "features.multi_agent": false,
+          "agents.enabled": false,
+          "memories.use_memories": false,
+          "skills.include_instructions": false,
+        };
+        const preamble = codexReplayPreamble({
+          nativeThreadId: "delegated-parent-thread",
+          nativeTurnId: "unused",
+          prompt: "unused",
+        }).slice(0, 5);
+        const childStart = codexReplayPreamble({
+          nativeThreadId: childNativeId,
+          nativeTurnId: "unused",
+          prompt: "unused",
+        })[4]!;
+        const requests: Array<{
+          method: "thread/start" | "thread/resume";
+          config: Record<PropertyKey, unknown>;
+        }> = [];
+        const harness = yield* makeCodexReplayHarness(
+          makeCodexReplayTranscript({
+            scenario,
+            // The captured configs own the role assertions, so replay can reach both requests.
+            metadata: { recorderThreadConfigKeys: Object.keys(leafConfig) },
+            entries: [
+              ...preamble,
+              {
+                type: "expect_outbound",
+                label: "thread/start",
                 frame: {
-                  ...entry.frame,
-                  params: { ...entry.frame["params"], threadSource: "subagent" },
+                  id: 3,
+                  method: "thread/start",
+                  params: { config, threadSource: "subagent" },
                 },
-              }
-            : entry,
-        );
-      const threadSources: Array<unknown> = [];
-      const harness = yield* makeCodexReplayHarness(
-        makeCodexReplayTranscript({ scenario, entries: [...preamble, ...childStart] }),
-        () => Effect.void,
-        (method, params) =>
-          Effect.sync(() => {
-            if (method === "thread/start" && Predicate.isObject(params)) {
-              threadSources.push(params["threadSource"]);
-            }
+              },
+              withReplayRequestId(childStart, 3),
+              {
+                type: "expect_outbound",
+                label: "thread/resume",
+                frame: {
+                  id: 4,
+                  method: "thread/resume",
+                  params: { threadId: childNativeId, excludeTurns: true, config },
+                },
+              },
+              {
+                type: "emit_inbound",
+                label: "thread/resume",
+                frame: {
+                  id: 4,
+                  result: { thread: { id: childNativeId, updatedAt: 1782622440 } },
+                },
+              },
+            ],
           }),
-      );
-      const childThreadId = (yield* IdAllocator.IdAllocatorV2).derive.delegatedTaskThread({
-        commandId: CommandId.make(`mcp:${scenario}:delegate-task:child`),
-      });
-      yield* harness.runtime.ensureThread({
-        threadId: childThreadId,
-        modelSelection: CODEX_TEST_MODEL_SELECTION,
-        runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
-      });
-      assert.deepEqual(threadSources, [undefined, "subagent"]);
-    }).pipe(
-      Effect.scoped,
-      Effect.provide(
-        Layer.mergeAll(
-          IdAllocator.layer,
-          McpProviderSessions.layer,
-          NodeServices.layer,
-          NodeCrypto.layer,
+          () => Effect.void,
+          (method, params) =>
+            Effect.sync(() => {
+              if (
+                (method === "thread/start" || method === "thread/resume") &&
+                Predicate.isObject(params) &&
+                Predicate.isObject(params.config)
+              ) {
+                requests.push({ method, config: params.config });
+              }
+            }),
+        );
+        const threadId = (yield* IdAllocator.IdAllocatorV2).derive.delegatedTaskThread({
+          commandId: CommandId.make(`mcp:${scenario}:delegate-task:child`),
+        });
+        yield* (yield* McpProviderSessions.McpProviderSessions).set({
+          environmentId: EnvironmentId.make("environment-codex-mcp"),
+          threadId,
+          providerSessionId: "child-session",
+          providerInstanceId: ProviderInstanceId.make("codex"),
+          endpoint: "http://127.0.0.1:43123/mcp",
+          authorizationHeader: "Bearer test-credential",
+          browserToolsAvailable: true,
+        });
+        const providerThread = yield* harness.runtime.ensureThread({
+          threadId,
+          delegatedRole,
+          modelSelection: CODEX_TEST_MODEL_SELECTION,
+          runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
+        });
+        yield* harness.runtime.resumeThread({ providerThread, delegatedRole });
+        const directMcpConfig =
+          delegatedRole === "review"
+            ? { url: "http://127.0.0.1:43123/mcp", enabled: false }
+            : { enabled_tools: ["t3_thread_wait", "delegate_task"] };
+        assert.deepEqual(
+          requests.map((request) => request.method),
+          ["thread/start", "thread/start", "thread/resume"],
+        );
+        for (const { method, config } of requests.slice(1)) {
+          const directMcp = config["mcp_servers.t3-code-direct"];
+          assert.deepInclude(directMcp, directMcpConfig);
+          if (delegatedRole === "review") {
+            assert.deepInclude(config, leafConfig, method);
+          } else {
+            assert.notProperty(directMcp, "enabled", method);
+            for (const key of Object.keys(leafConfig)) {
+              assert.notProperty(config, key, method);
+            }
+          }
+        }
+        const turn = yield* CodexAdapterV2.buildCodexTurnStartParams({
+          nativeThreadId: childNativeId,
+          codexInput: [{ type: "text", text: "Review the change." }],
+          modelSelection: CODEX_TEST_MODEL_SELECTION,
+          runtimePolicy: CODEX_TEST_RUNTIME_POLICY,
+          delegatedRole,
+          hasT3Mcp: true,
+        });
+        const prompt = JSON.stringify(turn.additionalContext);
+        assert.include(prompt, "request_secret");
+        assert.include(prompt, "link_pull_request");
+        if (delegatedRole === "review") {
+          assert.include(prompt, "without editing files");
+          assert.notInclude(prompt, "delegate_task");
+        } else {
+          assert.include(prompt, "delegate_task");
+        }
+      }).pipe(
+        Effect.scoped,
+        Effect.provide(
+          Layer.mergeAll(
+            IdAllocator.layer,
+            McpProviderSessions.layer,
+            NodeServices.layer,
+            NodeCrypto.layer,
+          ),
         ),
       ),
-    ),
   );
 
   // regression: #15839 launch-arg MCP servers survive the thread's t3-code server

@@ -138,6 +138,7 @@ import {
   type ThreadId,
   resolveIdleCompaction,
   isDelegatedAppThread,
+  delegatedLeafSkill,
 } from "@t3tools/contracts";
 
 import { FILE_HEADERS_ONLY, formatPatch, structuredPatch } from "diff";
@@ -228,6 +229,9 @@ import type { ManagedServerProvider } from "@t3tools/provider-core/server/snapsh
 import {
   T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH,
   T3_CODE_ORCHESTRATION_INSTRUCTIONS,
+  T3_CODE_VISUAL_INSTRUCTIONS,
+  delegatedLeafInstructions,
+  resolveDelegatedLeafSkillPath,
 } from "@t3tools/provider-core/server/orchestrationInstructions";
 import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
 import {
@@ -724,6 +728,22 @@ export const ClaudeProviderCapabilitiesV2 = {
     enforcement: "native",
   },
 } satisfies OrchestrationV2ProviderCapabilities;
+
+const CLAUDE_LEAF_DISALLOWED_TOOLS = [
+  "Agent",
+  "ListAgents",
+  "Workflow",
+  "ScheduleWakeup",
+  "CronCreate",
+  "CronDelete",
+  "CronList",
+  "Monitor",
+  "Task",
+  "TaskList",
+  "TaskOutput",
+  "TaskStop",
+  "Skill",
+] as const;
 
 const CLAUDE_CODE_PRESET_TOOLS = {
   type: "preset",
@@ -2556,8 +2576,16 @@ export function makeClaudeQueryOptions(input: {
   readonly appendSystemPromptFileText?: string;
   // Flag settings, because a user's settings.json env beats the process env in Claude Code.
   readonly toolSearchOverride?: "true";
+  readonly delegatedRole?: OrchestrationV2AppThread["delegatedRole"];
+  readonly delegatedRoleSkillPath?: string | undefined;
 }): ClaudeAgentSdkQueryOptions {
   const compiledSelection = compileClaudeModelSelection(input.modelSelection, input.modelCatalog);
+  const leafSkill = delegatedLeafSkill(input.delegatedRole);
+  const disallowedTools =
+    leafSkill === undefined
+      ? input.disallowedTools
+      : [...new Set([...(input.disallowedTools ?? []), ...CLAUDE_LEAF_DISALLOWED_TOOLS])];
+  const toolSearchOverride = leafSkill === undefined ? input.toolSearchOverride : "true";
   const {
     // claudeLaunchArgDirectories reads every --add-dir into additionalDirectories.
     "add-dir": _launchArgAddDir,
@@ -2626,7 +2654,7 @@ export function makeClaudeQueryOptions(input: {
         };
   // A settings file path cannot take extra keys, so it goes through unchanged.
   const effectiveQuerySettings =
-    (input.toolSearchOverride === undefined &&
+    (toolSearchOverride === undefined &&
       aliasOverrideEnv === undefined &&
       autoCompactWindow === undefined) ||
     typeof compactQuerySettings === "string"
@@ -2640,9 +2668,22 @@ export function makeClaudeQueryOptions(input: {
             ...(autoCompactWindow === undefined
               ? {}
               : { CLAUDE_CODE_AUTO_COMPACT_WINDOW: autoCompactWindow }),
-            ...(input.toolSearchOverride === undefined
-              ? {}
-              : { ENABLE_TOOL_SEARCH: input.toolSearchOverride }),
+            ...(toolSearchOverride === undefined ? {} : { ENABLE_TOOL_SEARCH: toolSearchOverride }),
+          },
+        } as ClaudeSdkSettings);
+  // Skill drives the native catalog attachment. Leaf workers read just the role and repo skills.
+  const presetSettings =
+    leafSkill === undefined || typeof effectiveQuerySettings === "string"
+      ? effectiveQuerySettings
+      : ({
+          ...effectiveQuerySettings,
+          autoMemoryEnabled: false,
+          disableClaudeAiConnectors: true,
+          disableBundledSkills: true,
+          env: {
+            ...effectiveQuerySettings?.env,
+            CLAUDE_CODE_DISABLE_AUTO_MEMORY: "1",
+            ENABLE_CLAUDEAI_MCP_SERVERS: "false",
           },
         } as ClaudeSdkSettings);
   const deviceInstructions = input.mcpServers !== undefined && input.deviceToolsAvailable === true;
@@ -2667,7 +2708,7 @@ export function makeClaudeQueryOptions(input: {
     ...threadIdentity,
     ...(input.resumeSessionAt === undefined ? {} : { resumeSessionAt: input.resumeSessionAt }),
     ...(input.allowedTools === undefined ? {} : { allowedTools: [...input.allowedTools] }),
-    ...(input.disallowedTools === undefined ? {} : { disallowedTools: [...input.disallowedTools] }),
+    ...(disallowedTools === undefined ? {} : { disallowedTools: [...disallowedTools] }),
     ...(input.canUseTool === undefined ? {} : { canUseTool: input.canUseTool }),
     ...(input.allowDangerouslySkipPermissions === true
       ? { allowDangerouslySkipPermissions: true }
@@ -2676,16 +2717,16 @@ export function makeClaudeQueryOptions(input: {
       ? {
           thinking: { type: "adaptive" as const, display: "summarized" as const },
           settings:
-            typeof effectiveQuerySettings === "string"
-              ? effectiveQuerySettings
+            typeof presetSettings === "string"
+              ? presetSettings
               : {
-                  ...effectiveQuerySettings,
+                  ...presetSettings,
                   showThinkingSummaries: true,
                 },
         }
-      : effectiveQuerySettings === undefined
+      : presetSettings === undefined
         ? {}
-        : { settings: effectiveQuerySettings }),
+        : { settings: presetSettings }),
     ...(input.onUserDialog === undefined ? {} : { onUserDialog: input.onUserDialog }),
     ...(input.onElicitation === undefined ? {} : { onElicitation: input.onElicitation }),
     ...(input.supportedDialogKinds === undefined
@@ -2703,16 +2744,21 @@ export function makeClaudeQueryOptions(input: {
         buildRuntimeInstructions({
           harness: "Claude Code",
           agentFeedback,
+          leafWorker: leafSkill !== undefined,
           runtimePolicy: { cwd: input.cwd, workspace: input.workspace },
         }) +
           (input.mcpServers === undefined
             ? ""
-            : T3_CODE_ORCHESTRATION_INSTRUCTIONS +
-              CLAUDE_BACKGROUND_WAIT_INSTRUCTIONS +
+            : (leafSkill === undefined
+                ? T3_CODE_ORCHESTRATION_INSTRUCTIONS + CLAUDE_BACKGROUND_WAIT_INSTRUCTIONS
+                : `\n\n${T3_CODE_VISUAL_INSTRUCTIONS}`) +
               CLAUDE_SEND_TO_USER_INSTRUCTIONS +
               (deviceInstructions
                 ? `\n${T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH}\n`
                 : "")),
+        ...(leafSkill === undefined
+          ? []
+          : [delegatedLeafInstructions(leafSkill, input.delegatedRoleSkillPath)]),
         ...launchAppendSystemPrompt,
       ].join("\n\n"),
     },
@@ -3963,9 +4009,11 @@ export function claudeEffectiveQueryPolicyKey(
   },
   // Folders are fixed when a query starts, so a changed list needs a new one.
   workspace?: ProviderAdapter.ProviderAdapterV2RuntimePolicy["workspace"],
+  delegatedRole?: OrchestrationV2AppThread["delegatedRole"],
 ): string {
   return JSON.stringify({
     workspace,
+    leafSkill: delegatedLeafSkill(delegatedRole),
     runtimePolicy: claudeRuntimeQueryPolicyKey({
       ...queryPolicy,
       ...(mcpOverrides.allowedTools === undefined
@@ -13783,6 +13831,7 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             queryPolicy,
             mcpOverrides,
             turnInput.runtimePolicy.workspace,
+            turnInput.appThread.delegatedRole,
           );
           const resumeSessionAt = yield* getNativeConversationHeadId(turnInput.providerThread);
           const existing = yield* Ref.get(queryContext);
@@ -13959,6 +14008,12 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             modelCatalog: catalog,
             nativeThreadId,
             title: turnInput.appThread.title,
+            delegatedRole: turnInput.appThread.delegatedRole,
+            delegatedRoleSkillPath: yield* resolveDelegatedLeafSkillPath(
+              turnInput.appThread.delegatedRole,
+              claudeConfigDirOf(path, adapterOptions.environment, yield* HostProcess.HomeDirectory),
+              { fileSystem, path },
+            ),
             resume: shouldResume,
             ...(resumeSessionAt === undefined ? {} : { resumeSessionAt }),
             cwd: turnInput.runtimePolicy.cwd,

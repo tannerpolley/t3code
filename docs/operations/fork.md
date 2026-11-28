@@ -16,8 +16,9 @@ Mobile runs the fork through its own Android app; see [Android app](#android-app
 ## Branches and checks
 
 - `main` is the only long-lived branch. Work on short-lived branches from `origin/main`; use a worktree next to the checkout only for parallel work.
-- Each branch passes `vp run check:changed` locally before review. It only runs tests near changed files.
-- Group ready branches into one batch branch, re-run `vp run check:changed` on the combined head, and open one PR. GitHub CI then runs the full suites once for the whole group. CI has caught regressions in suites that `check:changed` never selected.
+- Heavy checks run on GitHub, not this shared machine. Workers run only the test files they changed or that sit beside changed files (`vp test run <files>`). For fork work this replaces AGENTS.md's `vp run check:changed` before push.
+- Group ready branches into one batch branch and open one PR. GitHub CI runs `check:changed`'s fast checks and the full suites once for the whole group. When CI fails, the failing job's files point to the branch responsible.
+- Give a batch with UI changes one live dev-client check, not one per branch.
 - Merge only after CI is green, at the head CI checked.
 - CI runs on GitHub-hosted `ubuntu-24.04` runners, which are free for this public repository. In the repository's Actions settings, every workflow except `ci.yml` is disabled. Keep it that way: the others release, deploy or comment for upstream.
 

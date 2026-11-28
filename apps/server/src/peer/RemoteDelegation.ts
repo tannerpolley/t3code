@@ -1,5 +1,6 @@
 import {
   CommandId,
+  isDelegationModelRole,
   type EnvironmentId,
   NodeId,
   OrchestratorMcpCapabilitiesInput,
@@ -304,7 +305,7 @@ const make = Effect.gen(function* () {
       // The provider and model inherit as they do for a task here. Another
       // provider there has no model to inherit, so the caller names one.
       const inherited = parent.thread.modelSelection;
-      const role = input.role === "general" ? undefined : input.role;
+      const role = isDelegationModelRole(input.role) ? input.role : undefined;
       // The same key identifies the launch there and the recorded task here.
       const key = input.clientRequestId ?? (yield* random.uuidV4());
       const commandId = CommandId.make(

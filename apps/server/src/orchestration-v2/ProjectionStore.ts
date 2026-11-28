@@ -245,7 +245,7 @@ export type ProjectionSettlementCandidate = Pick<
   | "pendingBackgroundTasks"
   | "pendingGuestMessageCount"
 > &
-  Pick<OrchestrationV2AppThread, "lastSnoozeWakeAt"> & {
+  Pick<OrchestrationV2AppThread, "lastSnoozeWakeAt" | "retirement"> & {
     /** Latest user or MCP agent message; automatic server and provider wakes are excluded. */
     readonly latestResumingMessageAt: DateTime.Utc | null;
   };
@@ -685,6 +685,9 @@ export interface ProjectionStoreV2Shape {
   readonly getLimitRecoveryWakeAt: (
     now: DateTime.Utc,
   ) => Effect.Effect<number | null, ProjectionStoreV2Error>;
+  readonly listRetiringThreadIds: (
+    threadId?: ThreadId,
+  ) => Effect.Effect<ReadonlyArray<ThreadId>, ProjectionStoreV2Error>;
   readonly getSettlementCandidates: (
     threadId?: ThreadId,
     options?: { readonly includeSettledChildren?: boolean },
@@ -1263,6 +1266,13 @@ export type AgentAwarenessThread = ProjectThreadAwarenessV2Input["thread"] &
   >;
 
 type ShellThreadRow = {
+  readonly compaction_count: number | null;
+  readonly context_used_tokens: number | null;
+  readonly context_window_tokens: number | null;
+  readonly context_usage_at: string | null;
+  readonly latest_compaction_at: string | null;
+  readonly latest_compaction_tokens: number | null;
+  readonly retiring_worker_count: number | null;
   readonly fork_run_ids_json: string | null;
   readonly thread_id: string;
   readonly payload_json: string;
@@ -2129,6 +2139,9 @@ function isActivityRunForShell(
 }
 
 type ShellThreadState = {
+  readonly contextFillPercent: number | undefined;
+  readonly compactionCount: number | null;
+  readonly retiringWorkerCount: number | null;
   readonly thread: OrchestrationV2ThreadProjection["thread"];
   readonly latestRunId: RunId | null;
   readonly latestRunStatus: OrchestrationV2ShellThreadStatus;
@@ -2272,6 +2285,20 @@ function shellFromState(input: {
   readonly visibleItemCount: number;
 }): OrchestrationV2ThreadShell {
   return {
+    ...(input.state.contextFillPercent === undefined
+      ? {}
+      : { contextFillPercent: input.state.contextFillPercent }),
+    ...(input.state.compactionCount === null || input.state.compactionCount === 0
+      ? {}
+      : { compactionCount: input.state.compactionCount }),
+    ...(input.state.thread.retirement === undefined
+      ? {}
+      : {
+          successorThreadId: input.state.thread.retirement.successorThreadId,
+          ...(input.state.thread.retirement.completed === true
+            ? {}
+            : { retiringWorkerCount: input.state.retiringWorkerCount ?? 0 }),
+        }),
     createdBy: input.state.thread.createdBy,
     creationSource: input.state.thread.creationSource,
     id: input.state.thread.id,
@@ -8386,14 +8413,16 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         );
 
     // Mirror idleCompactionOf, including JavaScript trim whitespace.
+    const trimmedMessageText = (alias: string) => sql`lower(trim(
+      json_extract(${sql.literal(alias)}.payload_json, '$.text'),
+      char(9, 10, 11, 12, 13, 32, 160, 5760, 8192, 8193, 8194, 8195,
+        8196, 8197, 8198, 8199, 8200, 8201, 8202, 8232, 8233, 8239, 8287, 12288, 65279)
+    ))`;
     const isIdleCompactionMessage = (alias: string) => {
       const payload = sql.literal(`${alias}.payload_json`);
       return sql`(
         ${sql.literal(`${alias}.role`)} = 'user'
-        AND lower(trim(json_extract(${payload}, '$.text'),
-          char(9, 10, 11, 12, 13, 32, 160, 5760, 8192, 8193, 8194, 8195,
-            8196, 8197, 8198, 8199, 8200, 8201, 8202, 8232, 8233, 8239, 8287, 12288, 65279)
-        )) = ${IDLE_COMPACTION_TEXT}
+        AND ${trimmedMessageText(alias)} = ${IDLE_COMPACTION_TEXT}
         AND coalesce(json_array_length(${payload}, '$.attachments'), 0) = 0
         AND (
           json_extract(${payload}, '$.idleCompaction') IS NOT NULL
@@ -8481,10 +8510,12 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         threadIds,
         listedOnly = false,
         includeDeleted = false,
+        includeLifeRing = true,
       }: ShellSnapshotOptions & {
         readonly listedOnly?: boolean;
         // A retained fork still shows the history of a deleted source run.
         readonly includeDeleted?: boolean;
+        readonly includeLifeRing?: boolean;
       } = {},
     ) =>
       sql<ShellThreadRow>`
@@ -8492,6 +8523,54 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
               t.thread_id,
               t.payload_json,
               t.fork_run_ids_json,
+              ${
+                includeLifeRing
+                  ? sql`
+              json_extract(usage.payload_json, '$.tokenUsage.usedTokens') AS context_used_tokens,
+              COALESCE(json_extract(usage.payload_json, '$.tokenUsage.autoCompactThreshold'),
+                json_extract(usage.payload_json, '$.tokenUsage.maxTokens')) AS context_window_tokens,
+              json_extract(usage.payload_json, '$.tokenUsage.updatedAt') AS context_usage_at,
+              COALESCE(json_extract(compaction.payload_json, '$.completedAt'), compaction.updated_at) AS latest_compaction_at,
+              json_extract(compaction.payload_json, '$.afterTokenCount') AS latest_compaction_tokens,
+              CASE WHEN json_extract(t.payload_json, '$.lineage.parentThreadId') IS NULL
+                AND json_extract(t.payload_json, '$.delegatedFrom') IS NULL
+                THEN (
+                  SELECT COUNT(*) FROM orchestration_v2_projection_turn_items compaction_item
+                    INDEXED BY orchestration_v2_projection_turn_items_thread_type_idx
+                  WHERE compaction_item.thread_id = t.thread_id
+                    AND compaction_item.type = 'compaction' AND compaction_item.status = 'completed'
+                    AND NOT EXISTS (
+                      SELECT 1 FROM orchestration_v2_projection_runs run
+                      JOIN orchestration_v2_projection_messages prompt
+                        ON prompt.message_id = json_extract(run.payload_json, '$.userMessageId')
+                      WHERE run.run_id = compaction_item.run_id
+                        AND (
+                          ${trimmedMessageText("prompt")} = ${IDLE_COMPACTION_TEXT}
+                          OR (
+                            substr(${trimmedMessageText("prompt")}, 1, 8) = ${IDLE_COMPACTION_TEXT}
+                            AND unicode(substr(${trimmedMessageText("prompt")}, 9, 1)) IN
+                              (9, 10, 11, 12, 13, 32, 160, 5760, 8192, 8193, 8194, 8195,
+                               8196, 8197, 8198, 8199, 8200, 8201, 8202, 8232, 8233, 8239, 8287, 12288, 65279)
+                          )
+                        )
+                    )
+                ) END AS compaction_count,
+              CASE WHEN json_type(t.payload_json, '$.retirement') = 'object' THEN (
+                SELECT COUNT(*) FROM json_each(t.payload_json, '$.retirement.pendingTaskIds') pending
+                JOIN orchestration_v2_projection_subagents task ON task.subagent_id = pending.value
+                WHERE task.status IN ('pending', 'idle', 'running', 'waiting')
+              ) END AS retiring_worker_count,
+              `
+                  : sql`
+              NULL AS context_used_tokens,
+              NULL AS context_window_tokens,
+              NULL AS context_usage_at,
+              NULL AS latest_compaction_at,
+              NULL AS latest_compaction_tokens,
+              NULL AS compaction_count,
+              NULL AS retiring_worker_count,
+              `
+              }
               CASE
                 WHEN json_extract(t.payload_json, '$.forkedFrom.type') = 'run'
                   AND json_extract(t.payload_json, '$.lineage.sideChat') IS NOT 1
@@ -8640,6 +8719,35 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                   AND plan.status = 'active'
               ) AS has_actionable_proposed_plan
             FROM orchestration_v2_projection_threads t
+            ${
+              includeLifeRing
+                ? sql`
+            LEFT JOIN orchestration_v2_projection_provider_turns usage ON usage.provider_turn_id = (
+              SELECT turn.provider_turn_id FROM orchestration_v2_projection_provider_turns turn
+                INDEXED BY orchestration_v2_projection_provider_turns_usage_idx
+              WHERE json_extract(t.payload_json, '$.lineage.parentThreadId') IS NULL
+                AND json_extract(t.payload_json, '$.delegatedFrom') IS NULL
+                AND turn.provider_thread_id = json_extract(t.payload_json, '$.activeProviderThreadId')
+                AND json_type(turn.payload_json, '$.tokenUsage') = 'object'
+              ORDER BY julianday(json_extract(turn.payload_json, '$.tokenUsage.updatedAt')) DESC,
+                turn.ordinal DESC
+              LIMIT 1
+            )
+            LEFT JOIN orchestration_v2_projection_turn_items compaction ON compaction.turn_item_id = (
+              SELECT compaction_item.turn_item_id FROM orchestration_v2_projection_turn_items compaction_item
+                INDEXED BY orchestration_v2_projection_turn_items_thread_type_idx
+              WHERE json_extract(t.payload_json, '$.lineage.parentThreadId') IS NULL
+                AND json_extract(t.payload_json, '$.delegatedFrom') IS NULL
+                AND compaction_item.thread_id = t.thread_id
+                AND compaction_item.type = 'compaction' AND compaction_item.status = 'completed'
+                AND (compaction_item.provider_thread_id IS NULL
+                  OR compaction_item.provider_thread_id = json_extract(t.payload_json, '$.activeProviderThreadId'))
+              ORDER BY compaction_item.ordinal DESC, compaction_item.turn_item_id DESC
+              LIMIT 1
+            )
+            `
+                : sql``
+            }
             LEFT JOIN orchestration_v2_projection_runs active ON active.run_id = (
               SELECT r.run_id
               FROM orchestration_v2_projection_runs r
@@ -8923,6 +9031,18 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       return { providerThreadsByThreadId, pendingTurnItemsByThreadId };
     });
 
+    const listRetiringThreadIds: ProjectionStoreV2Shape["listRetiringThreadIds"] = (threadId) =>
+      sql<{ readonly thread_id: string }>`
+        SELECT thread_id FROM orchestration_v2_projection_threads
+        WHERE deleted_at IS NULL AND archived_at IS NULL
+          AND json_type(payload_json, '$.retirement') = 'object'
+          AND json_type(payload_json, '$.retirement.completed') IS NOT 'true'
+          ${threadId === undefined ? sql`` : sql`AND thread_id = ${threadId}`}
+      `.pipe(
+        Effect.map((rows) => rows.map((row) => ThreadId.make(row.thread_id))),
+        Effect.mapError((cause) => new ProjectionStoreSetupError({ cause })),
+      );
+
     const getSettlementCandidates: ProjectionStoreV2Shape["getSettlementCandidates"] = (
       threadId,
       options,
@@ -8970,7 +9090,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             )
             WHERE t.deleted_at IS NULL${threadId === undefined ? sql`` : sql` AND t.thread_id = ${threadId}`}
               AND json_extract(t.payload_json, '$.archivedAt') IS NULL
-              AND json_extract(t.payload_json, '$.pinnedAt') IS NULL
+              AND (
+                json_extract(t.payload_json, '$.pinnedAt') IS NULL
+                OR json_type(t.payload_json, '$.retirement') = 'object'
+              )
               AND (
                 (
                   json_extract(t.payload_json, '$.settledOverride') IS NULL
@@ -8988,7 +9111,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 )
                 ${
                   options?.includeSettledChildren === true
-                    ? sql`OR (
+                    ? sql`OR json_type(t.payload_json, '$.retirement') = 'object' OR (
                   json_extract(t.payload_json, '$.settledOverride') = 'settled'
                   AND json_extract(t.payload_json, '$.lineage.relationshipToParent') = 'subagent'
                   AND json_type(t.payload_json, '$.autoArchiveDisabled') IS NOT 'true'
@@ -9293,8 +9416,36 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
             pullRequests: thread.pullRequests,
           }),
         ];
+        const providerThread =
+          row.compaction_count === null
+            ? undefined
+            : providerThreadsByThreadId
+                .get(thread.id)
+                ?.find((candidate) => candidate.id === thread.activeProviderThreadId);
+        const providerUsage = providerThread?.contextUsage;
+        const usageAt =
+          row.context_usage_at === null
+            ? providerUsage == null || providerThread === undefined
+              ? 0
+              : DateTime.toEpochMillis(providerThread.updatedAt)
+            : Date.parse(row.context_usage_at);
+        const afterCompaction =
+          row.latest_compaction_at !== null && Date.parse(row.latest_compaction_at) > usageAt;
+        const usedTokens = afterCompaction
+          ? row.latest_compaction_tokens
+          : (row.context_used_tokens ?? providerUsage?.usedTokens);
+        const compactionPoint =
+          row.context_window_tokens ??
+          providerUsage?.autoCompactThreshold ??
+          providerUsage?.maxTokens;
         return {
           thread,
+          contextFillPercent:
+            usedTokens == null || compactionPoint === undefined || compactionPoint <= 0
+              ? undefined
+              : Math.min(100, Math.round((100 * usedTokens) / compactionPoint)),
+          compactionCount: row.compaction_count,
+          retiringWorkerCount: row.retiring_worker_count,
           latestRunId,
           latestRunStatus,
           latestRunRequestedAt,
@@ -9531,10 +9682,10 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
         const { threadRows, providerThreadRows, pendingTurnItemRows, sequenceRows } =
           yield* sql.withTransaction(
             Effect.gen(function* () {
-              const threadRows = yield* selectShellThreadRows(
-                threadId,
-                threadId === undefined ? { location: "active", listedOnly: true } : {},
-              );
+              const threadRows = yield* selectShellThreadRows(threadId, {
+                includeLifeRing: false,
+                ...(threadId === undefined ? { location: "active", listedOnly: true } : {}),
+              });
               const ids = threadRows.map((row) => ThreadId.make(row.thread_id));
               const providerThreadRows =
                 ids.length === 0 ? [] : yield* selectShellProviderThreadRows(ids);
@@ -10001,6 +10152,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       getThread: readOnReader(getThread),
       findThread: readOnReader(findThread),
       getSettlementCandidates: readOnReader(getSettlementCandidates),
+      listRetiringThreadIds: readOnReader(listRetiringThreadIds),
       getThreadsWithPullRequests: readOnReader(getThreadsWithPullRequests),
       getThreadTitles: readOnReader(getThreadTitles),
       getThreadLinkMetadata: readOnReader(getThreadLinkMetadata),

@@ -422,7 +422,7 @@ it.effect("record reads restrict provider histories to delivery identities", () 
     const threadId = yield* addRolledBackRecoveryCandidate("delivery-identities");
     const sql = yield* SqlClient.SqlClient;
     const now = yield* DateTime.now;
-    for (const suffix of ["selected", "history"]) {
+    for (const suffix of ["history", "selected"]) {
       const id = ProviderThreadId.make(`provider-thread:${suffix}`);
       yield* store.apply({
         id: EventId.make(`event:delivery-identities:${suffix}`),
@@ -468,9 +468,20 @@ it.effect("record reads restrict provider histories to delivery identities", () 
           status: "completed",
           startedAt: now,
           completedAt: now,
+          ...(suffix === "runless"
+            ? {
+                tokenUsage: {
+                  usedTokens: 30,
+                  maxTokens: 100,
+                  autoCompactThreshold: 50,
+                  updatedAt: DateTime.formatIso(now),
+                },
+              }
+            : {}),
         },
       });
     }
+    assert.equal((yield* store.getThreadShell(threadId))?.contextFillPercent, 60);
     assert.deepEqual(
       (yield* store.getThreadRecords(threadId, ["providerTurns"], {
         providerTurnAttemptIds: [RunAttemptId.make("current")],
@@ -8244,6 +8255,14 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
     ["T3 Code's idle compaction", "agent", "server", undefined, true, "/compact"],
     ["compacting on return", "user", "web", "onReturn", true, "/compact"],
     ["a typed /compact", "user", "mobile", undefined, false, "/compact"],
+    [
+      "a typed /compact with instructions",
+      "user",
+      "web",
+      undefined,
+      false,
+      "/compact keep decisions",
+    ],
     ["a normalized idle command", "agent", "server", undefined, true, " \t\u00a0/COMPACT\u3000\n"],
     ["an ordinary prompt with idle metadata", "user", "web", "onReturn", false, "Continue"],
   ] as const)(
@@ -8404,7 +8423,7 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
         yield* setRunStatus("running");
 
         // Claude can finish the run successfully even when its /compact failed.
-        yield* projectionStore.apply({
+        const compaction = {
           id: EventId.make(`event:projection-shell-silent:${key}:failure`),
           type: "turn-item.updated",
           threadId,
@@ -8429,13 +8448,24 @@ it.layer(layerTest)("ProjectionStoreV2", (it) => {
             completedAt: now,
             updatedAt: now,
           },
-        });
+        } as const;
+        yield* projectionStore.apply(compaction);
         // A failure needs the user, so it surfaces even though its prompt stays hidden.
         assert.deepStrictEqual(
           yield* presented,
           [visible, visible].map((shell) =>
             silent ? { ...shell, latestUserMessageAt: false } : shell,
           ),
+        );
+        assert.isUndefined((yield* projectionStore.getThreadShell(threadId))?.compactionCount);
+        yield* projectionStore.apply({
+          ...compaction,
+          id: EventId.make(`event:projection-shell-silent:${key}:completed`),
+          payload: { ...compaction.payload, status: "completed" },
+        });
+        assert.equal(
+          (yield* projectionStore.getThreadShell(threadId))?.compactionCount,
+          text === "Continue" ? 1 : undefined,
         );
       }),
   );

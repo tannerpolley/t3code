@@ -1,5 +1,6 @@
 import type {
   ModelSelection,
+  OrchestrationV2ThreadShell,
   ProviderDriverKind,
   ProviderOptionDescriptor,
   ServerProvider,
@@ -120,4 +121,26 @@ export function shouldRecedeSidebarThread(input: {
     return input.isSubagent || (!input.isUnread && !input.isWoke);
   }
   return false;
+}
+
+export function threadLifeRing(thread: OrchestrationV2ThreadShell, threshold: number) {
+  if (thread.lineage.parentThreadId !== null || thread.delegatedFrom !== undefined) return null;
+  const count = thread.compactionCount ?? 0;
+  return {
+    count,
+    fill: thread.contextFillPercent,
+    warning: count >= threshold,
+  };
+}
+
+export function canStartFresh(thread: OrchestrationV2ThreadShell) {
+  return (
+    thread.lineage.parentThreadId === null &&
+    thread.delegatedFrom === undefined &&
+    thread.archivedAt === null &&
+    thread.deletedAt === null &&
+    thread.linkOrigin == null &&
+    thread.workflowRun === undefined &&
+    thread.successorThreadId === undefined
+  );
 }

@@ -6,6 +6,8 @@ import { m, type MessageResolver } from "../i18n/messages";
 
 export type ThreadActionMenuId =
   | "find"
+  | "start-fresh"
+  | "open-successor"
   | "new-thread-on-branch"
   | "filter-by-project"
   | "turn-into-project"
@@ -98,6 +100,8 @@ export interface ThreadActionMenuState {
   /** Settle, snooze and their undo stay available until the host denies the operate scope. */
   readonly canTriage?: boolean;
   readonly canFind?: boolean;
+  readonly canStartFresh?: boolean;
+  readonly hasSuccessor?: boolean;
   /** False where no inline title editor is rendered, such as sidebar search results. */
   readonly canRename?: boolean;
   readonly branch: string | null;
@@ -133,6 +137,7 @@ export interface ThreadActionMenuState {
 export function threadActionRequiresOperate(action: ThreadActionMenuId): boolean {
   return ![
     "find",
+    "open-successor",
     "new-thread-on-branch",
     "project-settings",
     "mark-unread",
@@ -160,6 +165,23 @@ export function buildThreadActionMenuItems(
   resolve: MessageResolver = m,
 ): ReadonlyArray<ContextMenuItem<ThreadActionMenuId>> {
   const items: ReadonlyArray<ContextMenuItem<ThreadActionMenuId>> = [
+    ...(state.hasSuccessor
+      ? [
+          {
+            id: "open-successor" as const,
+            label: resolve(msg("Open successor")),
+            icon: "message-square-plus",
+          },
+        ]
+      : state.canStartFresh
+        ? [
+            {
+              id: "start-fresh" as const,
+              label: resolve(msg("Start fresh")),
+              icon: "message-square-plus",
+            },
+          ]
+        : []),
     ...(state.canFind
       ? [{ id: "find" as const, label: resolve(msg("Find in thread")), icon: "text-search" }]
       : []),

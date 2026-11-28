@@ -71,6 +71,7 @@ vi.mock("../threads/thread-settings-options", () => ({
 }));
 vi.mock("../../components/ui/ScreenScrollView", () => ({ ScreenScrollView: Children }));
 vi.mock("../../components/ui/AppText", () => ({ AppText: Children }));
+vi.mock("../../components/ui/NumberField", () => ({ NumberField: () => null }));
 vi.mock("../../components/ui/Button", () => ({
   Button: ({
     label,

@@ -17,6 +17,7 @@ import {
   OrchestratorMcpRequestSecretInput,
   OrchestratorMcpRequestSecretResult,
   OrchestratorMcpFailure,
+  OrchestrationV2StartFreshResult,
   OrchestratorMcpListScheduledTasksInput,
   OrchestratorMcpListScheduledTasksResult,
   OrchestratorMcpSaveScheduledTaskInput,
@@ -88,7 +89,7 @@ const OrchestratorCapabilitiesTool = Tool.make("orchestrator_capabilities", {
 
 const DelegateTaskTool = Tool.make("delegate_task", {
   description:
-    "Start a child with only `task`. No history or secrets. Choose `complexity` (routine by default, or complex) to apply that role pick. It overrides provider/model/options unless effort is `orchestrator`, which keeps your options. `isolation:'worktree'` separates checkouts. Keep `taskId` for `task_status`/`task_cancel`.",
+    "Start a child with only `task`. No history or secrets. `complexity` selects the role pick (default `routine`). It overrides provider/model/options, except effort `orchestrator` keeps your options. `isolation:'worktree'` separates checkouts. Keep `taskId` for `task_status`/`task_cancel`.",
   parameters: OrchestratorMcpDelegateTaskInput,
   success: OrchestratorMcpDelegateTaskResult,
   failure: OrchestratorMcpFailure,
@@ -362,6 +363,19 @@ const EnvironmentUnlinkTool = Tool.make("t3_environment_unlink", {
   .annotate(Tool.Idempotent, true)
   .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenWhileLinksOff);
 
+const StartFreshTool = Tool.make("t3_thread_start_fresh", {
+  description:
+    "Start a successor with your handoff and retire this thread while its workers finish.",
+  parameters: Schema.Struct({ handoff: TrimmedNonEmptyString.check(Schema.isMaxLength(8000)) }),
+  success: Schema.Struct({ ...OrchestrationV2StartFreshResult.fields, link: Schema.String }),
+  failure: OrchestratorMcpFailure,
+  dependencies,
+}).annotate(
+  McpSchema.EnabledWhen,
+  () =>
+    McpInvocationContext.hiddenFromOutsideClients() && McpInvocationContext.hiddenFromSubagents(),
+);
+
 export const OrchestratorToolkit = Toolkit.make(
   OrchestratorCapabilitiesTool,
   DelegateTaskTool,
@@ -380,6 +394,7 @@ export const OrchestratorToolkit = Toolkit.make(
   ThreadSendTool,
   ThreadWaitTool,
   ThreadInterruptTool,
+  StartFreshTool,
   EnvironmentLinksTool,
   EnvironmentLinkTool,
   EnvironmentUnlinkTool,
