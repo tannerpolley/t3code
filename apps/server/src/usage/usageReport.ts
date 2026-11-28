@@ -12,14 +12,14 @@ import * as DateTime from "effect/DateTime";
 import * as Option from "effect/Option";
 import * as Schema from "effect/Schema";
 
-export const MAX_USAGE_DAYS = 31;
-export const DEFAULT_USAGE_DAYS = 7;
-export const MAX_USAGE_MODELS = 25;
+const MAX_USAGE_DAYS = 31;
+const DEFAULT_USAGE_DAYS = 7;
+const MAX_USAGE_MODELS = 25;
 export const MAX_THREAD_CANDIDATES = 200;
 export const DEFAULT_THREAD_LIMIT = 20;
-export const MAX_THREAD_LIMIT = 50;
+const MAX_THREAD_LIMIT = 50;
 /** Fill at or above this, against auto-compaction or the context window, is "near". */
-export const NEAR_COMPACTION_FILL = 0.8;
+const NEAR_COMPACTION_FILL = 0.8;
 const TITLE_CHARS = 120;
 const HOUR_MS = 24 * 60 * 60 * 1000;
 const DAY_MS = 24 * 60 * 60 * 1000;
@@ -269,7 +269,7 @@ export type UsageWindow =
 
 const DAY = /^(\d{4})-(\d{2})-(\d{2})$/;
 
-export function shiftDay(day: string, days: number): string {
+function shiftDay(day: string, days: number): string {
   if (!validDay(day)) return day;
   return DateTime.formatIsoDateUtc(
     DateTime.add(DateTime.makeUnsafe(`${day}T00:00:00.000Z`), { days }),
@@ -633,7 +633,7 @@ export function compactUsageSummary(summary: UsageSummary): UsageSummaryReport {
   };
 }
 
-export function shortTitle(title: string): string {
+function shortTitle(title: string): string {
   const chars = Array.from(title);
   return chars.length <= TITLE_CHARS ? title : `${chars.slice(0, TITLE_CHARS - 1).join("")}…`;
 }

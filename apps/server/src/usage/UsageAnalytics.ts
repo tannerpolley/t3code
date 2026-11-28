@@ -15,6 +15,7 @@ import {
   compactThreadActivity,
   compactUsageLimits,
   compactUsageSummary,
+  DEFAULT_THREAD_LIMIT,
   MAX_THREAD_CANDIDATES,
   resolveHourlyBounds,
   resolveUsageWindow,
@@ -216,7 +217,7 @@ const make = Effect.gen(function* () {
       return compactThreadActivity({
         readAt: DateTime.formatIso(yield* DateTime.now),
         window: resolved,
-        limit: input.limit ?? 20,
+        limit: input.limit ?? DEFAULT_THREAD_LIMIT,
         truncated,
         candidates,
         turns: [],
@@ -346,7 +347,7 @@ const make = Effect.gen(function* () {
     return compactThreadActivity({
       readAt: DateTime.formatIso(yield* DateTime.now),
       window: resolved,
-      limit: input.limit ?? 20,
+      limit: input.limit ?? DEFAULT_THREAD_LIMIT,
       truncated,
       candidates,
       turns: turnRows.map((row) => ({
