@@ -1499,7 +1499,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
             <FastBolt ultra={speed === "ultrafast"} />
           </span>
         ) : null}
-        <span className="flex min-w-0 flex-1 items-center gap-1">
+        <span className="flex min-w-0 flex-1 items-center gap-1 overflow-hidden">
           {draftIndicator}
           {title}
           {retiringLabel === null ? null : (
