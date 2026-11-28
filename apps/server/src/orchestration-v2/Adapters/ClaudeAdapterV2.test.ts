@@ -963,6 +963,9 @@ it("limits native tools and T3 instructions only for delegated leaf roles", () =
       "ListAgents",
       "Workflow",
       "ScheduleWakeup",
+      "CronCreate",
+      "CronDelete",
+      "CronList",
       "Skill",
     ]);
     assert.isUndefined(orchestrator.disallowedTools);
@@ -971,7 +974,7 @@ it("limits native tools and T3 instructions only for delegated leaf roles", () =
     assert.include(JSON.stringify(leaf.settings), '"autoMemoryEnabled":false');
     assert.include(JSON.stringify(leaf.settings), '"disableClaudeAiConnectors":true');
     const leafPrompt = JSON.stringify(leaf.systemPrompt);
-    assert.include(leafPrompt, "role-reviewer");
+    assert.include(leafPrompt, "without editing files");
     assert.include(leafPrompt, "request_secret");
     assert.include(leafPrompt, "link_pull_request");
     assert.notInclude(leafPrompt, "delegate_task");

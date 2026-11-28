@@ -50,13 +50,14 @@ export function buildCodexAdditionalContext(
   runtime: CodexRuntimeInfo,
   toolsAvailable: boolean | T3CodeToolAvailability = true,
   role?: OrchestratorMcpTaskRole,
+  roleSkillPath?: string,
 ): Record<string, V2TurnStartParams__AdditionalContextEntry> {
   const tools = toolInstructions(toolsAvailable);
   const skill = delegatedLeafSkill(role);
   const sections =
     skill === undefined
       ? T3_CODE_ORCHESTRATION_SECTIONS
-      : [delegatedLeafInstructions(skill), T3_CODE_VISUAL_INSTRUCTIONS];
+      : [delegatedLeafInstructions(skill, roleSkillPath), T3_CODE_VISUAL_INSTRUCTIONS];
   // Split values to fit per-entry caps; number keys because Codex emits them in key order.
   return {
     ...Object.fromEntries(
