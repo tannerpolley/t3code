@@ -740,8 +740,16 @@ const makeHarness = Effect.fn("makeThreadSettlementHarness")(function* (options:
         Stream.tap((event) => Queue.offer(observedEvents, event.id)),
       ),
       dispatch,
-      autoArchiveSettledChild: (threadId) =>
-        Queue.offer(archivedChildren, threadId).pipe(Effect.asVoid),
+      autoSettleChild: (command, hasActiveTerminal) =>
+        hasActiveTerminal.pipe(
+          Effect.flatMap((active) => (active ? Effect.void : Effect.asVoid(dispatch(command)))),
+        ),
+      autoArchiveSettledChild: (threadId, _commandId, hasActiveTerminal) =>
+        (hasActiveTerminal ?? Effect.succeed(false)).pipe(
+          Effect.flatMap((active) =>
+            active ? Effect.void : Queue.offer(archivedChildren, threadId).pipe(Effect.asVoid),
+          ),
+        ),
     }),
     Layer.mock(TerminalManager.TerminalManager)({
       closeOnSettle: (input) =>

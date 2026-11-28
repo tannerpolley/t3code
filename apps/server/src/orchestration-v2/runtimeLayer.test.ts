@@ -62,6 +62,7 @@ import * as SqlClient from "effect/sql/SqlClient";
 import { createAttachmentId } from "../attachmentStore.ts";
 import * as CheckpointStore from "../checkpointing/CheckpointStore.ts";
 import * as GitWorkflow from "../git/GitWorkflowService.ts";
+import * as GitManager from "../git/GitManager.ts";
 import * as ServerConfig from "../config.ts";
 import * as SqlitePersistence from "../persistence/Sqlite.ts";
 import * as OrchestrationEventStore from "../persistence/OrchestrationEventStore.ts";
@@ -98,6 +99,7 @@ import * as RuntimeLayer from "./runtimeLayer.ts";
 import { shellStreamItemFromThreadShell } from "./ShellStream.ts";
 import { CodexProviderCapabilitiesV2 } from "./Adapters/CodexAdapterV2.ts";
 import * as ThreadManagementService from "./ThreadManagementService.ts";
+import * as ThreadSettlementService from "./ThreadSettlementService.ts";
 import * as ManagedProjectFolders from "../project/ManagedProjectFolders.ts";
 import * as ScratchThreadPromotion from "../project/ScratchThreadPromotion.ts";
 import * as ScheduledTaskService from "../scheduledTasks/ScheduledTaskService.ts";
@@ -3791,6 +3793,208 @@ it.layer(layerTest)("OrchestrationV2LayerLive lifecycle", (it) => {
         CommandId.make("auto-archive-child-next-sweep"),
       );
       assert.isNull((yield* orchestrator.getThreadProjection(childId)).thread.archivedAt);
+    }),
+  );
+
+  it.effect("the settlement sweep archives only finished children whose results were handled", () =>
+    Effect.gen(function* () {
+      const orchestrator = yield* Orchestrator.OrchestratorV2;
+      const sink = yield* EventSink.EventSinkV2;
+      const parentId = ThreadId.make("finished-children-parent");
+      const projectId = ProjectId.make("finished-children-project");
+      yield* seedProject({
+        projectId,
+        title: "Finished children",
+        workspaceRoot: "/workspace/finished-children",
+        defaultModelSelection: null,
+        createdAt: "2026-09-07T00:00:00.000Z",
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.create",
+        commandId: CommandId.make("finished-children-parent-create"),
+        createdBy: "user",
+        creationSource: "web",
+        threadId: parentId,
+        projectId,
+        title: "Open orchestrator",
+        modelSelection,
+        runtimeMode: "full-access",
+        interactionMode: "default",
+        branch: null,
+        worktreePath: null,
+      });
+      const { thread: parent } = yield* orchestrator.getThreadProjection(parentId);
+      const now = parent.updatedAt;
+      const children = [
+        "acknowledged",
+        "native",
+        "pending",
+        "queued",
+        "open-pr",
+        "unarchived",
+      ] as const;
+      const childId = (name: (typeof children)[number]) => ThreadId.make(`finished-child:${name}`);
+      for (const name of children) {
+        const id = childId(name);
+        const taskId = NodeId.make(`task:${id}`);
+        const task: OrchestrationV2Subagent = {
+          id: taskId,
+          threadId: parentId,
+          runId: null,
+          parentNodeId: NodeId.make("finished-children-root"),
+          origin: name === "native" ? "provider_native" : "app_owned",
+          createdBy: "agent",
+          driver: ProviderDriverKind.make("codex"),
+          providerInstanceId: parent.providerInstanceId,
+          providerThreadId: null,
+          childThreadId: id,
+          nativeTaskRef: null,
+          prompt: "Do the work",
+          title: name,
+          model: null,
+          status: "completed",
+          result: "Done",
+          startedAt: now,
+          completedAt: now,
+          updatedAt: now,
+          ...(name === "native"
+            ? {}
+            : {
+                completionDelivery: {
+                  state: name === "pending" ? "pending" : "acknowledged",
+                  observedByRunId: null,
+                },
+              }),
+        };
+        yield* sink.write({
+          events: [
+            {
+              type: "thread.created",
+              id: EventId.make(`created:${id}`),
+              threadId: id,
+              occurredAt: now,
+              payload: {
+                ...parent,
+                id,
+                title: name,
+                createdBy: "agent",
+                creationSource: name === "native" ? "provider" : "mcp",
+                lineage: {
+                  parentThreadId: parentId,
+                  rootThreadId: parentId,
+                  relationshipToParent: "subagent",
+                },
+                ...(name === "open-pr"
+                  ? {
+                      pullRequests: [
+                        {
+                          host: "github.com",
+                          repository: "owner/repo",
+                          number: 1,
+                          url: "https://github.com/owner/repo/pull/1",
+                          source: "agent",
+                          linkedAt: DateTime.formatIso(now),
+                          snapshot: {
+                            state: "open",
+                            title: "PR under review",
+                            headBranch: "feature",
+                            baseBranch: "main",
+                            isDraft: false,
+                            updatedAt: null,
+                            syncedAt: DateTime.formatIso(now),
+                          },
+                          stack: null,
+                        },
+                      ],
+                    }
+                  : {}),
+              },
+            },
+            {
+              type: "subagent.updated",
+              id: EventId.make(`updated:${taskId}`),
+              threadId: parentId,
+              occurredAt: now,
+              payload: task,
+            },
+          ],
+        });
+      }
+      const unarchived = childId("unarchived");
+      yield* orchestrator.dispatch({
+        type: "thread.archive",
+        threadId: unarchived,
+        commandId: CommandId.make("finished-child-archive"),
+      });
+      yield* orchestrator.dispatch({
+        type: "thread.unarchive",
+        threadId: unarchived,
+        commandId: CommandId.make("finished-child-unarchive"),
+      });
+
+      const queued = childId("queued");
+      yield* orchestrator.dispatch({
+        type: "message.dispatch",
+        createdBy: "agent",
+        creationSource: "mcp",
+        commandId: CommandId.make("finished-child-follow-up"),
+        threadId: queued,
+        messageId: MessageId.make("finished-child-follow-up"),
+        text: "Follow up",
+        attachments: [],
+        modelSelection,
+        dispatchMode: { type: "start_immediately" },
+      });
+      const [run] = (yield* orchestrator.getThreadProjection(queued)).runs;
+      yield* sink.write({
+        events: [
+          {
+            type: "run.updated",
+            id: EventId.make("held-follow-up"),
+            threadId: queued,
+            occurredAt: now,
+            payload: { ...run!, status: "queued", queueHeld: true },
+          },
+        ],
+      });
+
+      yield* Effect.gen(function* () {
+        const service = yield* ThreadSettlementService.make;
+        yield* service.start();
+        yield* TestClock.adjust("1 minute");
+        yield* service.drain;
+      }).pipe(
+        Effect.provide(
+          Layer.mergeAll(
+            NodeServices.layer,
+            NodeCrypto.layer,
+            ServerSettings.layerTest(),
+            Layer.mock(GitManager.GitManager)({}),
+            Layer.mock(PullRequestService.PullRequestService)({
+              subscribeMerges: Effect.succeed(Stream.empty),
+              subscribeRefreshes: Stream.empty,
+            }),
+            Layer.mock(TerminalManager.TerminalManager)({
+              hasActiveSubprocess: () => Effect.succeed(false),
+              closeOnSettle: () => Effect.void,
+            }),
+            Layer.mock(ProjectSetupScriptRunner.ProjectSetupScriptRunner)({}),
+          ),
+        ),
+      );
+      const saved = yield* Effect.forEach(children, (name) =>
+        orchestrator.getThreadShell(childId(name)),
+      );
+      assert.deepEqual(
+        saved.filter((thread) => thread?.archivedAt != null).map((thread) => thread?.id),
+        [childId("acknowledged"), childId("native")],
+      );
+      assert.deepEqual(
+        saved.filter((thread) => thread?.settledOverride === "settled").map((thread) => thread?.id),
+        [childId("acknowledged"), childId("native")],
+      );
+      assert.isNull((yield* orchestrator.getThreadShell(parentId))?.settledOverride);
+      assert.equal((yield* orchestrator.getThreadProjection(queued)).runs[0]?.status, "queued");
     }),
   );
 

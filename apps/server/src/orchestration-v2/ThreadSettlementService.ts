@@ -367,12 +367,12 @@ export const make = Effect.gen(function* () {
   const archiveSettledChild = Effect.fn("ThreadSettlementServiceV2.archiveSettledChild")(
     function* (threadId: ThreadId) {
       if (settlingChildren.has(threadId)) return;
-      if (yield* terminals.hasActiveSubprocess({ threadId })) return;
       const uuid = yield* random.uuidV4();
       if (settlingChildren.has(threadId)) return;
       yield* orchestrator.autoArchiveSettledChild(
         threadId,
         CommandId.make(`server:auto-archive:${threadId}:${uuid}`),
+        terminals.hasActiveSubprocess({ threadId }),
       );
     },
     (effect, threadId) =>
@@ -435,17 +435,18 @@ export const make = Effect.gen(function* () {
     const settleThread = Effect.fnUntraced(
       function* (thread: (typeof candidates)[number], pullRequest: SettlementPullRequest | null) {
         if (isDelegatedAppThread(thread)) {
-          if (yield* terminals.hasActiveSubprocess({ threadId: thread.id })) return null;
-          // The store returns a subagent only once its parent is done, so it settles with the
-          // parent. A task delegated from a linked environment has no parent here, so it settles
-          // once its own work is done. Neither runs its own lookup.
+          const hasActiveTerminal = terminals.hasActiveSubprocess({ threadId: thread.id });
+          const local = thread.lineage.relationshipToParent === "subagent";
+          if (!local && (yield* hasActiveTerminal)) return null;
           const uuid = yield* random.uuidV4();
-          yield* orchestrator.dispatch({
+          const command = {
             type: "thread.auto-settle",
             commandId: CommandId.make(`server:auto-settle:${thread.id}:${uuid}`),
             threadId: thread.id,
             snapshotAt: thread.updatedAt,
-          });
+          } as const;
+          if (local) yield* orchestrator.autoSettleChild(command, hasActiveTerminal);
+          else yield* orchestrator.dispatch(command);
           return null;
         }
         // thread.auto-settle does not recheck settings, so read them per decision; reads are cached.
