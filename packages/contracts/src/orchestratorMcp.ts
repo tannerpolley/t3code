@@ -26,7 +26,12 @@ import {
   ScheduledTaskSchedule,
   ScheduledTaskUpsertSchedule,
 } from "./scheduledTask.ts";
-import { ProviderInteractionMode, ProviderRequestKind, RuntimeMode } from "./providerPolicy.ts";
+import {
+  ProviderInteractionMode,
+  ProviderRequestKind,
+  ProviderUserInputAnswers,
+  RuntimeMode,
+} from "./providerPolicy.ts";
 import { PullRequestState } from "./pullRequest.ts";
 import {
   ThreadLinkedPullRequest,
@@ -444,6 +449,61 @@ export const OrchestratorMcpThreadListResult = Schema.Struct({
 });
 export type OrchestratorMcpThreadListResult = typeof OrchestratorMcpThreadListResult.Type;
 
+export const OrchestratorMcpThreadAttentionKind = Schema.Literals([
+  "question",
+  "approval",
+  "blocked",
+  "finished",
+]);
+export type OrchestratorMcpThreadAttentionKind = typeof OrchestratorMcpThreadAttentionKind.Type;
+
+const AttentionText = Schema.String.check(Schema.isMaxLength(240));
+
+export const OrchestratorMcpThreadAttentionInput = Schema.Struct({
+  environmentId: OrchestratorMcpEnvironmentTarget,
+  projectId: OrchestratorMcpProjectTarget,
+  since: Schema.optional(
+    Schema.String.check(Schema.isMaxLength(400)).annotate({
+      description:
+        "Cursor from the previous `nextCursor`, or an ISO time to start after. Omit to walk from the oldest.",
+    }),
+  ),
+  includeSubagents: Schema.optional(
+    Schema.Boolean.annotate({ description: "Also subagent threads." }),
+  ),
+  limit: Schema.optional(clampedPositiveInt(20)).annotate({ description: "Max 20." }),
+});
+export type OrchestratorMcpThreadAttentionInput = typeof OrchestratorMcpThreadAttentionInput.Type;
+
+export const OrchestratorMcpThreadAttentionItem = Schema.Struct({
+  threadId: ThreadId,
+  projectId: ProjectId,
+  title: Schema.String,
+  link: Schema.optional(Schema.String),
+  status: OrchestratorMcpThreadStatus,
+  attention: OrchestratorMcpThreadAttentionKind,
+  updatedAt: IsoDateTime,
+  summary: Schema.NullOr(AttentionText),
+  question: Schema.NullOr(AttentionText),
+  approval: Schema.NullOr(
+    Schema.Struct({
+      requestId: RuntimeRequestId,
+      kind: Schema.String.check(Schema.isMaxLength(40)),
+      detail: AttentionText,
+    }),
+  ),
+  requestId: Schema.NullOr(RuntimeRequestId),
+  runId: Schema.NullOr(RunId),
+});
+export type OrchestratorMcpThreadAttentionItem = typeof OrchestratorMcpThreadAttentionItem.Type;
+
+export const OrchestratorMcpThreadAttentionResult = Schema.Struct({
+  threads: Schema.Array(OrchestratorMcpThreadAttentionItem),
+  nextCursor: Schema.NullOr(Schema.String),
+  hasMore: Schema.Boolean,
+});
+export type OrchestratorMcpThreadAttentionResult = typeof OrchestratorMcpThreadAttentionResult.Type;
+
 export const OrchestratorMcpThreadReadInput = Schema.Struct({
   environmentId: OrchestratorMcpEnvironmentTarget,
   threadId: ThreadId,
@@ -582,6 +642,28 @@ export const OrchestratorMcpThreadSendResult = Schema.Struct({
   delivery: Schema.Literals(["started", "queued", "steered", "restarted"]),
 });
 export type OrchestratorMcpThreadSendResult = typeof OrchestratorMcpThreadSendResult.Type;
+
+export const OrchestratorMcpThreadReplyInput = Schema.Struct({
+  environmentId: OrchestratorMcpEnvironmentTarget,
+  threadId: ThreadId,
+  action: Schema.Literals(["answer", "approve", "deny", "message"]),
+  requestId: Schema.optional(RuntimeRequestId),
+  answers: Schema.optional(ProviderUserInputAnswers),
+  message: Schema.optional(TrimmedNonEmptyString.check(Schema.isMaxLength(120_000))),
+  clientRequestId: Schema.optional(OrchestratorMcpClientRequestId),
+});
+export type OrchestratorMcpThreadReplyInput = typeof OrchestratorMcpThreadReplyInput.Type;
+
+export const OrchestratorMcpThreadReplyResult = Schema.Struct({
+  threadId: ThreadId,
+  link: Schema.optional(Schema.String),
+  action: Schema.Literals(["answer", "approve", "deny", "message"]),
+  sequence: Schema.optional(NonNegativeInt),
+  runId: Schema.optional(RunId),
+  status: Schema.optional(Schema.String),
+  delivery: Schema.optional(Schema.Literals(["started", "queued", "steered", "restarted"])),
+});
+export type OrchestratorMcpThreadReplyResult = typeof OrchestratorMcpThreadReplyResult.Type;
 
 export const OrchestratorMcpThreadWaitInput = Schema.Struct({
   environmentId: OrchestratorMcpEnvironmentTarget,

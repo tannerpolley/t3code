@@ -219,6 +219,8 @@ const makeTestRelay = Effect.fnUntraced(function* (
     startFresh: unused,
     getThreadShell: unused,
     getShellSnapshot: unused,
+    listAttentionCandidates: unused,
+    readAttentionTexts: unused,
     getAgentAwarenessSnapshot: (threadId) =>
       threadId === undefined
         ? Effect.sync(() => {

@@ -43,6 +43,8 @@ const DISPLAY_NAMES: ReadonlyMap<string, string> = new Map([
   ["Create T3 threads", msg("Create T3 threads")],
   ["Start a T3 thread", msg("Start a T3 thread")],
   ["List T3 threads", msg("List T3 threads")],
+  ["List threads needing attention", msg("List threads needing attention")],
+  ["Reply to a T3 thread", msg("Reply to a T3 thread")],
   ["Read a T3 thread", msg("Read a T3 thread")],
   ["Send to a T3 thread", msg("Send to a T3 thread")],
   ["Wait for a T3 thread", msg("Wait for a T3 thread")],

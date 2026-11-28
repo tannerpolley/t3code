@@ -175,12 +175,28 @@ const handlers = {
       return yield* service.createThreads(scope, input);
     }),
   ),
+  t3_thread_attention: McpToolAccess.reads((input) =>
+    Effect.gen(function* () {
+      const scope = yield* McpInvocationContext.McpInvocationContext;
+      const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+      return yield* service.listAttention(scope, input);
+    }),
+  ),
   t3_thread_list: McpToolAccess.reads((input) =>
     Effect.gen(function* () {
       const scope = yield* McpInvocationContext.McpInvocationContext;
       const service = yield* OrchestratorMcpService.OrchestratorMcpService;
       return yield* service.listThreads(scope, input);
     }),
+  ),
+  t3_thread_reply: McpToolAccess.writesThreads(
+    (input) => [input.threadId],
+    (input) =>
+      Effect.gen(function* () {
+        const scope = yield* McpInvocationContext.McpInvocationContext;
+        const service = yield* OrchestratorMcpService.OrchestratorMcpService;
+        return yield* service.replyToThread(scope, input);
+      }),
   ),
   t3_thread_read: McpToolAccess.reads((input) =>
     Effect.gen(function* () {
