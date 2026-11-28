@@ -161,10 +161,22 @@ const decodeCachedSources = Schema.decodeUnknownOption(
   }),
 );
 
+/** Skips work that reads the orchestration database while a summary is built. */
+export interface UsageReadOptions {
+  /**
+   * Do not resolve Codex Fast/Ultrafast tiers from provider turns. A cache miss still scans
+   * session files. The confirming scan is skipped too, because that scan is what runs the lookup.
+   */
+  readonly skipServiceTierResolution?: boolean;
+}
+
 export class UsageService extends Context.Service<
   UsageService,
   {
-    readonly readSummary: (input: UsageSummaryInput) => Effect.Effect<UsageSummary, UsageReadError>;
+    readonly readSummary: (
+      input: UsageSummaryInput,
+      options?: UsageReadOptions,
+    ) => Effect.Effect<UsageSummary, UsageReadError>;
     readonly refreshRates: Effect.Effect<UsagePricing>;
   }
 >()("t3/usage/UsageService") {}
@@ -832,6 +844,7 @@ export const make = Effect.gen(function* () {
     input: UsageSummaryInput,
     settings: ServerSettingsValue,
     provisional: boolean,
+    options?: UsageReadOptions,
   ) {
     if (input.sinceDay > input.untilDay) {
       return yield* new UsageReadError({
@@ -1031,7 +1044,12 @@ export const make = Effect.gen(function* () {
 
     let resolvedAny = false;
     for (const { reader } of transcriptReaders) {
-      if (reader.resolveServiceTiers === undefined || fromMemory) continue;
+      if (
+        reader.resolveServiceTiers === undefined ||
+        fromMemory ||
+        options?.skipServiceTierResolution === true
+      )
+        continue;
       const pending = new Set<UsageRecord>();
       for (const [index, files] of filesByDir.entries()) {
         if (scannedDirs[index]?.provider !== reader.provider) continue;
@@ -1207,8 +1225,12 @@ export const make = Effect.gen(function* () {
     input: UsageSummaryInput,
     settings: ServerSettingsValue,
     provisional: boolean,
+    options?: UsageReadOptions,
   ) {
-    const { summary, fromMemory } = yield* scanSummary(input, settings, provisional);
+    const { summary, fromMemory } = yield* scanSummary(input, settings, provisional, options);
+    // The confirming scan is what classifies Codex speed. Callers that skipped that lookup
+    // keep the first answer, including a cached one with nothing left refreshing.
+    if (options?.skipServiceTierResolution === true) return summary;
     // With nothing marked refreshing the client would keep a saved answer as final.
     return fromMemory && !summary.sources.some((source) => source.refreshing === true)
       ? (yield* scanSummary(input, settings, false)).summary
@@ -1221,6 +1243,7 @@ export const make = Effect.gen(function* () {
     input: UsageSummaryInput,
     settings: ServerSettingsValue,
     provisional: boolean,
+    options?: UsageReadOptions,
   ): string =>
     JSON.stringify([
       input.timeZone,
@@ -1233,17 +1256,19 @@ export const make = Effect.gen(function* () {
       input.awaitRefresh === true,
       provisional,
       input.modelFilter ?? null,
+      options?.skipServiceTierResolution === true,
     ]);
 
   const readSummary = Effect.fn("UsageService.readSummary")(function* (
     requested: UsageSummaryInput,
+    options?: UsageReadOptions,
   ) {
     const { modelFilter: requestedFilter, ...unfiltered } = requested;
     const modelFilter = canonicalModelFilter(requestedFilter);
     const input = modelFilter === undefined ? unfiltered : { ...unfiltered, modelFilter };
     const settings = yield* readSettings;
     const provisional = input.provisional === true && input.awaitRefresh !== true;
-    const key = scanKey(input, settings, provisional);
+    const key = scanKey(input, settings, provisional, options);
     const deferred = yield* Effect.uninterruptible(
       Effect.gen(function* () {
         const existing = inflightScans.get(key);
@@ -1254,7 +1279,7 @@ export const make = Effect.gen(function* () {
         inflightScans.set(key, created);
         // Detach so caller departure cannot cancel shared scans; finished scans warm the cache.
         // Register writes before releasing waiters, but start writing after delivering their summary.
-        yield* readWindow(input, settings, provisional).pipe(
+        yield* readWindow(input, settings, provisional, options).pipe(
           Effect.onExit((exit) =>
             Effect.sync(() => inflightScans.delete(key)).pipe(
               Effect.andThen(Exit.isSuccess(exit) ? schedulePersist : Effect.void),

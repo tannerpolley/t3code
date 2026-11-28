@@ -100,6 +100,30 @@ T3 Code.
   `projectId` or `threadId`.
 - To list threads across projects, call `t3_thread_list` with
   `allProjects: true`, or use `t3_thread_search`.
+- To read token, cost, and limit analytics, use the usage tools below. A
+  **Read only** connection can call them. They never return prompts, messages,
+  secrets, or account credentials.
+
+## Read usage
+
+These tools describe the environment's own usage. Cost figures are estimates,
+not the subscription bill. Open **Usage** and refresh it when a new session or
+a new model's price is missing; Fast and Ultrafast premiums follow that scan.
+
+- `t3_usage_summary` reads tokens, cache hit rate, and estimated cost by
+  provider, model, and day. Pass `sinceDay` and `untilDay` (`YYYY-MM-DD`) and
+  an IANA `timeZone`, at most 31 days, or omit the dates for the last 7 days.
+  `resolution: "hour"` also needs `sinceTime` and `untilTime` within 24 hours.
+- `t3_usage_threads` reads the projects and threads that used the most recorded
+  tokens in that window, and threads close to automatic compaction. It looks at
+  the 200 most recently updated active threads. Pass `threadId` for one thread,
+  including an archived one, or `projectId` to stay inside a project. It does
+  not include conversation text. Provider history that never ran as a T3 turn
+  is only in `t3_usage_summary`.
+- `t3_usage_limits` reads the cached subscription windows (session, weekly,
+  monthly, and any others), when they reset, and how many reset credits are
+  banked. It does not contact the provider or redeem a credit. A hub and a
+  local login for the same account can both appear.
 
 ## Claude Code
 
