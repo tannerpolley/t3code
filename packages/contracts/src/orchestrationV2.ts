@@ -633,6 +633,16 @@ export function isProviderNativeSubagentThread(
   return thread.lineage.relationshipToParent === "subagent" && thread.creationSource === "provider";
 }
 
+export function hasQuestionOrchestrator(
+  thread: Pick<OrchestrationV2AppThread, "lineage" | "creationSource">,
+): boolean {
+  return (
+    thread.lineage.parentThreadId !== null &&
+    thread.lineage.relationshipToParent === "subagent" &&
+    !isProviderNativeSubagentThread(thread)
+  );
+}
+
 export const IDLE_COMPACTION_TEXT = "/compact";
 
 interface CompactionMessageFields {
@@ -2411,9 +2421,22 @@ export const OrchestrationV2PendingRuntimeRequestSummary = Schema.Struct({
   blocking: Schema.optional(Schema.Boolean),
   /** Secret and link cards: only the user can answer them, never a coordinating agent. */
   userOnly: Schema.optional(Schema.Boolean),
+  /** The question is pending for the orchestrator and does not need owner attention. */
+  orchestratorOwned: Schema.optional(Schema.Boolean),
 });
 export type OrchestrationV2PendingRuntimeRequestSummary =
   typeof OrchestrationV2PendingRuntimeRequestSummary.Type;
+
+export function isOrchestratorOwnedQuestion(
+  thread: Pick<OrchestrationV2ThreadShell, "lineage" | "creationSource" | "pendingRuntimeRequest">,
+): boolean {
+  const request = thread.pendingRuntimeRequest;
+  return (
+    request?.kind === "user_input" &&
+    request.userOnly !== true &&
+    (request.orchestratorOwned ?? hasQuestionOrchestrator(thread))
+  );
+}
 
 export const OrchestrationV2LatestVisibleMessageSummary = Schema.Struct({
   id: MessageId,

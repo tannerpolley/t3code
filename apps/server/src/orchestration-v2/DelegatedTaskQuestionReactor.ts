@@ -1,5 +1,6 @@
 import {
   CommandId,
+  hasQuestionOrchestrator,
   MessageId,
   type OrchestrationV2DomainEvent,
   type OrchestrationV2RuntimeRequest,
@@ -179,7 +180,7 @@ const make = Effect.gen(function* () {
       }
       const child = yield* projections.getThread(event.threadId);
       const parentThreadId = child.lineage.parentThreadId;
-      if (parentThreadId === null) return;
+      if (parentThreadId === null || !hasQuestionOrchestrator(child)) return;
       const request = yield* projections.getRuntimeRequest(event.threadId, event.payload.id);
       if (event.payload.status !== "pending" || request?.status !== "pending") {
         yield* cancelQueuedWakes(parentThreadId, [event.payload.id]);
@@ -240,7 +241,11 @@ const make = Effect.gen(function* () {
         return event.payload.kind === "user_input"
           ? projections
               .getThread(event.threadId)
-              .pipe(Effect.map((child) => child.lineage.parentThreadId))
+              .pipe(
+                Effect.map((child) =>
+                  hasQuestionOrchestrator(child) ? child.lineage.parentThreadId : null,
+                ),
+              )
           : Effect.succeed(null);
       default:
         return Effect.succeed(null);

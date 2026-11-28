@@ -145,7 +145,7 @@ describe("v2 thread shell lists", () => {
     registry.dispose();
   });
 
-  it("keeps a live subagent question inside the parent without flagging its thread", () => {
+  it("shows a live child approval and removes it when the child asks its orchestrator a question", () => {
     const { registry, threads, snapshotAtom } = makeHarness();
     const root = v2ThreadShell;
     const child = {
@@ -160,8 +160,8 @@ describe("v2 thread shell lists", () => {
         relationshipToParent: "subagent" as const,
       },
       pendingRuntimeRequest: {
-        id: RuntimeRequestId.make("question"),
-        kind: "user_input" as const,
+        id: RuntimeRequestId.make("approval"),
+        kind: "command" as const,
         createdAt: v2Now,
       },
     };
@@ -172,7 +172,7 @@ describe("v2 thread shell lists", () => {
     expect(
       registry.get(threads.threadShellAtom({ environmentId, threadId: root.id }))
         ?.pendingSubagentRequest,
-    ).toBeNull();
+    ).toBe("approval");
     registry.set(snapshotAtom(environmentId), {
       ...v2ShellSnapshot,
       threads: [root, { ...child, status: "queued" as const }],
@@ -191,6 +191,26 @@ describe("v2 thread shell lists", () => {
     expect(registry.get(inputs)).toEqual([]);
     registry.set(snapshotAtom(environmentId), { ...v2ShellSnapshot, threads: [root, child] });
     expect(registry.get(inputs).map((thread) => thread.id)).toEqual([child.id]);
+    registry.set(snapshotAtom(environmentId), {
+      ...v2ShellSnapshot,
+      threads: [
+        root,
+        {
+          ...child,
+          pendingRuntimeRequest: {
+            id: RuntimeRequestId.make("question"),
+            kind: "user_input",
+            createdAt: v2Now,
+            orchestratorOwned: true,
+          },
+        },
+      ],
+    });
+    expect(registry.get(inputs)).toEqual([]);
+    expect(
+      registry.get(threads.threadShellAtom({ environmentId, threadId: root.id }))
+        ?.pendingSubagentRequest,
+    ).toBeNull();
     dispose();
     registry.dispose();
   });
@@ -443,7 +463,7 @@ describe("v2 thread shell lists", () => {
       ],
     });
     expect(registry.get(threads.threadShellAtom(parentRef))?.pendingSubagentRequest).toBeNull();
-    expect(registry.get(inputs).map((thread) => thread.id)).toEqual([helper.id]);
+    expect(registry.get(inputs)).toEqual([]);
 
     // A secret card needs the user, so it still reaches the parent here.
     registry.set(snapshotAtom(remoteEnvironmentId), {

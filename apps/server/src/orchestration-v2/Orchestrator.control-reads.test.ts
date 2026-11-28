@@ -1439,6 +1439,34 @@ it.effect("wakes the parent once when its delegated task asks a question", () =>
       events: [question, asyncQuestion, answered, approval],
     });
 
+    const childProjection = yield* projections.getThreadProjection(task.childThreadId!);
+    assert.isTrue(
+      childProjection.runtimeRequests.some((request) => request.id === question.payload.id),
+    );
+    for (const shell of [
+      yield* projections.getThreadShell(task.childThreadId!),
+      ProjectionStore.threadShellFromProjection(childProjection),
+    ]) {
+      assert.equal(shell?.pendingRuntimeRequest?.id, approval.payload.id);
+    }
+    yield* eventSink.write({
+      events: [
+        {
+          ...approval,
+          id: EventId.make("event:approval-resolved"),
+          payload: { ...approval.payload, status: "resolved", resolvedAt: now },
+        },
+      ],
+    });
+    for (const shell of [
+      yield* projections.getThreadShell(task.childThreadId!),
+      ProjectionStore.threadShellFromProjection(
+        yield* projections.getThreadProjection(task.childThreadId!),
+      ),
+    ]) {
+      assert.isTrue(shell?.pendingRuntimeRequest?.orchestratorOwned);
+    }
+
     yield* reactor.handle(question);
     assert.isFalse(
       (yield* projections.getThreadProjection(parentThreadId)).messages.some(

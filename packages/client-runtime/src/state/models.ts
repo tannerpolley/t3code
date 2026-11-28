@@ -1,4 +1,5 @@
 import { backgroundWorkHoldsCompletion } from "@t3tools/shared/orchestrationV2PendingBackgroundWork";
+import { isOrchestratorOwnedQuestion } from "@t3tools/contracts";
 import { threadPullRequestsOf } from "../threadPullRequests.ts";
 import type {
   ThreadLinkedPullRequest,
@@ -283,6 +284,9 @@ export function presentThreadShell(
   thread: OrchestrationV2ThreadShell,
   pendingSubagentRequest: PendingSubagentRequest | null = null,
 ): EnvironmentThreadShell {
+  if (isOrchestratorOwnedQuestion(thread)) {
+    thread = { ...thread, pendingRuntimeRequest: null };
+  }
   const updatedAt = iso(thread.updatedAt);
   const latestRun =
     thread.latestRunId === null

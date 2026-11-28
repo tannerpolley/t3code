@@ -230,10 +230,27 @@ it.effect("an answered question reports already answered instead of not found", 
   );
 });
 
-it.effect("a pending question read keeps option previews", () => {
-  const shell = McpToolAccessTestkit.liveThreadShell(threadId);
-  const requestId = RuntimeRequestId.make("previewed-question");
-  const projection = McpToolAccessTestkit.idleThreadProjection(shell);
+it.effect("the orchestrator can read and answer a child's question with option previews", () => {
+  const childThreadId = ThreadId.make("mcp-question-child");
+  const parent = McpToolAccessTestkit.liveThreadShell(threadId);
+  const shell = McpToolAccessTestkit.liveThreadShell(childThreadId);
+  const child = {
+    ...shell,
+    lineage: {
+      parentThreadId: threadId,
+      relationshipToParent: "subagent" as const,
+      rootThreadId: threadId,
+    },
+    pendingRuntimeRequest: {
+      id: RuntimeRequestId.make("previewed-question"),
+      kind: "user_input" as const,
+      createdAt: shell.createdAt,
+      orchestratorOwned: true,
+    },
+  };
+  const requestId = child.pendingRuntimeRequest.id;
+  const projection = McpToolAccessTestkit.idleThreadProjection(child);
+  const answers = { post: "Post" };
   const questions = [
     {
       id: "post",
@@ -244,13 +261,23 @@ it.effect("a pending question read keeps option previews", () => {
   ];
   return Effect.gen(function* () {
     const server = yield* McpServer.McpServer;
-    const result = yield* server
-      .callTool({ name: "t3_pending_request", arguments: { action: "read", requestId } })
-      .pipe(
-        Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
-        Effect.provideService(McpSchema.McpServerClient, client),
-      );
-    expect(result.structuredContent).toEqual({ requestId, questions });
+    const call = (args: Record<string, unknown>) =>
+      server
+        .callTool({ name: "t3_pending_request", arguments: { ...args, threadId: childThreadId } })
+        .pipe(
+          Effect.provideService(McpInvocationContext.McpInvocationContext, scope),
+          Effect.provideService(McpSchema.McpServerClient, client),
+        );
+    expect((yield* call({ action: "list" })).structuredContent).toEqual({
+      requestIds: [requestId],
+    });
+    expect((yield* call({ action: "read", requestId })).structuredContent).toEqual({
+      requestId,
+      questions,
+    });
+    expect((yield* call({ action: "respond", requestId, answers })).structuredContent).toEqual({
+      sequence: 1,
+    });
   }).pipe(
     Effect.provide(
       layerThreadToolkit.pipe(
@@ -258,44 +285,56 @@ it.effect("a pending question read keeps option previews", () => {
         Layer.provide(NodeCrypto.layer),
         Layer.provide(
           Layer.mock(ThreadManagement.ThreadManagementService)({
-            getThreadShell: () => Effect.succeed(shell),
-            getProjectThreadRecords: () =>
-              Effect.succeed({
-                ...projection,
-                runtimeRequests: [
-                  {
-                    id: requestId,
-                    nodeId: NodeId.make("root"),
-                    providerTurnId: null,
-                    nativeRequestRef: null,
-                    kind: "user_input",
-                    status: "pending",
-                    responseCapability: { type: "message" },
-                    createdAt: shell.createdAt,
-                    resolvedAt: null,
-                  },
-                ],
-                turnItems: [
-                  {
-                    id: TurnItemId.make("previewed-question-item"),
-                    threadId,
-                    runId: null,
-                    nodeId: null,
-                    providerThreadId: null,
-                    providerTurnId: null,
-                    nativeItemRef: null,
-                    parentItemId: null,
-                    ordinal: 0,
-                    status: "running",
-                    title: null,
-                    startedAt: shell.createdAt,
-                    completedAt: null,
-                    updatedAt: shell.updatedAt,
-                    type: "user_input_request",
-                    requestId,
-                    questions,
-                  },
-                ],
+            getThreadShell: (id) => Effect.succeed(id === childThreadId ? child : parent),
+            getProjectThreadRecords: ({ threadId: id }) =>
+              id === threadId
+                ? Effect.succeed(McpToolAccessTestkit.idleThreadProjection(parent))
+                : Effect.succeed({
+                    ...projection,
+                    runtimeRequests: [
+                      {
+                        id: requestId,
+                        nodeId: NodeId.make("root"),
+                        providerTurnId: null,
+                        nativeRequestRef: null,
+                        kind: "user_input",
+                        status: "pending",
+                        responseCapability: { type: "message" },
+                        createdAt: shell.createdAt,
+                        resolvedAt: null,
+                      },
+                    ],
+                    turnItems: [
+                      {
+                        id: TurnItemId.make("previewed-question-item"),
+                        threadId: childThreadId,
+                        runId: null,
+                        nodeId: null,
+                        providerThreadId: null,
+                        providerTurnId: null,
+                        nativeItemRef: null,
+                        parentItemId: null,
+                        ordinal: 0,
+                        status: "running",
+                        title: null,
+                        startedAt: shell.createdAt,
+                        completedAt: null,
+                        updatedAt: shell.updatedAt,
+                        type: "user_input_request",
+                        requestId,
+                        questions,
+                      },
+                    ],
+                  }),
+            dispatch: (command) =>
+              Effect.sync(() => {
+                expect(command).toMatchObject({
+                  type: "runtime-request.respond",
+                  threadId: childThreadId,
+                  requestId,
+                  answers,
+                });
+                return { sequence: 1, storedEvents: [] };
               }),
           }),
         ),

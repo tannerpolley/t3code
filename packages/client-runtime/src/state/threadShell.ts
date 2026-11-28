@@ -10,6 +10,7 @@ import type {
 } from "@t3tools/contracts";
 import {
   isListedThreadLineage,
+  isOrchestratorOwnedQuestion,
   isProviderNativeSubagentThread,
   OrchestrationV2ThreadShell,
 } from "@t3tools/contracts";
@@ -116,6 +117,7 @@ function subagentRequest(thread: OrchestrationV2ThreadShell): PendingSubagentReq
   if (
     kind === undefined ||
     kind === "auth_refresh" ||
+    isOrchestratorOwnedQuestion(thread) ||
     (thread.lineage.relationshipToParent !== "subagent" && thread.delegatedFrom === undefined) ||
     isProviderNativeSubagentThread(thread) ||
     !isChildRunLive(thread)

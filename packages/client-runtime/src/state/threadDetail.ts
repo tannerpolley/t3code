@@ -555,8 +555,10 @@ export function createEnvironmentThreadDetailAtoms<E>(
     ).pipe(Atom.setIdleTTL(0), Atom.withLabel(`environment-thread-worktree:${key}`)),
   );
   const pendingRequestsAtomFamily = Atom.family((key: string) => {
-    let previous: Pick<OrchestrationV2ThreadProjection, "runtimeRequests" | "turnItems"> | null =
-      null;
+    let previous: Pick<
+      OrchestrationV2ThreadProjection,
+      "thread" | "runtimeRequests" | "turnItems"
+    > | null = null;
     let value: PendingThreadRequests | null = null;
     return Atom.make((get) => {
       const projection = Option.getOrNull(get(threadStateValueAtomFamily(key)).data);
@@ -579,10 +581,12 @@ export function createEnvironmentThreadDetailAtoms<E>(
             );
       if (
         previous === null ||
+        previous.thread.lineage !== projection.thread.lineage ||
+        previous.thread.creationSource !== projection.thread.creationSource ||
         !arrayElementsEqual(previous.runtimeRequests, runtimeRequests) ||
         !arrayElementsEqual(previous.turnItems, turnItems)
       ) {
-        previous = { runtimeRequests, turnItems };
+        previous = { thread: projection.thread, runtimeRequests, turnItems };
         value = derivePendingThreadRequests(previous);
       }
       return value;
