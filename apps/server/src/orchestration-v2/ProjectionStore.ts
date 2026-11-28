@@ -2294,7 +2294,9 @@ function shellFromState(input: {
     ...(input.state.thread.retirement === undefined
       ? {}
       : {
-          successorThreadId: input.state.thread.retirement.successorThreadId,
+          ...(input.state.thread.retirement.successorThreadId === undefined
+            ? {}
+            : { successorThreadId: input.state.thread.retirement.successorThreadId }),
           ...(input.state.thread.retirement.completed === true
             ? {}
             : { retiringWorkerCount: input.state.retiringWorkerCount ?? 0 }),
@@ -8559,6 +8561,14 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
                 SELECT COUNT(*) FROM json_each(t.payload_json, '$.retirement.pendingTaskIds') pending
                 JOIN orchestration_v2_projection_subagents task ON task.subagent_id = pending.value
                 WHERE task.status IN ('pending', 'idle', 'running', 'waiting')
+                  OR (
+                    json_extract(t.payload_json, '$.retirement.successorThreadId') IS NULL
+                    AND EXISTS (
+                      SELECT 1 FROM orchestration_v2_projection_runs active
+                      WHERE active.thread_id = task.child_thread_id
+                        AND active.status IN ('preparing', 'queued', 'starting', 'running', 'waiting')
+                    )
+                  )
               ) END AS retiring_worker_count,
               `
                   : sql`

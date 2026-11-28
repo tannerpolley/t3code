@@ -141,6 +141,7 @@ export function canStartFresh(thread: OrchestrationV2ThreadShell) {
     thread.deletedAt === null &&
     thread.linkOrigin == null &&
     thread.workflowRun === undefined &&
-    thread.successorThreadId === undefined
+    thread.successorThreadId === undefined &&
+    thread.retiringWorkerCount === undefined
   );
 }

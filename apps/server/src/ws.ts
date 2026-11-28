@@ -2111,7 +2111,19 @@ export const layerWsRpc = (
                   Effect.tap((result) =>
                     result.replayed ? Effect.void : recordClientCommandAnalytics(command),
                   ),
-                  Effect.map((result) => ({ sequence: result.sequence })),
+                  Effect.map((result) => ({
+                    sequence: result.sequence,
+                    ...(command.type === "thread.archive" &&
+                    result.storedEvents.some(
+                      ({ event }) =>
+                        event.threadId === command.threadId &&
+                        event.type === "thread.metadata-updated" &&
+                        event.payload.retirement !== undefined &&
+                        event.payload.archivedAt === null,
+                    )
+                      ? { retiring: true as const }
+                      : {}),
+                  })),
                   Effect.mapError((cause) => {
                     if (cause._tag === "EnvironmentAuthorizationError") return cause;
                     const detail = userFacingDispatchErrorMessage(cause);

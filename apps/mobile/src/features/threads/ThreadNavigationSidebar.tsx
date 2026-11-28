@@ -431,6 +431,8 @@ function ThreadNavigationSidebarPane(props: ThreadNavigationSidebarProps) {
             onNewThreadOnBranch={props.onNewThreadOnBranch}
             thread={thread}
             agentCount={item.agentCount}
+            familyExpanded={item.familyExpanded}
+            onToggleFamily={toggleSidebarRow}
             agentRow={item.agentRow}
             depth={item.depth}
             listVisible={props.visible}

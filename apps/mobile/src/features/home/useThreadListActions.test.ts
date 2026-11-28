@@ -19,6 +19,7 @@ const state = vi.hoisted(() => ({
   dropBusy: false,
   holdingRows: false,
   failedAction: null as string | null,
+  retiringArchive: false,
   titleOutcome: null as ThreadTitleRegenerationOutcome | null,
   archivedRefreshes: [] as string[],
   onArchivedRefresh: undefined as (() => void) | undefined,
@@ -181,6 +182,8 @@ vi.mock("../../state/threads", () => ({
           if (action === state.failedAction)
             return AsyncResult.failure(Cause.fail(new Error("Server rejected action")));
           state.afterRequest?.();
+          if (action === "archive" && state.retiringArchive)
+            return AsyncResult.success({ sequence: 1, retiring: true });
           return AsyncResult.success(action === "regenerateTitle" ? state.titleOutcome : undefined);
         },
       ]),
@@ -190,6 +193,7 @@ vi.mock("../../state/threads", () => ({
 
 import { appAtomRegistry } from "../../state/atom-registry";
 import { composerDraftsAtom } from "../../state/use-composer-drafts";
+import { registerThreadDismissal } from "./thread-dismissal";
 import { dismissThreadUndoNotice, readThreadUndoNotice } from "./thread-undo-notice";
 import { useThreadListActions } from "./useThreadListActions";
 
@@ -221,6 +225,7 @@ const mutationCases = [
 beforeEach(() => {
   state.connectedEnvironmentIds = [primaryEnvironmentId, otherEnvironmentId];
   state.failedAction = null;
+  state.retiringArchive = false;
   state.titleOutcome = null;
   state.archivedRefreshes = [];
   state.onArchivedRefresh = undefined;
@@ -657,6 +662,23 @@ describe("thread action undo", () => {
 });
 
 describe("thread archive guard", () => {
+  it("restores the visible row when archiving begins retirement", async () => {
+    const thread = makeThread();
+    state.retiringArchive = true;
+    const restore = vi.fn();
+    const unregister = registerThreadDismissal(`${thread.environmentId}:${thread.id}`, () => ({
+      finished: Promise.resolve(),
+      restore,
+    }));
+    try {
+      expect(await useThreadListActions().archiveThread(thread)).toBe(true);
+      expect(restore).toHaveBeenCalledOnce();
+      expect(state.archivedRefreshes).toEqual([]);
+    } finally {
+      unregister();
+    }
+  });
+
   it("keeps active provider runs out of the archive", async () => {
     const thread = makeThread({
       runtime: {

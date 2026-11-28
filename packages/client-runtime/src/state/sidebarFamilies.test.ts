@@ -5,9 +5,8 @@ import type { EnvironmentThreadShell } from "./models.ts";
 import {
   countSidebarAgentStates,
   groupSidebarThreadsByProject,
-  sidebarProjectContents,
+  sidebarFamilyRows,
   indexSidebarChildren,
-  sidebarRoleSections,
 } from "./sidebarFamilies.ts";
 
 const thread = (
@@ -36,43 +35,60 @@ const thread = (
     },
   }) as unknown as EnvironmentThreadShell;
 
-const folderOfProject = (child: EnvironmentThreadShell) =>
-  child.projectId === "elsewhere" ? undefined : `folder:${child.projectId}`;
+it("keeps each orchestrator's role sections and each worker's native children together", () => {
+  const first = thread("first");
+  const second = thread("second");
+  const owner = thread("owner");
+  const threads = [
+    first,
+    second,
+    owner,
+    thread("review", { parent: "first", role: "review" }),
+    thread("old-impl", { parent: "first", role: "implementation", createdAt: "2026-11-26" }),
+    thread("new-impl", { parent: "first", role: "implementation", createdAt: "2026-11-27" }),
+    thread("/root/native", { parent: "new-impl", role: "general" }),
+    thread("archived", { parent: "first", role: "test", archived: true }),
+    thread("other-impl", { parent: "second", role: "implementation" }),
+  ];
+  const children = indexSidebarChildren(threads);
+  const roots = [first, second, owner];
+  const expanded = new Map([
+    ["env:first", true],
+    ["env:second", true],
+    ["env:new-impl", true],
+  ]);
+  const rows = (expansion = expanded, collapsedRole?: string) =>
+    [...sidebarFamilyRows(roots, children, expansion, null, (key) => key !== collapsedRole)].map(
+      ([key, items]) => [key, items.map((item) => [item.key, item.parentKey, item.depth])],
+    );
 
-describe("sidebarRoleSections", () => {
-  it("groups each project's live children by role, in role order, newest first", () => {
-    const threads = [
-      thread("main"),
-      thread("docs-main", { project: "docs" }),
-      thread("review", { parent: "main", role: "review" }),
-      thread("old-impl", { parent: "main", role: "implementation", createdAt: "2026-11-26" }),
-      thread("new-impl", { parent: "main", role: "implementation", createdAt: "2026-11-27" }),
-      thread("general", { parent: "main", role: "general" }),
-      thread("untagged", { parent: "new-impl" }),
-      thread("archived", { parent: "main", role: "test", archived: true }),
-      thread("writer", { parent: "docs-main", project: "docs", role: "writer" }),
-      thread("unlisted", { parent: "main", project: "elsewhere", role: "design" }),
-    ];
-
-    const sections = sidebarRoleSections(indexSidebarChildren(threads, new Set()), folderOfProject);
-
-    expect(
-      [...sections].map(([folder, roles]) => [
-        folder,
-        roles.map((section) => [section.key, section.threads.map((child) => child.id)]),
-      ]),
-    ).toEqual([
+  expect(rows()).toEqual([
+    [
+      "env:first",
       [
-        "folder:app",
-        [
-          ["folder:app:implementation", ["new-impl", "old-impl"]],
-          ["folder:app:review", ["review"]],
-          ["folder:app:other", ["general", "untagged"]],
-        ],
+        ["env:first", undefined, 0],
+        ["role:env:first:implementation", "env:first", 1],
+        ["env:new-impl", "role:env:first:implementation", 2],
+        ["env:/root/native", "env:new-impl", 3],
+        ["env:old-impl", "role:env:first:implementation", 2],
+        ["role:env:first:review", "env:first", 1],
+        ["env:review", "role:env:first:review", 2],
       ],
-      ["folder:docs", [["folder:docs:writer", ["writer"]]]],
-    ]);
-  });
+    ],
+    [
+      "env:second",
+      [
+        ["env:second", undefined, 0],
+        ["role:env:second:implementation", "env:second", 1],
+        ["env:other-impl", "role:env:second:implementation", 2],
+      ],
+    ],
+    ["env:owner", [["env:owner", undefined, 0]]],
+  ]);
+  expect(rows(new Map(expanded).set("env:first", false))[0]?.[1]).toEqual([
+    ["env:first", undefined, 0],
+  ]);
+  expect(rows(expanded, "role:env:first:implementation")[1]).toEqual(rows()[1]);
 });
 
 it("can group linked agents when the parent's environment is absent", () => {
@@ -135,7 +151,7 @@ describe("groupSidebarThreadsByProject", () => {
       thread("b", remoteEnvironmentId, t3codeRemote),
     ];
     const summarize = (keepEmpty: (group: (typeof groups)[number]) => boolean) =>
-      groupSidebarThreadsByProject(groups, threads, new Map(), keepEmpty).map((folder) => ({
+      groupSidebarThreadsByProject(groups, threads, keepEmpty).map((folder) => ({
         projectKey: folder.group.projectKey,
         threads: folder.threads.map((entry) => entry.id),
       }));
@@ -152,34 +168,4 @@ describe("groupSidebarThreadsByProject", () => {
       { projectKey: "fleet", threads: [] },
     ]);
   });
-});
-
-it("lists project threads before role sections and keeps folders containing only agents", () => {
-  const main = thread("main");
-  const settled = { ...thread("settled"), settledOverride: "settled" as const };
-  const agent = thread("implementation", { parent: "main", role: "implementation" });
-  const review = thread("review", { project: "docs", parent: "old", role: "review" });
-  const folders = groupSidebarThreadsByProject(
-    ["docs", "app"].map((projectKey) => ({
-      projectKey,
-      memberProjectRefs: [{ environmentId: main.environmentId, projectId: projectKey }],
-    })),
-    [main, settled],
-    indexSidebarChildren([agent, review]),
-    () => false,
-  );
-
-  expect(
-    folders.map(({ group, threads, roleSections }) => [
-      group.projectKey,
-      ...sidebarProjectContents(threads, roleSections).flatMap(({ kind, rows }) =>
-        kind === "threads"
-          ? rows.map((row) => row.id)
-          : rows.flatMap((section) => section.threads.map((row) => row.id)),
-      ),
-    ]),
-  ).toEqual([
-    ["docs", "review"],
-    ["app", "main", "settled", "implementation"],
-  ]);
 });

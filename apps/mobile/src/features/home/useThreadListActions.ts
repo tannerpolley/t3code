@@ -120,6 +120,12 @@ function liveThread(thread: EnvironmentThreadShell): EnvironmentThreadShell {
   );
 }
 
+function isRetiringArchive(value: unknown) {
+  return (
+    typeof value === "object" && value !== null && "retiring" in value && value.retiring === true
+  );
+}
+
 function useThreadActionExecutor(
   onCompleted?: (action: ThreadListAction, thread: EnvironmentThreadShell) => void,
 ) {
@@ -198,12 +204,14 @@ function useThreadActionExecutor(
                 environmentId: thread.environmentId,
                 input: { threadId: thread.id },
               }),
-        (result) => result._tag === "Success",
+        (result) =>
+          result._tag === "Success" && !(action === "archive" && isRetiringArchive(result.value)),
       );
       if (result._tag === "Failure") {
         Dialog.alert(actionFailureTitle(action), actionFailureMessage(action, result.cause));
         return false;
       }
+      if (action === "archive" && isRetiringArchive(result.value)) return true;
       onSucceeded?.(result.value);
       if (action === "archive" || action === "delete") {
         for (const kind of ["settle", "snooze", "pin"]) ThreadUndo.invalidate(kind, key);

@@ -121,6 +121,7 @@ import * as Result from "effect/Result";
 import * as Schedule from "effect/Schedule";
 import * as Schema from "effect/Schema";
 import * as Stream from "effect/Stream";
+import * as Struct from "effect/Struct";
 
 import * as ProjectStore from "./ProjectStore.ts";
 import * as TaskFolderStore from "../workspace/TaskFolderStore.ts";
@@ -1668,11 +1669,17 @@ const hasRunningDelegatedTasks = (subagents: ReadonlyArray<OrchestrationV2Subage
       isOrchestrationV2WorkActive(task.status),
   );
 
-const retirementRefusal = (command: OrchestrationV2ServerCommand, successorThreadId: ThreadId) =>
+const retirementRefusal = (
+  command: OrchestrationV2ServerCommand,
+  successorThreadId: ThreadId | undefined,
+) =>
   new OrchestratorDispatchError({
     commandId: command.commandId,
     commandType: command.type,
-    cause: `This thread is retiring. Continue in thread ${successorThreadId}.`,
+    cause:
+      successorThreadId === undefined
+        ? "This thread is retiring."
+        : `This thread is retiring. Continue in thread ${successorThreadId}.`,
   });
 
 const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(function* () {
@@ -1994,6 +2001,81 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     (effect, threadId) =>
       effect.pipe(Effect.mapError((cause) => new OrchestratorProjectionError({ threadId, cause }))),
   );
+
+  type ArchiveFamily = {
+    descendants: readonly OrchestrationV2AppThread[];
+    pendingTaskIds: readonly NodeId[];
+    busy: boolean;
+  };
+
+  const withArchiveFamily = Effect.fnUntraced(function* <A>(
+    threadId: ThreadId,
+    action: (family?: ArchiveFamily) => Effect.Effect<A, OrchestratorV2Error>,
+  ): Effect.fn.Return<A, OrchestratorV2Error> {
+    const root = yield* findThread(threadId);
+    if (root === null || root.lineage.parentThreadId !== null || root.delegatedFrom !== undefined) {
+      return yield* action();
+    }
+    const descendants: OrchestrationV2AppThread[] = [];
+    const tasks: OrchestrationV2Subagent[] = [];
+    const busyThreads = new Set<ThreadId>();
+    const visited = new Set([root.id]);
+    const collect = Effect.fnUntraced(function* (
+      thread: OrchestrationV2AppThread,
+      next: () => Effect.Effect<A, OrchestratorV2Error>,
+    ): Effect.fn.Return<A, OrchestratorV2Error> {
+      const records = yield* projectionStore
+        .getThreadRecords(thread.id, ["subagents", "runs", "runtimeRequests"])
+        .pipe(
+          Effect.mapError(
+            (cause) => new OrchestratorProjectionError({ threadId: thread.id, cause }),
+          ),
+        );
+      tasks.push(...records.subagents);
+      if (thread.archivedAt === null && threadHasUnfinishedWork(records))
+        busyThreads.add(thread.id);
+      const childIds = records.subagents.flatMap((task) =>
+        task.childThreadId === null ? [] : [task.childThreadId],
+      );
+      return yield* childIds.reduceRight(
+        (rest, childId) => () =>
+          Effect.gen(function* () {
+            if (visited.has(childId)) return yield* rest();
+            visited.add(childId);
+            return yield* threadDispatch.withLock(
+              childId,
+              Effect.gen(function* () {
+                const child = yield* findThread(childId);
+                if (
+                  child === null ||
+                  child.deletedAt !== null ||
+                  child.lineage.parentThreadId !== thread.id
+                ) {
+                  return yield* rest();
+                }
+                descendants.push(child);
+                return yield* collect(child, rest);
+              }),
+            );
+          }),
+        next,
+      )();
+    });
+    return yield* collect(root, () => {
+      const pendingTaskIds = tasks
+        .filter(
+          (task) =>
+            isOrchestrationV2WorkActive(task.status) ||
+            (task.childThreadId !== null && busyThreads.has(task.childThreadId)),
+        )
+        .map((task) => task.id);
+      return action({
+        descendants,
+        pendingTaskIds,
+        busy: pendingTaskIds.length > 0 || (descendants.length > 0 && busyThreads.size > 0),
+      });
+    });
+  });
 
   const getProjectionWithPendingEvents =
     /* This helper runs for individual orchestration events; the enclosing operation owns the span. */
@@ -4524,6 +4606,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
     >,
     events: Ref.Ref<Array<OrchestrationV2DomainEvent>>,
     effects: Ref.Ref<Array<PendingOrchestrationEffectV2>>,
+    archivedWithThreadId?: ThreadId,
   ) {
     const thread = yield* projectionStore.getThread(command.threadId).pipe(
       Effect.mapError(
@@ -4641,7 +4724,10 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
       const records = yield* projectionStore
         .getThreadRecords(command.threadId, ["subagents"])
         .pipe(mapDispatchError(command));
-      if (thread.retirement && thread.retirement.pendingTaskIds.length > 0) {
+      if (
+        thread.retirement?.successorThreadId !== undefined &&
+        thread.retirement.pendingTaskIds.length > 0
+      ) {
         return yield* retirementRefusal(command, thread.retirement.successorThreadId);
       }
       if (hasRunningDelegatedTasks(records.subagents)) {
@@ -5092,6 +5178,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           return {
             ...thread,
             archivedAt: now,
+            ...(archivedWithThreadId === undefined ? {} : { archivedWithThreadId }),
             ...(thread.retirement === undefined
               ? {}
               : { retirement: { ...thread.retirement, completed: true as const } }),
@@ -5102,7 +5189,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
           };
         case "thread.unarchive":
           return {
-            ...thread,
+            ...Struct.omit(thread, ["archivedWithThreadId", "retirement"]),
             archivedAt: null,
             ...(thread.lineage.relationshipToParent === "subagent"
               ? { autoArchiveDisabled: true }
@@ -16061,6 +16148,7 @@ const makeOrchestrator = Effect.fn("orchestrationV2.Orchestrator.layer")(functio
   const dispatchOnce = Effect.fn("orchestrationV2.dispatch.once")(function* (
     command: OrchestrationV2ServerCommand,
     sideChatIds: ReadonlyArray<ThreadId>,
+    family?: ArchiveFamily,
   ): Effect.fn.Return<
     {
       readonly events: ReadonlyArray<OrchestrationV2DomainEvent>;
@@ -16332,8 +16420,74 @@ ${(task.result ?? "").slice(0, 3200).trimEnd()}`.trimEnd(),
       }
       case "thread.archive":
       case "thread.unarchive": {
-        const parentArchivedAt = (yield* findThread(command.threadId))?.archivedAt ?? null;
+        const parent = yield* findThread(command.threadId);
+        const parentArchivedAt = parent?.archivedAt ?? null;
+        if (parent != null && parent.deletedAt === null && parentArchivedAt === null) {
+          const retirement = parent.retirement;
+          if (
+            command.type === "thread.archive" &&
+            family?.busy &&
+            retirement?.successorThreadId === undefined
+          ) {
+            const now = yield* DateTime.now;
+            yield* emit(
+              events,
+              command,
+            )({
+              type: "thread.metadata-updated",
+              threadId: parent.id,
+              occurredAt: now,
+              payload: {
+                ...parent,
+                retirement: { pendingTaskIds: family.pendingTaskIds },
+                updatedAt: now,
+              },
+            });
+            break;
+          }
+          if (
+            command.type === "thread.unarchive" &&
+            retirement !== undefined &&
+            retirement.successorThreadId === undefined
+          ) {
+            const now = yield* DateTime.now;
+            yield* emit(
+              events,
+              command,
+            )({
+              type: "thread.metadata-updated",
+              threadId: parent.id,
+              occurredAt: now,
+              payload: { ...Struct.omit(parent, ["retirement"]), updatedAt: now },
+            });
+            break;
+          }
+        }
+        if (
+          command.type === "thread.archive" &&
+          family?.busy &&
+          parent?.retirement?.successorThreadId !== undefined
+        ) {
+          return yield* retirementRefusal(command, parent.retirement.successorThreadId);
+        }
         yield* dispatchThreadMutation(command, events, effects);
+        for (const child of family?.descendants ?? []) {
+          const follows =
+            command.type === "thread.archive"
+              ? child.archivedAt === null
+              : child.archivedWithThreadId === command.threadId && child.archivedAt !== null;
+          if (!follows) continue;
+          yield* dispatchThreadMutation(
+            {
+              ...command,
+              commandId: CommandId.make(`${command.commandId}:agent:${child.id}`),
+              threadId: child.id,
+            },
+            events,
+            effects,
+            command.type === "thread.archive" ? command.threadId : undefined,
+          );
+        }
         // Unarchive restores the side chats this parent's archive took, not ones archived before it.
         for (const threadId of sideChatIds) {
           const sideChatArchivedAt = (yield* findThread(threadId))?.archivedAt ?? null;
@@ -16719,6 +16873,7 @@ ${(task.result ?? "").slice(0, 3200).trimEnd()}`.trimEnd(),
     command: OrchestrationV2ServerCommand,
     sideChatIds: ReadonlyArray<ThreadId> = [],
     cancelledTask?: OrchestrationV2Subagent,
+    family?: ArchiveFamily,
   ): Effect.fn.Return<OrchestratorV2DispatchResult, OrchestratorV2Error> {
     yield* Effect.annotateCurrentSpan({
       "orchestration_v2.command_id": command.commandId,
@@ -16771,7 +16926,7 @@ ${(task.result ?? "").slice(0, 3200).trimEnd()}`.trimEnd(),
       );
     }
 
-    const plan = yield* dispatchOnce(command, sideChatIds).pipe(
+    const plan = yield* dispatchOnce(command, sideChatIds, family).pipe(
       Effect.tap((planned) => refuseAboveRuntimeModeCeiling(command, planned.events)),
       Effect.filterOrFail(
         (planned) =>
@@ -17047,7 +17202,11 @@ ${(task.result ?? "").slice(0, 3200).trimEnd()}`.trimEnd(),
           Effect.flatMap((sideChatIds) =>
             sideChatIds.reduce(
               (locked, sideChatId) => threadDispatch.withLock(sideChatId, locked),
-              dispatchWithReceiptEffect(command, sideChatIds),
+              command.type === "thread.delete"
+                ? dispatchWithReceiptEffect(command, sideChatIds)
+                : withArchiveFamily(command.threadId, (family) =>
+                    dispatchWithReceiptEffect(command, sideChatIds, undefined, family),
+                  ),
             ),
           ),
         ),
@@ -17619,7 +17778,7 @@ ${(task.result ?? "").slice(0, 3200).trimEnd()}`.trimEnd(),
         Effect.gen(function* () {
           const thread = yield* findThread(threadId);
           if (
-            thread?.retirement === undefined ||
+            thread?.retirement?.successorThreadId === undefined ||
             thread.archivedAt !== null ||
             thread.deletedAt !== null
           )
@@ -17646,7 +17805,7 @@ ${(task.result ?? "").slice(0, 3200).trimEnd()}`.trimEnd(),
               successorThreadId,
               Effect.gen(function* () {
                 const successor = yield* findThread(successorThreadId);
-                if (successor?.retirement !== undefined) {
+                if (successor?.retirement?.successorThreadId !== undefined) {
                   yield* relayTo(successor.retirement.successorThreadId);
                   return;
                 }
@@ -17688,7 +17847,8 @@ ${(task.result ?? "").slice(0, 3200).trimEnd()}`.trimEnd(),
               candidate === undefined ||
               (candidate.retirement === undefined && candidate.settledOverride !== "settled") ||
               candidate.retirement?.completed === true ||
-              (candidate.retirement?.pendingTaskIds.length ?? 0) > 0 ||
+              (candidate.retirement?.successorThreadId !== undefined &&
+                candidate.retirement.pendingTaskIds.length > 0) ||
               (candidate.pendingGuestMessageCount ?? 0) > 0 ||
               (candidate.pendingBackgroundTasks?.length ?? 0) > 0
             )
@@ -17718,7 +17878,11 @@ ${(task.result ?? "").slice(0, 3200).trimEnd()}`.trimEnd(),
                 (yield* awaitsRestartContinuation(latest).pipe(mapDispatchError(command))))
             )
               return;
-            yield* dispatchWithReceiptEffect(command);
+            yield* withArchiveFamily(threadId, (family) =>
+              family?.busy
+                ? Effect.void
+                : dispatchWithReceiptEffect(command, [], undefined, family),
+            );
           }),
         );
       },

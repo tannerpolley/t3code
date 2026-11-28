@@ -444,6 +444,10 @@ export function useThreadActions() {
       action.finish();
       return archiveResult;
     }
+    if (archiveResult.value?.retiring === true) {
+      action.finish();
+      return archiveResult;
+    }
     expireThreadUndos(threadRef, LIST_PLACEMENT_UNDO_KINDS);
     const wokeAt = threadWokeAt(thread, { now: new Date().toISOString() });
     if (wokeAt !== null) {

@@ -343,7 +343,7 @@ it("keeps a placed project row in keyboard order after sending, settling and rem
   await checkPlacement(reloaded);
 });
 
-it("lists child agents in role sections under their project and keeps a closed section closed", async () => {
+it("lists child agents in role sections under their orchestrator and keeps a closed section closed", async () => {
   using stack = new DisposableStack();
   const style = document.createElement("style");
   style.textContent = appCss;
@@ -523,22 +523,23 @@ it("lists child agents in role sections under their project and keeps a closed s
   await expect.element(reviewers).toHaveTextContent("Reviewers1");
   // Archived children and empty roles stay out.
   await expect.element(screen.getByText("Designers", { exact: true })).not.toBeInTheDocument();
-  // The project's own threads come first, followed by its role sections.
   const item = (locator: { element: () => Element }) => locator.element().closest("li");
   expect(item(implementors)?.nextElementSibling).toBe(item(implementor));
   expect(item(implementor)?.nextElementSibling).toBe(item(reviewers));
   expect(item(reviewers)?.nextElementSibling).toBe(item(doneReviewer));
-  expect(
-    item(parentRow)!.compareDocumentPosition(item(implementors)!) &
-      Node.DOCUMENT_POSITION_FOLLOWING,
-  ).toBeTruthy();
+  expect(item(parentRow)?.nextElementSibling).toBe(item(implementors));
+  expect(implementors.element().getAttribute("data-sidebar-parent")).toBe(
+    parentRow.element().getAttribute("data-sidebar-row"),
+  );
   expect(implementor.element().getAttribute("data-sidebar-parent")).toBe(
     implementors.element().getAttribute("data-sidebar-row"),
   );
   await expect.element(parentRow.getByText("2 agents", { exact: true })).toBeVisible();
-  await expect
-    .element(parentRow.getByRole("button", { name: "2 child agents" }))
-    .not.toBeInTheDocument();
+  const familyToggle = parentRow.getByRole("button", { name: "2 child agents" });
+  await familyToggle.click();
+  await expect.element(implementors).not.toBeInTheDocument();
+  await familyToggle.click();
+  await expect.element(implementors).toBeVisible();
 
   await implementors.click();
   await expect.element(implementors).toHaveAttribute("aria-expanded", "false");

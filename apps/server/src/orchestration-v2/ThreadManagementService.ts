@@ -1636,9 +1636,10 @@ const make = Effect.gen(function* () {
           (cause) => new OrchestrationV2StartFreshError({ threadId, reason: "unavailable", cause }),
         ),
       );
-    if (thread.retirement !== undefined)
+    if (thread.retirement?.successorThreadId !== undefined)
       return { successorThreadId: thread.retirement.successorThreadId };
     if (
+      thread.retirement !== undefined ||
       thread.lineage.parentThreadId !== null ||
       thread.delegatedFrom !== undefined ||
       thread.linkOrigin != null ||
@@ -1726,7 +1727,7 @@ const make = Effect.gen(function* () {
         handoff,
       });
       const { thread: retired } = yield* orchestrator.getThreadRecords(threadId, []);
-      if (retired.retirement === undefined)
+      if (retired.retirement?.successorThreadId === undefined)
         return yield* new OrchestrationV2StartFreshError({ threadId, reason: "launch" });
       return { successorThreadId: retired.retirement.successorThreadId };
     }).pipe(

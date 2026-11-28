@@ -501,13 +501,14 @@ const OrchestrationV2LastTitleRegeneration = Schema.Struct({
 });
 
 const ThreadRetirement = Schema.Struct({
-  successorThreadId: ThreadId,
+  successorThreadId: Schema.optionalKey(ThreadId),
   pendingTaskIds: Schema.Array(NodeId),
   completed: Schema.optionalKey(Schema.Literal(true)),
 });
 
 export const OrchestrationV2AppThread = Schema.Struct({
   retirement: Schema.optionalKey(ThreadRetirement),
+  archivedWithThreadId: Schema.optionalKey(ThreadId),
   ...OrchestrationV2CreationFields,
   id: ThreadId,
   projectId: ProjectId,
@@ -4264,6 +4265,7 @@ export type OrchestrationV2ThreadLaunchResult = typeof OrchestrationV2ThreadLaun
 
 export const OrchestrationV2DispatchCommandResult = Schema.Struct({
   sequence: NonNegativeInt,
+  retiring: Schema.optionalKey(Schema.Literal(true)),
 });
 export type OrchestrationV2DispatchCommandResult = typeof OrchestrationV2DispatchCommandResult.Type;
 

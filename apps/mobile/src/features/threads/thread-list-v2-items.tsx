@@ -784,6 +784,8 @@ export function ThreadListV2AgentSectionHeader({
 export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   readonly thread: EnvironmentThreadShell;
   readonly agentCount: number;
+  readonly familyExpanded?: boolean | undefined;
+  readonly onToggleFamily: (key: string, expanded: boolean) => void;
   readonly agentRow: boolean;
   readonly depth?: number;
   readonly listVisible: boolean;
@@ -1534,7 +1536,6 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
         <View
           className="min-h-11 flex-row items-center gap-1"
           style={{
-            marginStart: props.agentRow ? 16 : 0,
             opacity: recede || retiringLabel !== null ? 0.65 : 1,
           }}
         >
@@ -1648,9 +1649,32 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
               {retiringLabel}
             </Text>
           )}
-          {agentCountLabel ? (
-            <Text className={cn("shrink-0 text-2xs", muted)}>{agentCountLabel}</Text>
-          ) : null}
+          {props.familyExpanded === undefined ? (
+            agentCountLabel && (
+              <Text className={cn("shrink-0 text-2xs", muted)}>{agentCountLabel}</Text>
+            )
+          ) : (
+            <Pressable
+              className="min-h-11 shrink-0 flex-row items-center gap-1"
+              accessibilityRole="button"
+              accessibilityLabel={agentCountLabel ?? undefined}
+              accessibilityState={{ expanded: props.familyExpanded }}
+              onPress={(event) => {
+                event.stopPropagation();
+                props.onToggleFamily(
+                  `${thread.environmentId}:${thread.id}`,
+                  props.familyExpanded === true,
+                );
+              }}
+            >
+              <Text className={cn("text-2xs", muted)}>{agentCountLabel}</Text>
+              <SymbolView
+                name={props.familyExpanded ? "chevron.down" : "chevron.right"}
+                size={10}
+                tintColorClassName="foreground-muted"
+              />
+            </Pressable>
+          )}
           {props.hasQueuedMessages ? <QueuedMessageIcon selected={selected} /> : null}
           {issue ? (
             <View className="shrink-0 flex-row items-center gap-0.5">
