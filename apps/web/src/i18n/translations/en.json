@@ -13092,5 +13092,7 @@
   "27d76249d09eb69f": "Review guide ready",
   "faa3bb26abb39c93": "Review guide failed",
   "b7df38b7d8792d78": "Open guide",
-  "9e91e9a77b664e4e": "Could not start a review guide"
+  "9e91e9a77b664e4e": "Could not start a review guide",
+  "ee71ac7e8e9b000c": "Ultrafast mode on",
+  "e649c08fbd9a1a30": "Fast mode on"
 }

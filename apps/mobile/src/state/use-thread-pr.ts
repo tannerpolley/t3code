@@ -1,5 +1,6 @@
 import { useAtomValue } from "@effect/atom-react";
 import type { EnvironmentThreadShell } from "@t3tools/client-runtime/state/shell";
+import { sidebarRowBranchPullRequest } from "@t3tools/client-runtime/sidebar-row-model";
 import {
   createLinkedPullRequestSummaryAtomFamily,
   pullRequestDetailToVcsStatus,
@@ -85,24 +86,19 @@ export function useThreadPr(thread: EnvironmentThreadShell): ThreadPrPresentatio
     serverEnvironment.configValueAtom(thread.environmentId),
     (config) => config !== null,
   );
+  const branchPullRequest = sidebarRowBranchPullRequest(thread);
   const { linkedPresentation, pullRequestRef } = useMemo(
     () =>
       resolveThreadPrSource(
         {
           pullRequests: thread.pullRequests,
           linkedPullRequest: thread.linkedPullRequest,
-          branchPullRequest: thread.branchPullRequest,
+          branchPullRequest,
         },
         supportsLinks,
         resolve,
       ),
-    [
-      thread.pullRequests,
-      thread.linkedPullRequest,
-      thread.branchPullRequest,
-      supportsLinks,
-      resolve,
-    ],
+    [thread.pullRequests, thread.linkedPullRequest, branchPullRequest, supportsLinks, resolve],
   );
   const key = pullRequestRef === null ? null : snapshotKey(thread.environmentId, pullRequestRef);
   // Select this row's entry so answers for other pull requests do not re-render it.

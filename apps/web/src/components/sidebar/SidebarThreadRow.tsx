@@ -4,6 +4,8 @@ import {
   canStartFresh,
   threadLifeRing,
   sidebarRowModel,
+  sidebarCodexDefaultSpeed,
+  sidebarRowBranchPullRequest,
   sidebarRoleLabels,
   shouldRecedeSidebarThread,
 } from "@t3tools/client-runtime/sidebar-row-model";
@@ -131,7 +133,7 @@ import { ProjectFavicon, type ProjectFaviconProject } from "../ProjectFavicon";
 import { ThreadSearchMatchExcerpt } from "../ThreadSearchMatch";
 import { makeWorkspaceFileDropHandlers } from "../chat/workspaceFileDrop";
 import { AgentElapsed } from "../chat/AgentElapsed";
-import { EffortGlyph } from "../chat/EffortGlyph";
+import { EffortGlyph, FastBolt } from "../chat/EffortGlyph";
 import { ProviderInstanceIcon } from "../chat/ProviderInstanceIcon";
 import { shouldShowInstanceBadge, type ProviderInstanceEntry } from "../../providerInstances";
 import { useThreadRunningTerminalIds } from "../../state/terminalSessions";
@@ -772,7 +774,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
     thread.linkedPullRequest,
     leaseLiveStatus,
     thread.pullRequests,
-    thread.branchPullRequest,
+    sidebarRowBranchPullRequest(thread),
   );
   const branchTarget =
     leaseLiveStatus && (thread.branch != null || thread.worktreePath !== null) && gitCwd !== null
@@ -904,17 +906,26 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
 
   const modelInstanceId = thread.runtime?.providerInstanceId ?? thread.modelSelection.instanceId;
   const providerEntry = props.providerEntryByInstanceId.get(modelInstanceId) ?? null;
+  const driverKind =
+    providerEntry?.driverKind ?? (isProviderDriverKind(modelInstanceId) ? modelInstanceId : null);
   const showInstanceBadge =
     providerEntry !== null &&
     shouldShowInstanceBadge(providerEntry, props.providerEntryByInstanceId.values());
   const selectedModel = providerEntry?.models.find(
     (model) => model.slug === thread.modelSelection.model,
   );
-  const { modelLabel, modelParts, effort } = sidebarRowModel(
+  const codexDefaultSpeed = useAtomValue(
+    serverEnvironment.settingsValueAtom(thread.environmentId),
+    (settings) => sidebarCodexDefaultSpeed(settings, thread.modelSelection, driverKind),
+  );
+  const { modelLabel, modelParts, effort, speed } = sidebarRowModel(
     thread.modelSelection,
     selectedModel,
-    providerEntry?.driverKind,
+    driverKind,
+    codexDefaultSpeed,
   );
+  const speedLabel =
+    speed === "ultrafast" ? gt("Ultrafast mode on") : speed === "fast" ? gt("Fast mode on") : null;
 
   const threshold = useAtomValue(
     serverEnvironment.threadRetirementThresholdAtom(thread.environmentId),
@@ -1292,8 +1303,6 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
   const inFolder = variant === "folder";
   const familyIndent = Math.min(props.familyDepth, 4) * 12;
   const folderIndent = inFolder ? 16 + Math.min(props.folderDepth ?? 0, 3) * 10 : 10;
-  const driverKind =
-    providerEntry?.driverKind ?? (isProviderDriverKind(modelInstanceId) ? modelInstanceId : null);
   const startedAt =
     status === "working" || status === "waiting" || status === "preparing"
       ? resolveWorkingStartedAt(thread)
@@ -1389,7 +1398,7 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
             tabIndex={0}
             data-sidebar-row={threadKey}
             data-sidebar-parent={props.navigationParent}
-            aria-label={accessibility.label}
+            aria-label={speedLabel ? `${accessibility.label}, ${speedLabel}` : accessibility.label}
             aria-current={accessibility.current}
             data-testid={`sidebar-row-${variant}`}
             style={{ paddingInlineStart: folderIndent + familyIndent }}
@@ -1474,6 +1483,20 @@ const SidebarThreadRow = memo(function SidebarThreadRow(props: SidebarThreadRowP
         {effort ? (
           <span className="shrink-0 text-secondary-label" role="img" aria-label={effort.label}>
             <EffortGlyph count={effort.count} filled={effort.filled} size="xs" />
+          </span>
+        ) : null}
+        {speed !== "standard" ? (
+          <span
+            className={cn(
+              "flex shrink-0 text-secondary-label",
+              props.isActive
+                ? "[--chat-composer-glass-surface:var(--sidebar-row-active)]"
+                : isSelected || props.sweepAction !== null
+                  ? "[--chat-composer-glass-surface:var(--sidebar-row-selected)]"
+                  : "[--chat-composer-glass-surface:var(--sidebar)] group-hover/sidebar-row:[--chat-composer-glass-surface:var(--sidebar-row-hover)]",
+            )}
+          >
+            <FastBolt ultra={speed === "ultrafast"} />
           </span>
         ) : null}
         <span className="flex min-w-0 flex-1 items-center gap-1">
