@@ -1,5 +1,5 @@
 import { useSelectWorkspaceDetail } from "../layout/workspace/useSelectWorkspaceDetail";
-import Svg, { Circle } from "react-native-svg";
+import Svg, { Circle, Path } from "react-native-svg";
 import { IconButton } from "../../components/ui/IconButton";
 import {
   formatSidebarAgentStates,
@@ -9,6 +9,7 @@ import { useViewability } from "@legendapp/list/react-native";
 import {
   canStartFresh,
   effortBarHeights,
+  sidebarCodexDefaultSpeed,
   sidebarRoleLabels,
   sidebarRowModel,
   shouldRecedeSidebarThread,
@@ -781,6 +782,27 @@ export function ThreadListV2AgentSectionHeader({
   );
 }
 
+function ThreadSpeedBolt(props: { ultrafast: boolean; color: string; surface: string }) {
+  const bolt =
+    "M4 14a1 1 0 0 1-.78-1.63l9.9-10.2a.5.5 0 0 1 .86.46l-1.92 6.02A1 1 0 0 0 13 10h7a1 1 0 0 1 .78 1.63l-9.9 10.2a.5.5 0 0 1-.86-.46l1.92-6.02A1 1 0 0 0 11 14z";
+  return (
+    <Svg
+      width={props.ultrafast ? 15 : 12}
+      height={12}
+      viewBox={props.ultrafast ? "0 0 30 24" : "0 0 24 24"}
+      style={{ flexShrink: 0 }}
+    >
+      {props.ultrafast ? (
+        <>
+          <Path d={bolt} x={6} fill="none" stroke={props.color} strokeWidth={2} />
+          <Path d={bolt} fill={props.surface} stroke={props.surface} strokeWidth={4} />
+        </>
+      ) : null}
+      <Path d={bolt} fill={props.color} />
+    </Svg>
+  );
+}
+
 export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   readonly thread: EnvironmentThreadShell;
   readonly agentCount: number;
@@ -876,11 +898,18 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
   const driver =
     props.providerInstance?.driverKind ??
     (isProviderDriverKind(modelInstanceId) ? modelInstanceId : null);
-  const { modelParts, effort } = sidebarRowModel(
+  const codexDefaultSpeed = useAtomValue(
+    serverEnvironment.settingsValueAtom(thread.environmentId),
+    (settings) => sidebarCodexDefaultSpeed(settings, thread.modelSelection, driver),
+  );
+  const { modelParts, effort, speed } = sidebarRowModel(
     thread.modelSelection,
     provider?.models?.find((model) => model.slug === thread.modelSelection.model),
     driver,
+    codexDefaultSpeed,
   );
+  const speedLabel =
+    speed === "ultrafast" ? gt("Ultrafast mode on") : speed === "fast" ? gt("Fast mode on") : null;
   const role = thread.delegatedRole;
   const rowTitle =
     props.agentRow || !isDelegationModelRole(role) ? thread.title : m(sidebarRoleLabels[role]);
@@ -1516,7 +1545,7 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
       interactionOpacity={rowAppearance.interactionOpacity}
       className={rowAppearance.className}
       accessibilityHint={swipeAccessibilityHint}
-      accessibilityLabel={[rowAccessibilityLabel, agentCountLabel, retiringLabel]
+      accessibilityLabel={[rowAccessibilityLabel, agentCountLabel, retiringLabel, speedLabel]
         .filter(Boolean)
         .join(", ")}
       accessibilityRole="button"
@@ -1622,6 +1651,13 @@ export const ThreadListV2Row = memo(function ThreadListV2Row(props: {
                 />
               ))}
             </View>
+          ) : null}
+          {speed !== "standard" ? (
+            <ThreadSpeedBolt
+              ultrafast={speed === "ultrafast"}
+              color={theme["--color-foreground-muted"]}
+              surface={rowAppearance.providerIconSurfaceColor}
+            />
           ) : null}
           <View className="min-w-0 flex-1 flex-row items-center gap-1">
             <Text

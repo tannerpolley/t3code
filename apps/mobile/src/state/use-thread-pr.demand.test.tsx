@@ -80,6 +80,11 @@ function thread(overrides: Partial<EnvironmentThreadShell> = {}): EnvironmentThr
     pullRequests: [],
     linkedPullRequest: null,
     branchPullRequest: reference,
+    lineage: {
+      parentThreadId: null,
+      relationshipToParent: null,
+      rootThreadId: ThreadId.make("thread"),
+    },
     ...overrides,
   } as EnvironmentThreadShell;
 }
@@ -239,6 +244,45 @@ const setup = Effect.fn("TestThreadPr.setup")(function* () {
     },
   };
 });
+
+it.effect("only shows a child's own pull request links", () =>
+  Effect.gen(function* () {
+    using h = yield* setup();
+    const parent = thread();
+    const child = thread({
+      id: ThreadId.make("child"),
+      lineage: {
+        parentThreadId: parent.id,
+        relationshipToParent: "subagent",
+        rootThreadId: parent.id,
+      },
+    });
+    yield* Effect.promise(async () => {
+      await h.render({ value: child });
+      expect(h.badge()).toBe("none");
+      expect(h.requests).toHaveLength(0);
+      await h.render({
+        value: {
+          ...child,
+          pullRequests: [
+            {
+              host: "github.com",
+              repository: reference.repository,
+              number: 13,
+              url: "https://github.com/acme/app/pull/13",
+              source: "manual",
+              linkedAt: "2026-11-27T00:00:00.000Z",
+              stack: null,
+              snapshot: null,
+            },
+          ],
+        },
+      });
+      expect(h.badge()).toBe("#13 pull request status pending");
+      expect(h.requests).toHaveLength(0);
+    });
+  }),
+);
 
 it.effect(
   "releases retained hidden sidebar demand and keeps the badge while reveal revalidates",
