@@ -218,6 +218,7 @@ import {
   makeSubagentChildThread,
   SUBAGENT_RESULT_TURN_ITEM_TYPES,
   subagentResultForRun,
+  subagentHoldsCompletion,
   delegatedTaskProgress,
   delegatedTaskReportRuns,
   monitorUpdateRunIds,
@@ -441,9 +442,14 @@ export interface OrchestratorV2Shape {
     command: OrchestrationV2ServerCommand,
   ) => Effect.Effect<OrchestratorV2DispatchResult, OrchestratorV2Error>;
   readonly drainRetiringThread: (threadId: ThreadId) => Effect.Effect<void, OrchestratorV2Error>;
+  readonly autoSettleChild: (
+    command: Extract<OrchestrationV2ServerCommand, { type: "thread.auto-settle" }>,
+    hasActiveTerminal: Effect.Effect<boolean>,
+  ) => Effect.Effect<void, OrchestratorV2Error>;
   readonly autoArchiveSettledChild: (
     threadId: ThreadId,
     commandId: CommandId,
+    hasActiveTerminal?: Effect.Effect<boolean>,
   ) => Effect.Effect<void, OrchestratorV2Error>;
   readonly restoreDelegatedRole: (
     threadId: ThreadId,
@@ -17754,6 +17760,96 @@ ${(task.result ?? "").slice(0, 3200).trimEnd()}`.trimEnd(),
     );
   });
 
+  const runAutomaticChildSettlement = Effect.fn("OrchestratorV2.runAutomaticChildSettlement")(
+    function* (
+      command: Extract<
+        OrchestrationV2ServerCommand,
+        { type: "thread.auto-settle" | "thread.archive" }
+      >,
+      hasActiveTerminal: Effect.Effect<boolean> = Effect.succeed(false),
+    ): Effect.fn.Return<void, OrchestratorV2Error> {
+      const { threadId } = command;
+      const thread = yield* findThread(threadId);
+      const localChild = thread?.lineage.relationshipToParent === "subagent";
+      const parentId = localChild ? thread.lineage.parentThreadId : null;
+      const archive = command.type === "thread.archive";
+      const locked = threadDispatch.withLock(
+        threadId,
+        Effect.gen(function* (): Effect.fn.Return<void, OrchestratorV2Error> {
+          const [candidate] = yield* projectionStore
+            .getSettlementCandidates(threadId, { includeSettledChildren: archive })
+            .pipe(mapDispatchError(command));
+          if (
+            candidate === undefined ||
+            (archive &&
+              candidate.retirement === undefined &&
+              candidate.settledOverride !== "settled") ||
+            (!archive && (!localChild || candidate.retirement !== undefined)) ||
+            candidate.retirement?.completed === true ||
+            (candidate.retirement?.successorThreadId !== undefined &&
+              candidate.retirement.pendingTaskIds.length > 0) ||
+            (candidate.pendingGuestMessageCount ?? 0) > 0 ||
+            (candidate.pendingBackgroundTasks?.length ?? 0) > 0
+          )
+            return;
+          if (candidate.retirement === undefined) {
+            const links = visibleThreadPullRequests(threadPullRequestsOf(candidate));
+            const branch = candidate.branchPullRequest;
+            if (
+              links.some((link) => link.snapshot === null || link.snapshot.state === "open") ||
+              (branch != null &&
+                !links.some((link) =>
+                  threadPullRequestKeysEqual(link, legacyThreadPullRequestKey(branch)),
+                ))
+            )
+              return;
+          }
+          const { runs, subagents, runtimeRequests } = yield* projectionStore
+            .getThreadRecords(threadId, ["runs", "subagents", "runtimeRequests"])
+            .pipe(mapDispatchError(command));
+          if (threadHasUnfinishedWork({ runs, runtimeRequests })) return;
+          if (candidate.retirement === undefined) {
+            if (subagents.some(subagentHoldsCompletion)) return;
+          } else if (
+            subagents.some((task) => isOrchestrationV2WorkActive(task.status)) ||
+            runs.some((run) => {
+              const delivery = run.delegatedCompletion?.delivery;
+              return (
+                run.delegatedCompletion?.disposition === "open" &&
+                delivery != null &&
+                !runs.some((candidate) => candidate.userMessageId === delivery.messageId)
+              );
+            })
+          ) {
+            return;
+          }
+          const latest = latestExecutedRun(runs);
+          const continuationPending = Effect.findFirst(
+            candidate.retirement === undefined ? runs : latest === null ? [] : [latest],
+            awaitsRestartContinuation,
+          ).pipe(mapDispatchError(command));
+          if (
+            (latest !== null && (yield* awaitsCheckpointCapture(latest))) ||
+            Option.isSome(yield* continuationPending) ||
+            (yield* hasActiveTerminal)
+          )
+            return;
+          if (!archive) {
+            yield* dispatchWithReceiptEffect(command);
+            return;
+          }
+          yield* withArchiveFamily(threadId, (family) =>
+            family?.busy ? Effect.void : dispatchWithReceiptEffect(command, [], undefined, family),
+          );
+        }),
+      );
+      // Task delivery and follow-up intake take the parent lock first.
+      return yield* parentId === null || parentId === threadId
+        ? locked
+        : threadDispatch.withLock(parentId, locked);
+    },
+  );
+
   const shellProjectionError = (cause: unknown) =>
     new OrchestratorProjectionError({ threadId: ThreadId.make("thread:shell"), cause });
 
@@ -17834,58 +17930,13 @@ ${(task.result ?? "").slice(0, 3200).trimEnd()}`.trimEnd(),
         }),
       );
     }),
+    autoSettleChild: runAutomaticChildSettlement,
     autoArchiveSettledChild: Effect.fn("OrchestratorV2.autoArchiveSettledChild")(
-      function (threadId, commandId) {
-        const command = { type: "thread.archive", threadId, commandId } as const;
-        return threadDispatch.withLock(
-          threadId,
-          Effect.gen(function* () {
-            const [candidate] = yield* projectionStore
-              .getSettlementCandidates(threadId, { includeSettledChildren: true })
-              .pipe(mapDispatchError(command));
-            if (
-              candidate === undefined ||
-              (candidate.retirement === undefined && candidate.settledOverride !== "settled") ||
-              candidate.retirement?.completed === true ||
-              (candidate.retirement?.successorThreadId !== undefined &&
-                candidate.retirement.pendingTaskIds.length > 0) ||
-              (candidate.pendingGuestMessageCount ?? 0) > 0 ||
-              (candidate.pendingBackgroundTasks?.length ?? 0) > 0
-            )
-              return;
-            const { runs, subagents, runtimeRequests } = yield* projectionStore
-              .getThreadRecords(threadId, ["runs", "subagents", "runtimeRequests"])
-              .pipe(mapDispatchError(command));
-            if (
-              threadHasUnfinishedWork({ runs, runtimeRequests }) ||
-              hasRunningDelegatedTasks(subagents) ||
-              (candidate.retirement !== undefined &&
-                (subagents.some((task) => isOrchestrationV2WorkActive(task.status)) ||
-                  runs.some((run) => {
-                    const delivery = run.delegatedCompletion?.delivery;
-                    return (
-                      run.delegatedCompletion?.disposition === "open" &&
-                      delivery != null &&
-                      !runs.some((candidate) => candidate.userMessageId === delivery.messageId)
-                    );
-                  })))
-            )
-              return;
-            const latest = latestExecutedRun(runs);
-            if (
-              latest !== null &&
-              ((yield* awaitsCheckpointCapture(latest)) ||
-                (yield* awaitsRestartContinuation(latest).pipe(mapDispatchError(command))))
-            )
-              return;
-            yield* withArchiveFamily(threadId, (family) =>
-              family?.busy
-                ? Effect.void
-                : dispatchWithReceiptEffect(command, [], undefined, family),
-            );
-          }),
-        );
-      },
+      (threadId, commandId, hasActiveTerminal) =>
+        runAutomaticChildSettlement(
+          { type: "thread.archive", threadId, commandId },
+          hasActiveTerminal,
+        ),
     ),
     restoreDelegatedRole: Effect.fn("OrchestratorV2.restoreDelegatedRole")(
       function (threadId, role) {
