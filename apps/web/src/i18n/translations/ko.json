@@ -1220,6 +1220,8 @@
   "30a8c0f9a6576ee8": "T3 스레드 생성",
   "557ba6282ab349d7": "T3 스레드 시작",
   "55cb2eb842d7b91b": "T3 스레드 목록 조회",
+  "cc0a5818ba62d393": "List threads needing attention",
+  "968c37f60ce7c58a": "Reply to a T3 thread",
   "96249620a43e7e9e": "T3 스레드 읽기",
   "5d935e12e0833489": "T3 스레드로 보내기",
   "dd0cfbfec90e795b": "T3 스레드 기다리기",

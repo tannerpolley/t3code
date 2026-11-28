@@ -557,6 +557,18 @@ export interface OrchestratorV2Shape {
   readonly listActiveThreads: (
     projectId?: ProjectId,
   ) => Effect.Effect<ReadonlyArray<ActiveThreadListEntry>, OrchestratorV2Error>;
+  readonly listAttentionCandidates: (
+    query: Parameters<ProjectionStoreV2["Service"]["listAttentionCandidates"]>[0],
+  ) => Effect.Effect<
+    Effect.Success<ReturnType<ProjectionStoreV2["Service"]["listAttentionCandidates"]>>,
+    OrchestratorV2Error
+  >;
+  readonly readAttentionTexts: (
+    threadIds: Parameters<ProjectionStoreV2["Service"]["readAttentionTexts"]>[0],
+  ) => Effect.Effect<
+    Effect.Success<ReturnType<ProjectionStoreV2["Service"]["readAttentionTexts"]>>,
+    OrchestratorV2Error
+  >;
   readonly listOlderSettledThreads: (
     query: OlderSettledThreadsQuery,
   ) => Effect.Effect<OlderSettledThreadsListing, OrchestratorV2Error>;
@@ -18121,6 +18133,16 @@ ${(task.result ?? "").slice(0, 3200).trimEnd()}`.trimEnd(),
     listActiveThreads: Effect.fn("OrchestratorV2.listActiveThreads")(function (projectId) {
       return projectionStore
         .listActiveThreads(projectId)
+        .pipe(Effect.mapError(shellProjectionError));
+    }),
+    listAttentionCandidates: Effect.fn("OrchestratorV2.listAttentionCandidates")(function (query) {
+      return projectionStore
+        .listAttentionCandidates(query)
+        .pipe(Effect.mapError(shellProjectionError));
+    }),
+    readAttentionTexts: Effect.fn("OrchestratorV2.readAttentionTexts")(function (threadIds) {
+      return projectionStore
+        .readAttentionTexts(threadIds)
         .pipe(Effect.mapError(shellProjectionError));
     }),
     listOlderSettledThreads: Effect.fn("OrchestratorV2.listOlderSettledThreads")(function (query) {

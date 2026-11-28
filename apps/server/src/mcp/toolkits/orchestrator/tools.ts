@@ -27,8 +27,12 @@ import {
   OrchestratorMcpTaskStatusInput,
   OrchestratorMcpThreadInterruptInput,
   OrchestratorMcpThreadInterruptResult,
+  OrchestratorMcpThreadAttentionInput,
+  OrchestratorMcpThreadAttentionResult,
   OrchestratorMcpThreadListInput,
   OrchestratorMcpThreadListResult,
+  OrchestratorMcpThreadReplyInput,
+  OrchestratorMcpThreadReplyResult,
   OrchestratorMcpThreadReadInput,
   OrchestratorMcpThreadReadResult,
   OrchestratorMcpThreadSendInput,
@@ -236,6 +240,21 @@ const CreateThreadsTool = Tool.make("create_threads", {
   .annotate(Tool.OpenWorld, true)
   .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromOutsideClients);
 
+const ThreadAttentionTool = Tool.make("t3_thread_attention", {
+  description:
+    "Threads that need a person, or have finished, oldest first. Pass `since` from the last `nextCursor`. Skips settled, snoozed, and subagent threads. Read only.",
+  parameters: OrchestratorMcpThreadAttentionInput,
+  success: OrchestratorMcpThreadAttentionResult,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies,
+})
+  .annotate(Tool.Title, "List threads needing attention")
+  .annotate(Tool.Readonly, true)
+  .annotate(Tool.Destructive, false)
+  .annotate(Tool.Idempotent, true)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromThreads);
+
 const ThreadListTool = Tool.make("t3_thread_list", {
   description:
     "List threads newest first, in one project or with `allProjects`. Page with `cursor`.",
@@ -281,6 +300,20 @@ const ThreadUpdateTool = Tool.make("t3_thread_update", {
   .annotate(Tool.Title, "Update T3 thread metadata")
   .annotate(Tool.Destructive, true)
   .annotate(Tool.Idempotent, false);
+
+const ThreadReplyTool = Tool.make("t3_thread_reply", {
+  description:
+    "Answer a waiting thread or follow up on a finished one. `answer` needs `answers`. `approve` or `deny` a pending approval. `message` starts the next turn. Refuses a running turn and secret cards.",
+  parameters: OrchestratorMcpThreadReplyInput,
+  success: OrchestratorMcpThreadReplyResult,
+  failure: OrchestratorMcpFailure,
+  failureMode: "return",
+  dependencies,
+})
+  .annotate(Tool.Title, "Reply to a T3 thread")
+  .annotate(Tool.Destructive, true)
+  .annotate(Tool.OpenWorld, true)
+  .annotate(McpSchema.EnabledWhen, McpInvocationContext.hiddenFromThreads);
 
 const ThreadSendTool = Tool.make("t3_thread_send", {
   description:
@@ -388,7 +421,9 @@ export const OrchestratorToolkit = Toolkit.make(
   DeleteScheduledTaskTool,
   RequestSecretTool,
   CreateThreadsTool,
+  ThreadAttentionTool,
   ThreadListTool,
+  ThreadReplyTool,
   ThreadReadTool,
   ThreadUpdateTool,
   ThreadSendTool,

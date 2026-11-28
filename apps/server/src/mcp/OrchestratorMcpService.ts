@@ -52,6 +52,10 @@ import {
   type OrchestratorMcpThreadSendInput,
   type OrchestratorMcpThreadSendResult,
   type OrchestratorMcpThreadTimelineItem,
+  type OrchestratorMcpThreadAttentionInput,
+  type OrchestratorMcpThreadAttentionResult,
+  type OrchestratorMcpThreadReplyInput,
+  type OrchestratorMcpThreadReplyResult,
   type OrchestratorMcpThreadWaitInput,
   type OrchestratorMcpThreadWaitResult,
   type ProviderInteractionMode,
@@ -153,7 +157,20 @@ import {
   taskPrompt,
   delegatedTaskRole,
 } from "./delegatedTaskModes.ts";
-import { assertTargetWithinLimits, isLiveCallerShell, threadNotFound } from "./threadAccess.ts";
+import {
+  assertTargetWithinLimits,
+  dispatchFailure,
+  isLiveCallerShell,
+  threadNotFound,
+} from "./threadAccess.ts";
+import {
+  ATTENTION_SCAN,
+  classifyAttention,
+  decodeAttentionCursor,
+  pageAttention,
+  planThreadReply,
+  presentAttentionText,
+} from "./threadAttention.ts";
 import { WITHHELD, withoutWebhookUrlToken } from "../scheduledTasks/webhookUrlToken.ts";
 import * as SecretRequests from "../secrets/SecretRequests.ts";
 import * as PeerForwarding from "../peer/PeerForwarding.ts";
@@ -254,6 +271,14 @@ export interface OrchestratorMcpServiceShape {
     scope: McpInvocationScope,
     input: OrchestratorMcpThreadInterruptInput,
   ) => Effect.Effect<OrchestratorMcpThreadInterruptResult, OrchestratorMcpFailure>;
+  readonly listAttention: (
+    scope: McpInvocationScope,
+    input: OrchestratorMcpThreadAttentionInput,
+  ) => Effect.Effect<OrchestratorMcpThreadAttentionResult, OrchestratorMcpFailure>;
+  readonly replyToThread: (
+    scope: McpInvocationScope,
+    input: OrchestratorMcpThreadReplyInput,
+  ) => Effect.Effect<OrchestratorMcpThreadReplyResult, OrchestratorMcpFailure>;
 }
 
 export class OrchestratorMcpService extends Context.Service<
@@ -4059,6 +4084,207 @@ const make = Effect.gen(function* () {
         runId: result.run.id,
         status: result.type === "already_terminal" ? result.run.status : "interrupt_requested",
       } satisfies OrchestratorMcpThreadInterruptResult;
+    }),
+    listAttention: Effect.fn("OrchestratorMcpService.listAttention")(function* (scope, input) {
+      const since = input.since === undefined ? undefined : decodeAttentionCursor(input.since);
+      if (input.since !== undefined && since === undefined) {
+        return yield* failure("invalid_request", "Pass `since` from a previous `nextCursor`.");
+      }
+      if (input.projectId !== undefined) yield* requireProject(input.projectId);
+      const listed = yield* threadManagement
+        .listAttentionCandidates({
+          ...(since === undefined
+            ? {}
+            : { sinceUpdatedAt: since.updatedAt, sinceThreadId: since.threadId }),
+          ...(input.projectId === undefined ? {} : { projectId: input.projectId }),
+          includeSubagents: input.includeSubagents === true,
+          limit: ATTENTION_SCAN,
+        })
+        .pipe(
+          Effect.mapError((error) =>
+            failure("orchestration_error", `Unable to list threads: ${errorMessage(error)}`),
+          ),
+        );
+      const nowMs = yield* Clock.currentTimeMillis;
+      const includeSubagents = input.includeSubagents === true;
+      const shells =
+        listed.threads.length === 0
+          ? []
+          : (yield* threadManagement
+              .getShellSnapshot({
+                location: "active",
+                threadIds: listed.threads.map((thread) => thread.id),
+                ...(input.projectId === undefined ? {} : { projectId: input.projectId }),
+              })
+              .pipe(
+                Effect.mapError((error) =>
+                  failure("orchestration_error", `Unable to list threads: ${errorMessage(error)}`),
+                ),
+              )).threads;
+      const shellsById = new Map(shells.map((shell) => [shell.id, shell]));
+      const page = pageAttention({
+        candidates: listed.threads,
+        hasMoreCandidates: listed.hasMore,
+        limit: input.limit ?? 20,
+        classify: (candidate) => {
+          const shell = shellsById.get(candidate.id);
+          return shell === undefined ? null : classifyAttention(shell, nowMs, includeSubagents);
+        },
+      });
+      const texts =
+        page.matches.length === 0
+          ? []
+          : yield* threadManagement
+              .readAttentionTexts(page.matches.map((match) => match.candidate.id))
+              .pipe(
+                Effect.mapError((error) =>
+                  failure("orchestration_error", `Unable to list threads: ${errorMessage(error)}`),
+                ),
+              );
+      const textById = new Map(texts.map((text) => [text.threadId, text]));
+      return {
+        threads: page.matches.flatMap(({ candidate, attention }) => {
+          const shell = shellsById.get(candidate.id);
+          if (shell === undefined) return [];
+          const pending = shell.pendingRuntimeRequest;
+          const card = textById
+            .get(candidate.id)
+            ?.cards.find((item) => item.requestId === pending?.id);
+          const answerable = attention === "question" || attention === "approval";
+          const summary =
+            presentAttentionText(
+              textById.get(candidate.id)?.summary ??
+                (pending?.userOnly === true ? null : shell.lastError),
+            ) ?? (pending?.userOnly === true ? "Only you can answer this in the app." : null);
+          return [
+            {
+              threadId: shell.id,
+              projectId: shell.projectId,
+              title: shell.title,
+              link: threadLinkFor(scope, shell.id, shell.title),
+              status: listedThreadStatus(shell),
+              attention,
+              updatedAt: DateTime.formatIso(shell.updatedAt),
+              summary,
+              question:
+                attention === "question" ? presentAttentionText(card?.detail ?? null) : null,
+              approval:
+                attention === "approval" && pending != null
+                  ? {
+                      requestId: pending.id,
+                      kind: pending.kind,
+                      detail: presentAttentionText(card?.detail ?? null) ?? pending.kind,
+                    }
+                  : null,
+              requestId: answerable && pending != null ? pending.id : null,
+              runId: shell.latestRunId,
+            },
+          ];
+        }),
+        nextCursor: page.nextCursor,
+        hasMore: page.hasMore,
+      } satisfies OrchestratorMcpThreadAttentionResult;
+    }),
+    replyToThread: Effect.fn("OrchestratorMcpService.replyToThread")(function* (scope, input) {
+      const shell = yield* threadManagement
+        .getThreadShell(input.threadId)
+        .pipe(Effect.mapError(threadManagementFailure));
+      if (shell === null || shell.deletedAt !== null) {
+        return yield* failure("thread_not_found", "The thread was not found.");
+      }
+      const records = yield* threadManagement
+        .getProjectThreadRecords(
+          { projectId: shell.projectId, threadId: shell.id },
+          ["runtimeRequests", "turnItems"],
+          {
+            turnItemTypes: [
+              "user_input_request",
+              "approval_request",
+              "secret_request",
+              "link_request",
+            ],
+          },
+        )
+        .pipe(Effect.mapError(threadManagementFailure));
+      const plan = planThreadReply({
+        shell,
+        requests: records.runtimeRequests,
+        turnItems: records.turnItems,
+        action: input.action,
+        requestId: input.requestId,
+        answers: input.answers,
+        message: input.message,
+      });
+      if (plan._tag === "Refuse") return yield* failure("invalid_request", plan.message);
+      const link = threadLinkFor(scope, shell.id, shell.title);
+      if (plan._tag === "Send") {
+        const { parent, limits, target } = yield* loadScopedThread(scope, input.threadId, ["runs"]);
+        yield* assertLiveCallerForOtherThread(scope, parent, target);
+        yield* assertTargetWithinLimits(limits, target.thread);
+        const key = yield* requestKey(input.clientRequestId);
+        const messageId = stableOperationMessageId({
+          scope,
+          requestKey: key,
+          operation: "thread-reply",
+        });
+        const sent = yield* threadManagement
+          .sendToThread({
+            projectId: target.thread.projectId,
+            commandId: stableCommandId({
+              scope,
+              requestKey: key,
+              operation: "thread-reply",
+            }),
+            threadId: input.threadId,
+            ...(parent === undefined ? {} : { senderThreadId: parent.thread.id }),
+            ...(parent === undefined && scope.client?.senderThread !== undefined
+              ? { linkedSender: scope.client.senderThread }
+              : {}),
+            messageId,
+            text: plan.message,
+            attachments: [],
+            mode: "auto",
+            createdBy: "agent",
+            creationSource: "mcp",
+          })
+          .pipe(
+            Effect.mapError((error) =>
+              isThreadManagementError(error)
+                ? threadManagementFailure(error)
+                : failure(
+                    "orchestration_error",
+                    `Unable to send to thread ${input.threadId}: ${userFacingDispatchErrorMessage(error) ?? errorMessage(error)}`,
+                  ),
+            ),
+          );
+        return {
+          threadId: input.threadId,
+          link,
+          action: "message",
+          runId: sent.run.id,
+          status: sent.run.status,
+          delivery: sent.delivery,
+        } satisfies OrchestratorMcpThreadReplyResult;
+      }
+      const result = yield* threadManagement
+        .dispatch({
+          type: "runtime-request.respond",
+          threadId: shell.id,
+          commandId: stableCommandId({
+            scope,
+            requestKey: yield* requestKey(input.clientRequestId),
+            operation: "thread-reply",
+          }),
+          requestId: plan.requestId,
+          ...(plan._tag === "Answer" ? { answers: plan.answers } : { decision: plan.decision }),
+        })
+        .pipe(Effect.mapError(dispatchFailure));
+      return {
+        threadId: shell.id,
+        link,
+        action: input.action,
+        sequence: result.sequence,
+      } satisfies OrchestratorMcpThreadReplyResult;
     }),
   });
 });

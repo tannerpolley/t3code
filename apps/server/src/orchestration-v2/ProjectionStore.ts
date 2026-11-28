@@ -549,6 +549,38 @@ export interface OlderSettledThreadsListing {
   readonly counts: ReadonlyArray<OrchestrationV2OlderSettledCount>;
 }
 
+/** One active thread in `(updated_at, thread_id)` order. `updatedAt` is the column text. */
+export interface AttentionCandidate {
+  readonly id: ThreadId;
+  readonly projectId: ProjectId;
+  readonly title: string;
+  readonly updatedAt: string;
+}
+
+export interface AttentionCandidateQuery {
+  readonly sinceUpdatedAt?: string | undefined;
+  readonly sinceThreadId?: string | undefined;
+  readonly projectId?: ProjectId | undefined;
+  readonly includeSubagents: boolean;
+  readonly limit: number;
+}
+
+export interface AttentionCandidates {
+  readonly threads: ReadonlyArray<AttentionCandidate>;
+  readonly hasMore: boolean;
+}
+
+/** Truncated assistant text and pending-card text. The SQL caps each string. */
+export interface AttentionText {
+  readonly threadId: ThreadId;
+  readonly summary: string | null;
+  readonly cards: ReadonlyArray<{
+    readonly requestId: RuntimeRequestId;
+    readonly kind: string;
+    readonly detail: string | null;
+  }>;
+}
+
 export interface ProjectionStoreV2Shape {
   readonly searchThreadStream: (
     input: OrchestrationV2SearchThreadInput,
@@ -648,6 +680,17 @@ export interface ProjectionStoreV2Shape {
   readonly listActiveThreads: (
     projectId?: ProjectId,
   ) => Effect.Effect<ReadonlyArray<ActiveThreadListEntry>, ProjectionStoreV2Error>;
+  /**
+   * Active threads after a cursor, oldest first, for a watcher. Settled threads are skipped
+   * unless a request is still pending. Reads the active-shell index and stops at `limit`.
+   */
+  readonly listAttentionCandidates: (
+    query: AttentionCandidateQuery,
+  ) => Effect.Effect<AttentionCandidates, ProjectionStoreV2Error>;
+  /** Short assistant and pending-card text for the threads a page kept. Empty ids read nothing. */
+  readonly readAttentionTexts: (
+    threadIds: ReadonlyArray<ThreadId>,
+  ) => Effect.Effect<ReadonlyArray<AttentionText>, ProjectionStoreV2Error>;
   /** Older settled thread ids below a cursor, newest settle first, and per-project counts. */
   readonly listOlderSettledThreads: (
     query: OlderSettledThreadsQuery,
@@ -10021,6 +10064,134 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       }));
     }, Effect.mapError(shellSnapshotReadError));
 
+    // A watcher's poll. The active-shell index walks updated_at, and each call stops at
+    // `limit`, on the reader connection, so it does not take the write lock or read message bodies.
+    const listAttentionCandidates = Effect.fn("ProjectionStore.listAttentionCandidates")(function* (
+      query: AttentionCandidateQuery,
+    ) {
+      const limit = Math.min(Math.max(query.limit, 1), 100);
+      const rows = yield* sql<{
+        readonly thread_id: string;
+        readonly project_id: string;
+        readonly title: string;
+        readonly updated_at: string;
+      }>`
+          SELECT t.thread_id, t.project_id, t.title, t.updated_at
+          FROM orchestration_v2_projection_threads t
+          WHERE t.deleted_at IS NULL
+            AND t.archived_at IS NULL
+            AND COALESCE(${indexedField("$.lineage.sideChat")}, 0) != 1
+            ${
+              query.includeSubagents
+                ? sql``
+                : sql`AND ${indexedField("$.lineage.relationshipToParent")} IS NOT 'subagent'`
+            }
+            AND (
+              ${indexedField("$.settledOverride")} IS NOT 'settled'
+              OR EXISTS (
+                SELECT 1 FROM orchestration_v2_projection_runtime_requests request
+                WHERE request.thread_id = t.thread_id AND request.status = 'pending'
+              )
+            )
+            ${query.projectId === undefined ? sql`` : sql`AND t.project_id = ${query.projectId}`}
+            ${
+              query.sinceUpdatedAt === undefined
+                ? sql``
+                : sql`AND (
+                    t.updated_at > ${query.sinceUpdatedAt}
+                    OR (t.updated_at = ${query.sinceUpdatedAt} AND t.thread_id > ${query.sinceThreadId ?? ""})
+                  )`
+            }
+          ORDER BY t.updated_at ASC, t.thread_id ASC
+          LIMIT ${limit + 1}
+        `;
+      const page = rows.slice(0, limit);
+      return {
+        hasMore: rows.length > limit,
+        threads: page.map((row): AttentionCandidate => ({
+          id: ThreadId.make(row.thread_id),
+          projectId: ProjectId.make(row.project_id),
+          title: row.title,
+          updatedAt: row.updated_at,
+        })),
+      };
+    }, Effect.mapError(shellSnapshotReadError));
+
+    const readAttentionTexts = Effect.fn("ProjectionStore.readAttentionTexts")(function* (
+      threadIds: ReadonlyArray<ThreadId>,
+    ) {
+      if (threadIds.length === 0) return [];
+      const summaries = yield* sql<{
+        readonly thread_id: string;
+        readonly summary: string | null;
+      }>`
+        SELECT m.thread_id, substr(trim(json_extract(m.payload_json, '$.text')), 1, 400) AS summary
+        FROM orchestration_v2_projection_messages m
+        WHERE m.role = 'assistant'
+          AND m.thread_id IN ${sql.in(threadIds)}
+          AND m.message_id = (
+            SELECT m2.message_id
+            FROM orchestration_v2_projection_messages m2
+            WHERE m2.thread_id = m.thread_id AND m2.role = 'assistant'
+            ORDER BY m2.created_at DESC, m2.message_id DESC
+            LIMIT 1
+          )
+      `;
+      const cards = yield* sql<{
+        readonly thread_id: string;
+        readonly runtime_request_id: string;
+        readonly kind: string;
+        readonly detail: string | null;
+      }>`
+        SELECT
+          request.thread_id,
+          request.runtime_request_id,
+          request.kind,
+          substr(trim(COALESCE(
+            json_extract(item.payload_json, '$.questions[0].question'),
+            json_extract(item.payload_json, '$.prompt'),
+            json_extract(item.payload_json, '$.reason'),
+            ''
+          )), 1, 400) AS detail
+        FROM orchestration_v2_projection_runtime_requests request
+        LEFT JOIN orchestration_v2_projection_turn_items item
+          ON item.thread_id = request.thread_id
+          AND item.node_id = request.node_id
+          AND item.type IN ('approval_request', 'user_input_request')
+          AND json_extract(item.payload_json, '$.requestId') = request.runtime_request_id
+        WHERE request.status = 'pending'
+          AND request.thread_id IN ${sql.in(threadIds)}
+        ORDER BY request.thread_id,
+          (request.kind = 'user_input') ASC,
+          request.created_at DESC,
+          request.runtime_request_id DESC
+      `;
+      const cardsByThread = new Map<
+        ThreadId,
+        Array<{
+          readonly requestId: RuntimeRequestId;
+          readonly kind: string;
+          readonly detail: string | null;
+        }>
+      >();
+      for (const card of cards) {
+        const threadId = ThreadId.make(card.thread_id);
+        const list = cardsByThread.get(threadId) ?? [];
+        list.push({
+          requestId: RuntimeRequestId.make(card.runtime_request_id),
+          kind: card.kind,
+          detail: card.detail === null || card.detail.length === 0 ? null : card.detail,
+        });
+        cardsByThread.set(threadId, list);
+      }
+      const summaryByThread = new Map(summaries.map((row) => [row.thread_id, row.summary]));
+      return threadIds.map((threadId): AttentionText => ({
+        threadId,
+        summary: summaryByThread.get(threadId) ?? null,
+        cards: cardsByThread.get(threadId) ?? [],
+      }));
+    }, Effect.mapError(shellSnapshotReadError));
+
     const getThreadLinkMetadata = Effect.fn("ProjectionStore.getThreadLinkMetadata")(function* (
       threadIds: ReadonlyArray<ThreadId>,
     ) {
@@ -10213,6 +10384,8 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
       countThreads: readOnReader(countThreads),
       listActiveShellIndex: readOnReader(listActiveShellIndex),
       listActiveThreads: readOnReader(listActiveThreads),
+      listAttentionCandidates: readOnReader(listAttentionCandidates),
+      readAttentionTexts: readOnReader(readAttentionTexts),
       readShellSnapshot: readOnReader(readShellSnapshot),
       listOlderSettledThreads: readOnReader(listOlderSettledThreads),
       getThreadShell: readOnReader(getThreadShell),

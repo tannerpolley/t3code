@@ -1220,6 +1220,8 @@
   "30a8c0f9a6576ee8": "创建 T3 会话",
   "557ba6282ab349d7": "启动 T3 会话",
   "55cb2eb842d7b91b": "列出 T3 会话",
+  "cc0a5818ba62d393": "List threads needing attention",
+  "968c37f60ce7c58a": "Reply to a T3 thread",
   "96249620a43e7e9e": "读取 T3 会话",
   "5d935e12e0833489": "发送到 T3 会话",
   "dd0cfbfec90e795b": "等待 T3 会话",

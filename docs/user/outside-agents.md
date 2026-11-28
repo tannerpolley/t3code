@@ -100,6 +100,9 @@ T3 Code.
   `projectId` or `threadId`.
 - To list threads across projects, call `t3_thread_list` with
   `allProjects: true`, or use `t3_thread_search`.
+- To see which threads need a person or have finished, call `t3_thread_attention`.
+  It is read-only. Pass the previous `nextCursor` as `since` so a later call
+  continues where the last one stopped.
 
 ## Claude Code
 
@@ -143,7 +146,25 @@ Agents without OAuth support cannot connect.
 A bot that supports MCP Events (`io.modelcontextprotocol/events`) can learn
 when something happens without reading threads over and over: a turn ended, an
 agent waits on a person, a guest asked something, a watched pull request woke
-its thread. [Workflow runs](workflows.md) are events too: a run started, paused,
+its thread. Events are a wake-up. `t3_thread_attention` is how the bot catches
+up: each row names the thread, its project and title, whether it is waiting on
+a question, an approval, a failure, or has finished, and a short summary of the
+last reply or the pending question. Pass `since` from the previous
+`nextCursor`. The same call returns the same page, and a thread drops out of
+later pages until it changes again. Omit `since` to walk from the oldest
+unsettled thread, or pass an ISO time to start after that instant. Subagent,
+settled, and snoozed threads are left out. Secret and link cards are named
+without their contents.
+
+When the person answers, a connection above **Read only** calls
+`t3_thread_reply` on that thread. `answer` sends `answers` for the pending
+question (`requestId` from the row). `approve` or `deny` decides a pending
+approval. `message` sends a follow-up once the turn has finished. The call
+refuses a turn that is still running, and it cannot answer a secret or link
+card. The thread it acts on cannot run with more permissions than the
+connection.
+
+[Workflow runs](workflows.md) are events too: a run started, paused,
 resumed or ended, or waits on a person. A bot can poll, stream, or receive each
 event type by webhook, narrowed to projects and threads or to workflows and
 runs; runs another run started are left out unless asked for, as subagent
