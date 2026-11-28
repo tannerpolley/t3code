@@ -168,7 +168,7 @@ export function delegatedTaskRole(
   if (input.role !== undefined && input.role !== "general") return input.role;
   const openingLine = input.task.trimStart().split(/\r?\n/, 1)[0];
   switch (
-    /^Use the role-(implementor|reviewer|designer|writer) skill\.?\s*$/i
+    /^Use the role-(implementor|reviewer|designer|writer) skill\b/i
       .exec(openingLine ?? "")?.[1]
       ?.toLowerCase()
   ) {

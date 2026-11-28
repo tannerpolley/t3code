@@ -4943,6 +4943,13 @@ describe("OrchestratorMcpService provider resolution", () => {
             expected: { instanceId: codexInstanceId, model: "other-model" },
           },
           {
+            name: "an opening role sentence labels the task when the brief continues on that line",
+            task: "Use the role-reviewer skill. Reply with the single word done.",
+            expectedRole: "review",
+            target: { model: "other-model" },
+            expected: { instanceId: codexInstanceId, model: "other-model" },
+          },
+          {
             name: "the owner pick replaces the delegate provider, model, and effort",
             role: "review",
             roleModels,
