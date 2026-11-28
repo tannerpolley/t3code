@@ -127,6 +127,7 @@ import { resolveAttachmentPath, resolveAttachmentPathById } from "../../attachme
 import * as PortScanner from "../../preview/PortScanner.ts";
 import { ServerConfig } from "../../config.ts";
 import { expandHomePath } from "@t3tools/provider-core/server/pathExpansion";
+import { resolveDelegatedLeafSkillPath } from "@t3tools/provider-core/server/orchestrationInstructions";
 import { buildCodexAdditionalContext } from "../../provider/CodexDeveloperInstructions.ts";
 import {
   describeMcpElicitation,
@@ -942,6 +943,7 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
     readonly modelSelection: ModelSelection;
     readonly hasT3Mcp?: boolean;
     readonly delegatedRole?: OrchestratorMcpTaskRole | undefined;
+    readonly delegatedRoleSkillPath?: string | undefined;
     readonly agentFeedback?: AgentFeedbackMode;
     readonly browserToolsAvailable?: boolean;
     readonly deviceToolsAvailable?: boolean;
@@ -1010,6 +1012,7 @@ export const buildCodexTurnStartParams = Effect.fn("CodexAdapterV2.buildCodexTur
               device: input.deviceToolsAvailable ?? false,
             },
             input.delegatedRole,
+            input.delegatedRoleSkillPath,
           )
         : undefined;
     // Its own entry, so the folder list reaches the model without T3 Code's MCP tools too.
@@ -2172,6 +2175,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
   const readMcpSession = (threadId: ThreadId | null) =>
     threadId === null ? Effect.undefined : mcpSessions.read(threadId);
   const { clientFactory, digest, fileSystem, idAllocator, serverConfig } = adapterOptions;
+  const path = yield* Path.Path;
   const continuationRequests = adapterOptions.continuationRequests;
 
   return ProviderAdapter.ProviderAdapterV2.of({
@@ -2252,7 +2256,9 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
           ProviderAdapter.ProviderAdapterV2Event,
           ProviderAdapter.ProviderAdapterEventStreamError
         >();
-        const initialized = yield* Ref.make(false);
+        const initialized = yield* Ref.make<{ readonly codexHome: string | undefined } | undefined>(
+          undefined,
+        );
         // After a timeout the session is retiring; waiters must not re-send to the hung app-server.
         const initializeTimeout = yield* Ref.make<
           ProviderAdapter.ProviderAdapterEventStreamError | undefined
@@ -2268,13 +2274,12 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
             const timedOut = yield* Ref.get(initializeTimeout);
             if (timedOut !== undefined) return yield* timedOut;
 
-            const userAgent = yield* client
+            const response = yield* client
               .request("initialize", {
                 clientInfo: buildCodexInitializeParams().clientInfo,
                 capabilities: CODEX_CLIENT_CAPABILITIES,
               })
               .pipe(
-                Effect.map((response) => response.userAgent),
                 Effect.catchTags({
                   // Interruption can leave Codex initialized before the local flag is set.
                   CodexAppServerRequestError: (error) =>
@@ -2300,7 +2305,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
                   },
                 }),
               );
-            const version = userAgent && /\/(\S+)/u.exec(userAgent)?.[1];
+            const version = response && /\/(\S+)/u.exec(response.userAgent)?.[1];
             const advisory =
               version && adapterOptions.compatibility
                 ? yield* adapterOptions.compatibility(version)
@@ -2315,7 +2320,7 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               });
             if (refused) return yield* refused;
             yield* client.notify("initialized", undefined);
-            yield* Ref.set(initialized, true);
+            yield* Ref.set(initialized, { codexHome: response?.codexHome });
           }),
         );
         // A failed open is discarded, so the next turn spawns the updated binary.
@@ -8206,6 +8211,14 @@ export const makeCodexAdapterV2 = Effect.fn("makeCodexAdapterV2")(function* (
               modelSelection: turnInput.modelSelection,
               hasT3Mcp: mcpSession !== undefined,
               delegatedRole: turnInput.appThread.delegatedRole,
+              delegatedRoleSkillPath:
+                mcpSession === undefined
+                  ? undefined
+                  : yield* resolveDelegatedLeafSkillPath(
+                      turnInput.appThread.delegatedRole,
+                      (yield* Ref.get(initialized))?.codexHome,
+                      { fileSystem, path },
+                    ),
               agentFeedback: turnInput.agentFeedback ?? "off",
               browserToolsAvailable: mcpSession?.browserToolsAvailable ?? true,
               deviceToolsAvailable: mcpSession?.capabilities?.has("device") ?? false,

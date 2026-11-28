@@ -1,4 +1,12 @@
-import type { ProviderInteractionMode } from "@t3tools/contracts";
+import {
+  delegatedLeafSkill,
+  type OrchestratorMcpTaskRole,
+  type ProviderInteractionMode,
+} from "@t3tools/contracts";
+import * as HostProcess from "@t3tools/shared/HostProcess";
+import * as Effect from "effect/Effect";
+import type * as FileSystem from "effect/FileSystem";
+import type * as Path from "effect/Path";
 
 export const T3_CODE_VISUAL_INSTRUCTIONS = `### Visuals and preview
 
@@ -38,8 +46,45 @@ export const T3_CODE_BROWSER_TOOL_INSTRUCTIONS = `
 When browser work was asked, \`preview_*\` is the browser you share with the user: \`preview_status\` first, then \`preview_open\` if no tab can be automated. Prefer snapshot locators over coordinates. Switch browsers only if the tools are absent or \`preview_open\` says unsupported, the user asks, or two preview calls fail on one step. Then quote the error and switch.
 `;
 
-export function delegatedLeafInstructions(skill: string) {
-  return `Work directly and hand the result back to your parent. Read the \`${skill}\` skill's SKILL.md from the agent's skill directory, and follow any skills required by the project instructions. Use \`request_secret\` for credentials only the user can provide.`;
+export const resolveDelegatedLeafSkillPath = Effect.fn("resolveDelegatedLeafSkillPath")(function* (
+  role: OrchestratorMcpTaskRole | undefined,
+  providerHome: string | undefined,
+  { fileSystem, path }: { readonly fileSystem: FileSystem.FileSystem; readonly path: Path.Path },
+) {
+  const skill = delegatedLeafSkill(role);
+  if (skill === undefined) return undefined;
+
+  const home = yield* HostProcess.HomeDirectory;
+  const roots = [
+    ...(providerHome === undefined ? [] : [path.resolve(providerHome, "skills")]),
+    path.join(home, ".agents", "skills"),
+  ];
+  for (const root of roots) {
+    const skillPath = path.join(root, skill, "SKILL.md");
+    const readableFile = yield* fileSystem.stat(skillPath).pipe(
+      Effect.flatMap((info) =>
+        info.type === "File"
+          ? fileSystem.access(skillPath, { readable: true }).pipe(Effect.as(true))
+          : Effect.succeed(false),
+      ),
+      Effect.orElseSucceed(() => false),
+    );
+    if (readableFile) return skillPath;
+  }
+  return undefined;
+});
+
+export function delegatedLeafInstructions(
+  skill: NonNullable<ReturnType<typeof delegatedLeafSkill>>,
+  skillPath?: string,
+) {
+  const roleInstructions =
+    skillPath !== undefined
+      ? `Read and follow the role skill at \`${skillPath}\`.`
+      : skill === "role-reviewer"
+        ? "Review the work without editing files. Report concrete findings with severity, evidence, and file locations."
+        : "Carry out the brief, run the focused checks it calls for, and report results and anything you could not verify.";
+  return `Work directly and hand the result back to your parent. ${roleInstructions} Follow any skills required by the project instructions. Use \`request_secret\` for credentials only the user can provide.`;
 }
 
 const T3_CODE_DEVICE_TOOLS = ["device_list", "device_open", "device_screenshot", "device_close"];

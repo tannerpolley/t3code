@@ -231,6 +231,7 @@ import {
   T3_CODE_ORCHESTRATION_INSTRUCTIONS,
   T3_CODE_VISUAL_INSTRUCTIONS,
   delegatedLeafInstructions,
+  resolveDelegatedLeafSkillPath,
 } from "@t3tools/provider-core/server/orchestrationInstructions";
 import { buildRuntimeInstructions } from "@t3tools/provider-core/server/runtimeInstructions";
 import {
@@ -733,6 +734,9 @@ const CLAUDE_LEAF_DISALLOWED_TOOLS = [
   "ListAgents",
   "Workflow",
   "ScheduleWakeup",
+  "CronCreate",
+  "CronDelete",
+  "CronList",
   "Monitor",
   "Task",
   "TaskList",
@@ -2573,6 +2577,7 @@ export function makeClaudeQueryOptions(input: {
   // Flag settings, because a user's settings.json env beats the process env in Claude Code.
   readonly toolSearchOverride?: "true";
   readonly delegatedRole?: OrchestrationV2AppThread["delegatedRole"];
+  readonly delegatedRoleSkillPath?: string | undefined;
 }): ClaudeAgentSdkQueryOptions {
   const compiledSelection = compileClaudeModelSelection(input.modelSelection, input.modelCatalog);
   const leafSkill = delegatedLeafSkill(input.delegatedRole);
@@ -2751,7 +2756,9 @@ export function makeClaudeQueryOptions(input: {
               (deviceInstructions
                 ? `\n${T3_CODE_DEVICE_TOOL_INSTRUCTIONS_WITH_TOOL_SEARCH}\n`
                 : "")),
-        ...(leafSkill === undefined ? [] : [delegatedLeafInstructions(leafSkill)]),
+        ...(leafSkill === undefined
+          ? []
+          : [delegatedLeafInstructions(leafSkill, input.delegatedRoleSkillPath)]),
         ...launchAppendSystemPrompt,
       ].join("\n\n"),
     },
@@ -14002,6 +14009,11 @@ export const makeClaudeAdapterV2 = Effect.fn("makeClaudeAdapterV2")(function* (
             nativeThreadId,
             title: turnInput.appThread.title,
             delegatedRole: turnInput.appThread.delegatedRole,
+            delegatedRoleSkillPath: yield* resolveDelegatedLeafSkillPath(
+              turnInput.appThread.delegatedRole,
+              claudeConfigDirOf(path, adapterOptions.environment, yield* HostProcess.HomeDirectory),
+              { fileSystem, path },
+            ),
             resume: shouldResume,
             ...(resumeSessionAt === undefined ? {} : { resumeSessionAt }),
             cwd: turnInput.runtimePolicy.cwd,

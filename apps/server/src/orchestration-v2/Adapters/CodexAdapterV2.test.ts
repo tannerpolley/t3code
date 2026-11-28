@@ -945,6 +945,7 @@ function withConfigReads(
 function makeCodexReplayTranscript(input: {
   readonly scenario: string;
   readonly entries: ReadonlyArray<CodexReplay.CodexAppServerReplayEntry>;
+  readonly metadata?: CodexReplay.CodexAppServerReplayTranscript["metadata"];
 }): CodexReplay.CodexAppServerReplayTranscript {
   return {
     provider: "codex",
@@ -952,6 +953,7 @@ function makeCodexReplayTranscript(input: {
     version: "0.144.0",
     scenario: input.scenario,
     entries: input.entries,
+    ...(input.metadata === undefined ? {} : { metadata: input.metadata }),
   };
 }
 
@@ -3068,17 +3070,13 @@ describe("CodexAdapterV2 post-settle continuation", () => {
       Effect.gen(function* () {
         const scenario = `delegated-thread-${delegatedRole}`;
         const childNativeId = "delegated-child-thread";
-        const config = {
-          ...CodexAdapterV2.CODEX_THREAD_CONFIG,
-          ...(delegatedRole === "review"
-            ? {
-                "features.apps": false,
-                "features.multi_agent": false,
-                "agents.enabled": false,
-                "memories.use_memories": false,
-                "skills.include_instructions": false,
-              }
-            : {}),
+        const config = CodexAdapterV2.CODEX_THREAD_CONFIG;
+        const leafConfig = {
+          "features.apps": false,
+          "features.multi_agent": false,
+          "agents.enabled": false,
+          "memories.use_memories": false,
+          "skills.include_instructions": false,
         };
         const preamble = codexReplayPreamble({
           nativeThreadId: "delegated-parent-thread",
@@ -3090,10 +3088,15 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           nativeTurnId: "unused",
           prompt: "unused",
         })[4]!;
-        const requests: unknown[] = [];
+        const requests: Array<{
+          method: "thread/start" | "thread/resume";
+          config: Record<PropertyKey, unknown>;
+        }> = [];
         const harness = yield* makeCodexReplayHarness(
           makeCodexReplayTranscript({
             scenario,
+            // The captured configs own the role assertions, so replay can reach both requests.
+            metadata: { recorderThreadConfigKeys: Object.keys(leafConfig) },
             entries: [
               ...preamble,
               {
@@ -3133,7 +3136,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
                 Predicate.isObject(params) &&
                 Predicate.isObject(params.config)
               ) {
-                requests.push(params.config["mcp_servers.t3-code-direct"]);
+                requests.push({ method, config: params.config });
               }
             }),
         );
@@ -3160,8 +3163,22 @@ describe("CodexAdapterV2 post-settle continuation", () => {
           delegatedRole === "review"
             ? { url: "http://127.0.0.1:43123/mcp", enabled: false }
             : { enabled_tools: ["t3_thread_wait", "delegate_task"] };
-        assert.lengthOf(requests, 3);
-        for (const request of requests.slice(1)) assert.deepInclude(request, directMcpConfig);
+        assert.deepEqual(
+          requests.map((request) => request.method),
+          ["thread/start", "thread/start", "thread/resume"],
+        );
+        for (const { method, config } of requests.slice(1)) {
+          const directMcp = config["mcp_servers.t3-code-direct"];
+          assert.deepInclude(directMcp, directMcpConfig);
+          if (delegatedRole === "review") {
+            assert.deepInclude(config, leafConfig, method);
+          } else {
+            assert.notProperty(directMcp, "enabled", method);
+            for (const key of Object.keys(leafConfig)) {
+              assert.notProperty(config, key, method);
+            }
+          }
+        }
         const turn = yield* CodexAdapterV2.buildCodexTurnStartParams({
           nativeThreadId: childNativeId,
           codexInput: [{ type: "text", text: "Review the change." }],
@@ -3174,7 +3191,7 @@ describe("CodexAdapterV2 post-settle continuation", () => {
         assert.include(prompt, "request_secret");
         assert.include(prompt, "link_pull_request");
         if (delegatedRole === "review") {
-          assert.include(prompt, "role-reviewer");
+          assert.include(prompt, "without editing files");
           assert.notInclude(prompt, "delegate_task");
         } else {
           assert.include(prompt, "delegate_task");
