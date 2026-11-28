@@ -393,6 +393,8 @@
   "24d802debbab31e0": "{rerun, plural, one {{rerun} Check erneut ausgeführt, {refused} abgelehnt} other {{rerun} Checks erneut ausgeführt, {refused} abgelehnt}}",
   "8146ee71f7426683": "{count, plural, one {{count} Pull Request reviewt} other {{count} Pull Requests reviewt}}",
   "638678077ba2e050": "{count, plural, one {Versucht, {count} Pull Request zu reviewen} other {Versucht, {count} Pull Requests zu reviewen}}",
+  "dff22785f720f267": "{count, plural, one {Read usage} other {Read usage {count} times}}",
+  "e0219ec66e258228": "{count, plural, one {Tried to read usage} other {Tried to read usage {count} times}}",
   "420bea546d5f8802": "Thread kopiert",
   "2efb2dd3bf170f67": "Thread konnte nicht kopiert werden",
   "6c03545936b55e0b": "PR-Link kopiert",

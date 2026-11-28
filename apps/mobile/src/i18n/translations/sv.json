@@ -385,6 +385,8 @@
   "24d802debbab31e0": "{rerun, plural, one {Körde om {rerun} kontroll, {refused} nekades} other {Körde om {rerun} kontroller, {refused} nekades}}",
   "8146ee71f7426683": "{count, plural, one {Granskade {count} pull request} other {Granskade {count} pull requests}}",
   "638678077ba2e050": "{count, plural, one {Försökte granska {count} pull request} other {Försökte granska {count} pull requests}}",
+  "dff22785f720f267": "{count, plural, one {Read usage} other {Read usage {count} times}}",
+  "e0219ec66e258228": "{count, plural, one {Tried to read usage} other {Tried to read usage {count} times}}",
   "420bea546d5f8802": "Tråden kopierades",
   "2efb2dd3bf170f67": "Det gick inte att kopiera tråden",
   "6c03545936b55e0b": "PR-länken kopierades",

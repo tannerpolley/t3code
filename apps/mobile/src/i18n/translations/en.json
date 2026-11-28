@@ -385,6 +385,8 @@
   "24d802debbab31e0": "{rerun, plural, one {Re-ran {rerun} check, {refused} refused} other {Re-ran {rerun} checks, {refused} refused}}",
   "8146ee71f7426683": "{count, plural, one {Reviewed {count} pull request} other {Reviewed {count} pull requests}}",
   "638678077ba2e050": "{count, plural, one {Tried to review {count} pull request} other {Tried to review {count} pull requests}}",
+  "dff22785f720f267": "{count, plural, one {Read usage} other {Read usage {count} times}}",
+  "e0219ec66e258228": "{count, plural, one {Tried to read usage} other {Tried to read usage {count} times}}",
   "420bea546d5f8802": "Thread copied",
   "2efb2dd3bf170f67": "Failed to copy thread",
   "6c03545936b55e0b": "PR link copied",

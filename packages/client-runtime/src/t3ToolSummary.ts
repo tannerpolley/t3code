@@ -1804,6 +1804,20 @@ export function summarizeT3ToolCalls(
           );
       break;
     }
+    case "usage": {
+      const count = selected.length;
+      label = done
+        ? resolve(
+            msg("{count, plural, one {Read usage} other {Read usage {count} times}}", { count }),
+          )
+        : resolve(
+            msg(
+              "{count, plural, one {Tried to read usage} other {Tried to read usage {count} times}}",
+              { count },
+            ),
+          );
+      break;
+    }
   }
   return { label, failedCount };
 }
