@@ -5,6 +5,7 @@ import type {
   RuntimeRequestId,
   ScopedThreadRef,
 } from "@t3tools/contracts";
+import { isOrchestratorOwnedQuestion } from "@t3tools/contracts";
 import * as DateTime from "effect/DateTime";
 import { Atom } from "effect/reactivity";
 import { enabledEnvironmentIds } from "./connections.ts";
@@ -20,7 +21,10 @@ export function collectPendingQuestions(
   environments: Iterable<{
     readonly environmentId: EnvironmentId;
     readonly threads: ReadonlyArray<
-      Pick<OrchestrationV2ThreadShell, "id" | "archivedAt" | "pendingRuntimeRequest">
+      Pick<
+        OrchestrationV2ThreadShell,
+        "id" | "archivedAt" | "pendingRuntimeRequest" | "lineage" | "creationSource"
+      >
     >;
   }>,
 ): PendingQuestion[] {
@@ -31,6 +35,7 @@ export function collectPendingQuestions(
       if (
         thread.archivedAt !== null ||
         request?.kind !== "user_input" ||
+        isOrchestratorOwnedQuestion(thread) ||
         request.userOnly === true
       ) {
         continue;

@@ -56,6 +56,7 @@ import type {
 } from "@t3tools/contracts";
 import {
   IDLE_COMPACTION_TEXT,
+  hasQuestionOrchestrator,
   idleCompactionOf,
   isQueuedProviderThreadPlaceholder,
   OrchestrationV2AppThreadJson as OrchestrationV2AppThreadJsonSchema,
@@ -1838,6 +1839,7 @@ function buildVisibleTurnItems(input: {
 
 function pendingRuntimeRequestSummary(
   request: OrchestrationV2ThreadProjection["runtimeRequests"][number] | null,
+  thread: OrchestrationV2AppThread,
 ): OrchestrationV2PendingRuntimeRequestSummary | null {
   if (request === null) return null;
   return {
@@ -1845,6 +1847,9 @@ function pendingRuntimeRequestSummary(
     kind: request.kind,
     createdAt: request.createdAt,
     blocking: request.responseCapability.type !== "message",
+    ...(request.kind === "user_input" && hasQuestionOrchestrator(thread)
+      ? { orchestratorOwned: true }
+      : {}),
   };
 }
 
@@ -1917,6 +1922,7 @@ export function threadShellFromProjection(
           Number(left.kind === "user_input") - Number(right.kind === "user_input") ||
           DateTime.toEpochMillis(right.createdAt) - DateTime.toEpochMillis(left.createdAt),
       )[0] ?? null,
+    projection.thread,
   );
 
   const userMessages = projection.messages
@@ -1942,6 +1948,7 @@ export function threadShellFromProjection(
     if (
       waitingCard !== null &&
       (pendingRuntimeRequest === null ||
+        pendingRuntimeRequest.orchestratorOwned === true ||
         DateTime.toEpochMillis(waitingCard.createdAt) >=
           DateTime.toEpochMillis(pendingRuntimeRequest.createdAt))
     ) {
@@ -9329,6 +9336,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           row.pending_request_payload_json !== null
             ? pendingRuntimeRequestSummary(
                 yield* decodeRuntimeRequestPayload(row.pending_request_payload_json),
+                thread,
               )
             : null;
         if (
@@ -9344,6 +9352,7 @@ export const layer: Layer.Layer<ProjectionStoreV2, never, SqlClient.SqlClient> =
           if (
             waitingCard !== null &&
             (pendingRuntimeRequest === null ||
+              pendingRuntimeRequest.orchestratorOwned === true ||
               DateTime.toEpochMillis(waitingCard.createdAt) >=
                 DateTime.toEpochMillis(pendingRuntimeRequest.createdAt))
           ) {

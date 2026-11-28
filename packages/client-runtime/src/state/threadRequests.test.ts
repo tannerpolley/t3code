@@ -402,6 +402,26 @@ describe("pending v2 questions", () => {
     };
     expect(derivePendingThreadRequests(live).userInputs[0]?.dismissible).toBe(false);
   });
+
+  it("keeps the child question out of the owner's composer and preserves side chat questions", () => {
+    const lineage = {
+      ...projection.thread.lineage,
+      parentThreadId: ThreadId.make("orchestrator"),
+    };
+    for (const relationshipToParent of ["fork", "subagent"] as const) {
+      const pending = derivePendingThreadRequests({
+        ...projection,
+        thread: {
+          ...projection.thread,
+          creationSource: "mcp",
+          lineage: { ...lineage, relationshipToParent },
+        },
+      });
+      expect(pending.userInputs.map((input) => input.requestId)).toEqual(
+        relationshipToParent === "fork" ? [requestId] : [],
+      );
+    }
+  });
 });
 
 it("restores old text answers without mutating history or replacing unchanged rows", () => {

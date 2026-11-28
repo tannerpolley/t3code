@@ -12,6 +12,7 @@ import type {
   ProviderRequestKind,
   RuntimeRequestId,
 } from "@t3tools/contracts";
+import { hasQuestionOrchestrator } from "@t3tools/contracts";
 import { Atom } from "effect/reactivity";
 import { parseThreadKey, threadKey } from "./entities.ts";
 import { getProjectionArrayReplacementIndex } from "./orchestrationV2Projection.ts";
@@ -275,15 +276,19 @@ export function makeThreadRequestsResolvedAnnouncer(
 }
 
 export function derivePendingThreadRequests(
-  projection: Pick<ThreadStructure, "runtimeRequests" | "turnItems">,
+  projection: Pick<ThreadStructure, "runtimeRequests" | "turnItems"> &
+    Partial<Pick<ThreadStructure, "thread">>,
 ): PendingThreadRequests {
   const approvals: ThreadPendingApproval[] = [];
   const userInputs: ThreadPendingUserInput[] = [];
+  const orchestrated =
+    projection.thread !== undefined && hasQuestionOrchestrator(projection.thread);
 
   for (const request of projection.runtimeRequests) {
     if (request.status !== "pending") continue;
     const responseCapability = request.responseCapability.type;
     if (request.kind === "user_input") {
+      if (orchestrated) continue;
       const item = projection.turnItems.findLast(
         (candidate) =>
           candidate.type === "user_input_request" && candidate.requestId === request.id,

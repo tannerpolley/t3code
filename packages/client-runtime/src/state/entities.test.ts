@@ -53,8 +53,13 @@ describe("V2 client presentation", () => {
     expect(effectiveSnoozed(active, { now: "2026-06-20T00:05:00.000Z" })).toBe(false);
   });
 
-  it("moves a running thread with any question out of Working", () => {
-    for (const capability of [{ blocking: false }, { blocking: true }, {}]) {
+  it("moves a running thread out of Working when its question needs owner input", () => {
+    for (const capability of [
+      { blocking: false },
+      { blocking: true },
+      {},
+      { blocking: true, orchestratorOwned: true },
+    ]) {
       const shell = presentThreadShell(environmentId, {
         ...v2ThreadShell,
         latestRunId: RunId.make("run-blocking-question"),
@@ -67,8 +72,8 @@ describe("V2 client presentation", () => {
           ...capability,
         },
       });
-      expect(shell.hasPendingUserInput).toBe(true);
-      expect(isThreadWorking(shell)).toBe(false);
+      expect(shell.hasPendingUserInput).toBe(capability.orchestratorOwned !== true);
+      expect(isThreadWorking(shell)).toBe(capability.orchestratorOwned === true);
     }
   });
 
